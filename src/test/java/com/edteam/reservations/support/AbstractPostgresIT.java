@@ -35,7 +35,11 @@ import java.util.function.Supplier;
         // El despacho se dispara a mano en los tests, para que no compita con las aserciones.
         "reservations.outbox.dispatch-enabled=false",
         // El esquema lo crea Flyway; que Hibernate valide que el mapeo coincide.
-        "spring.jpa.hibernate.ddl-auto=validate"
+        "spring.jpa.hibernate.ddl-auto=validate",
+        // Maestro de ciudades: el stub en memoria. El build no puede depender de
+        // que el servicio de catálogo esté levantado; lo que hay que probar acá
+        // es el flujo contra PostgreSQL, y la traducción HTTP ya tiene sus tests.
+        "reservations.airport-catalog.base-url="
 })
 public abstract class AbstractPostgresIT {
 

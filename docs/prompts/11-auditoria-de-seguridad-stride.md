@@ -1,4 +1,4 @@
-# 10 — Auditoría de seguridad (STRIDE)
+# 11 — Auditoría de seguridad (STRIDE)
 
 
 **Etapa:** Seguridad

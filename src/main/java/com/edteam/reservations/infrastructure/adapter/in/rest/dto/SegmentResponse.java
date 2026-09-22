@@ -19,10 +19,10 @@ public record SegmentResponse(
         @Schema(description = "Posición del tramo dentro del itinerario, base 1.", example = "1")
         int position,
 
-        @Schema(description = "Código IATA del aeropuerto de origen.", example = "EZE")
+        @Schema(description = "Código IATA de la ciudad de origen.", example = "BUE")
         String originAirportCode,
 
-        @Schema(description = "Código IATA del aeropuerto de destino.", example = "GRU")
+        @Schema(description = "Código IATA de la ciudad de destino.", example = "SCL")
         String destinationAirportCode,
 
         @Schema(description = "Aerolínea operadora.", example = "AR")

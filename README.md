@@ -53,7 +53,7 @@ reserva viaja en el cuerpo del alta y se da de alta solo la primera vez.
 Crear una reserva:
 
 ```bash
-curl -i -X POST http://localhost:8080/v1/reservations -H 'Content-Type: application/json' -H "Idempotency-Key: $(uuidgen)" -d '{"user":{"email":"ana.perez@example.com","firstName":"Ana","lastName":"Pérez"},"itinerary":{"price":"1250.50","currency":"USD","segments":[{"originAirportCode":"EZE","destinationAirportCode":"SCL","airline":"AEROLINEAS ARGENTINAS","departureAt":"2027-03-15T22:40:00Z"}]},"passengers":[{"firstName":"Ana","lastName":"Pérez","birthDate":"1990-05-20","documentNumber":"30123456"}]}'
+curl -i -X POST http://localhost:8080/v1/reservations -H 'Content-Type: application/json' -H "Idempotency-Key: $(uuidgen)" -d '{"user":{"email":"ana.perez@example.com","firstName":"Ana","lastName":"Pérez"},"itinerary":{"price":"1250.50","currency":"USD","segments":[{"originAirportCode":"BUE","destinationAirportCode":"SCL","airline":"AEROLINEAS ARGENTINAS","departureAt":"2027-03-15T22:40:00Z"}]},"passengers":[{"firstName":"Ana","lastName":"Pérez","birthDate":"1990-05-20","documentNumber":"30123456"}]}'
 ```
 
 La respuesta trae `Location` y `ETag: "0"`. Ese `ETag` es lo que hay que mandar en

@@ -21,14 +21,13 @@ El sistema se espera con muchos usuarios concurrentes desde el día uno, y la di
 
 ## Tarea
 
-Diseñar el cliente REST que llama a esa API antes de intentar usar la caché.
+Diseñar el cliente REST que llama a esa API antes de intentar usar la caché. Tene en cuenta que cuando se haga un POST se debe validar si existen o no las ciudades. Si retorna 200, pero no hay valores trátalo como que la ciudad no existe.
 
 ## Restricciones
 
-- Definir **timeout** (de conexión y de lectura).
-- **Reintentos con backoff**.
+- No definir **timeout** (de conexión y de lectura).
+- No reintentos
 - Manejo explícito de errores de la API, diferenciando **4xx de 5xx**.
-- **No reintentar operaciones no idempotentes**, como confirmar un pago.
 
 ## Formato de salida
 

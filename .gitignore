@@ -33,7 +33,9 @@ replay_pid*
 *.iml
 *.iws
 *.ipr
-out/
+# Anclado a la raíz: sin la barra inicial esta regla también ignora
+# src/main/java/.../adapter/out/, o sea todos los adaptadores de salida.
+/out/
 .shelf/
 atlassian-ide-plugin.xml
 com_crashlytics_export_strings.xml

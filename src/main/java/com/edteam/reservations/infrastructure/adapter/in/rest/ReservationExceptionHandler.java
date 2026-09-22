@@ -1,5 +1,7 @@
 package com.edteam.reservations.infrastructure.adapter.in.rest;
 
+import com.edteam.reservations.application.exception.AirportCatalogIntegrationException;
+import com.edteam.reservations.application.exception.AirportCatalogUnavailableException;
 import com.edteam.reservations.application.exception.ConcurrentUpdateException;
 import com.edteam.reservations.application.exception.DuplicateReservationException;
 import com.edteam.reservations.application.exception.ReservationNotFoundException;
@@ -77,6 +79,9 @@ import java.util.Locale;
 public class ReservationExceptionHandler extends ResponseEntityExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(ReservationExceptionHandler.class);
+
+    /** Ventana sugerida al cliente cuando el maestro de aeropuertos no responde. */
+    private static final int CATALOG_RETRY_AFTER_SECONDS = 5;
 
     // ------------------------------------------------------------------
     // 404
@@ -216,6 +221,50 @@ public class ReservationExceptionHandler extends ResponseEntityExceptionHandler 
     @ExceptionHandler(Exception.class)
     public ProblemDetail handleUnexpected(Exception e, WebRequest request) {
         log.error("Error no controlado procesando {}", pathOf(request), e);
+        return problem(HttpStatus.INTERNAL_SERVER_ERROR, ApiErrorCode.INTERNAL_ERROR,
+                "Ocurrió un error inesperado procesando el pedido.", request);
+    }
+
+    // ------------------------------------------------------------------
+    // 5xx: el problema es nuestro o de una dependencia
+    // ------------------------------------------------------------------
+
+    /**
+     * El maestro de aeropuertos no está disponible (5xx, 429 o error de red).
+     *
+     * <p>Es la contracara de {@code UNKNOWN_AIRPORT}: ahí sabemos que el
+     * aeropuerto no existe, acá no pudimos averiguarlo. Sale como 503 y no
+     * como 400 porque el pedido es válido y volver a intentarlo tiene sentido;
+     * el {@code Retry-After} le dice al cliente cuándo, para que no nos
+     * martille mientras el proveedor se recupera.
+     *
+     * <p>Se loguea en WARN y sin stack trace: es una falla esperable de una
+     * dependencia externa, no un defecto del código.
+     */
+    @ExceptionHandler(AirportCatalogUnavailableException.class)
+    public ResponseEntity<ProblemDetail> handleCatalogUnavailable(AirportCatalogUnavailableException e,
+                                                                  WebRequest request) {
+        log.warn("Maestro de aeropuertos no disponible procesando {}: {}", pathOf(request), e.getMessage());
+        ProblemDetail problem = problem(HttpStatus.SERVICE_UNAVAILABLE, ApiErrorCode.AIRPORT_CATALOG_UNAVAILABLE,
+                "No se pudo validar los aeropuertos del itinerario contra el maestro. Reintentá en unos segundos.",
+                request);
+
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .header(HttpHeaders.RETRY_AFTER, String.valueOf(CATALOG_RETRY_AFTER_SECONDS))
+                .body(problem);
+    }
+
+    /**
+     * La integración con el maestro está rota: credencial, permisos o contrato.
+     *
+     * <p>Es un defecto nuestro, así que va en ERROR con el detalle del lado del
+     * servidor y hacia afuera sale un 500 genérico: el cliente no puede hacer
+     * nada distinto y el mensaje interno no le sirve —le filtraría cómo está
+     * integrado el sistema—.
+     */
+    @ExceptionHandler(AirportCatalogIntegrationException.class)
+    public ProblemDetail handleCatalogIntegration(AirportCatalogIntegrationException e, WebRequest request) {
+        log.error("Integración con el maestro de aeropuertos rota procesando {}", pathOf(request), e);
         return problem(HttpStatus.INTERNAL_SERVER_ERROR, ApiErrorCode.INTERNAL_ERROR,
                 "Ocurrió un error inesperado procesando el pedido.", request);
     }

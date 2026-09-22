@@ -20,10 +20,10 @@ public record ItineraryResponse(
 
         MoneyResponse price,
 
-        @Schema(description = "Origen del viaje: el del primer tramo.", example = "EZE")
+        @Schema(description = "Origen del viaje: el del primer tramo.", example = "BUE")
         String origin,
 
-        @Schema(description = "Destino del viaje: el del último tramo.", example = "MAD")
+        @Schema(description = "Destino del viaje: el del último tramo.", example = "MIA")
         String destination,
 
         @Schema(description = "Salida del primer tramo, en UTC.", example = "2027-03-15T22:40:00Z")

@@ -1,4 +1,4 @@
-# 11 — Remediación de seguridad sobre la aplicación
+# 12 — Remediación de seguridad sobre la aplicación
 
 **Etapa:** Implementación
 

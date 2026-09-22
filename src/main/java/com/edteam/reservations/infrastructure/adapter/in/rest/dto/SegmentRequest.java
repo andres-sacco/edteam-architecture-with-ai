@@ -16,12 +16,12 @@ import java.time.Instant;
  */
 @Schema(name = "SegmentRequest", description = "Tramo de un itinerario a reservar.")
 public record SegmentRequest(
-        @Schema(description = "Código IATA del aeropuerto de origen.", example = "EZE")
+        @Schema(description = "Código IATA de la ciudad de origen. Se valida contra el catálogo.", example = "BUE")
         @NotBlank(message = "El origen es obligatorio")
         @Pattern(regexp = ApiFormats.AIRPORT_CODE, message = "Debe ser un código IATA de 3 letras mayúsculas")
         String originAirportCode,
 
-        @Schema(description = "Código IATA del aeropuerto de destino.", example = "GRU")
+        @Schema(description = "Código IATA de la ciudad de destino. Se valida contra el catálogo.", example = "SCL")
         @NotBlank(message = "El destino es obligatorio")
         @Pattern(regexp = ApiFormats.AIRPORT_CODE, message = "Debe ser un código IATA de 3 letras mayúsculas")
         String destinationAirportCode,

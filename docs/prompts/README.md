@@ -17,8 +17,9 @@ Cada archivo documenta **un prompt** con su estructura completa (Rol / Contexto 
 | 07 | [Adaptador REST de entrada](07-adaptador-rest-entrada.md) | Implementación | Controllers, DTOs, mappers, manejo de errores y tests |
 | 08 | [Adaptador REST hacia servicio externo](08-adaptador-rest-servicio-externo.md) | Implementación | Interfaz + implementación con manejo de fallos |
 | 09 | [Cuellos de botella para caché](09-cuellos-de-botella-cache.md) | Performance | Lista priorizada de endpoints a cachear |
-| 10 | [Auditoría de seguridad (STRIDE)](10-auditoria-de-seguridad-stride.md) | Seguridad | Tabla amenaza / STRIDE / mitigación |
-| 11 | [Remediación de seguridad](11-remediacion-de-seguridad.md) | Implementación | Mitigaciones en el código + matriz de trazabilidad |
+| 10 | [Implementación de la caché](10-implementacion-de-cache.md) | Implementación | Caché en los puntos priorizados + invalidación y tests |
+| 11 | [Auditoría de seguridad (STRIDE)](11-auditoria-de-seguridad-stride.md) | Seguridad | Tabla amenaza / STRIDE / mitigación |
+| 12 | [Remediación de seguridad](12-remediacion-de-seguridad.md) | Implementación | Mitigaciones en el código + matriz de trazabilidad |
 
 ## Convenciones
 

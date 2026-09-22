@@ -57,6 +57,21 @@ reservations:
   airport-catalog:
     # El maestro de aeropuertos cambia muy poco y se consulta en cada operación.
     cache-ttl: 30m
+    # Catálogo de ciudades: las ciudades del itinerario se validan contra este
+    # servicio en cada POST y PUT. Coincide con el 'api-catalog' de
+    # compose.yaml, así que 'docker compose up -d' y listo.
+    #
+    # Vaciar 'base-url' vuelve al stub en memoria: es lo que usan los tests,
+    # para que el build no dependa de un servicio externo.
+    base-url: http://localhost:6070/api/flights/catalog
+    # La credencial nunca va en el archivo: viene del entorno. Hoy el catálogo
+    # no pide autenticación, así que sin la variable no se manda el header.
+    api-key: ${CATALOG_API_KEY:}
+    api-key-header: X-API-Key
+    #
+    # Ese cliente no define timeouts ni reintenta (decisión explícita de esta
+    # iteración). Los timeouts del cliente HTTP se configuran en un solo lugar,
+    # 'spring.http.client', si más adelante se decide ponerlos.
   outbox:
     # Despacho de notificaciones hacia el sistema externo.
     dispatch-enabled: true
