@@ -1,0 +1,2 @@
+# JDK del proyecto (sdkman: 'sdk env install' / 'sdk env')
+java=21-open

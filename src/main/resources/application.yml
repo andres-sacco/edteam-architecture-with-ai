@@ -1,0 +1,81 @@
+server:
+  port: 8080
+  shutdown: graceful
+
+spring:
+  application:
+    name: flight-reservations
+  lifecycle:
+    # Con muchos usuarios concurrentes, un deploy no debería cortar pedidos en
+    # curso: se deja de aceptar nuevos y se espera a que terminen los abiertos.
+    timeout-per-shutdown-phase: 25s
+  threads:
+    virtual:
+      # Threads virtuales (Java 21): el manejo de miles de pedidos concurrentes,
+      # que son mayormente I/O, deja de estar limitado por el tamaño del pool.
+      enabled: true
+
+  datasource:
+    # Coincide con compose.yaml: 'docker compose up -d' y listo.
+    url: jdbc:postgresql://localhost:5432/reservations
+    username: reservations
+    password: reservations
+    hikari:
+      # Con hasta 100k registros por entidad y consultas por índice, el cuello
+      # de botella no es la base sino las conexiones. Un pool chico y sano rinde
+      # más que uno grande: cada conexión es un proceso del lado de PostgreSQL.
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 3000
+      pool-name: reservations-pool
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      # El esquema lo gobierna Flyway. 'validate' hace que la aplicación no
+      # arranque si el mapeo y las tablas no coinciden, en lugar de fallar
+      # recién en la primera consulta.
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          # Las columnas son TIMESTAMP sin zona y guardan UTC. Esto fija la zona
+          # con la que Hibernate convierte los Instant, para que el valor
+          # escrito no dependa de la zona horaria del servidor.
+          time_zone: UTC
+          batch_size: 50
+        order_inserts: true
+        order_updates: true
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    # Si el esquema ya existe sin historial de Flyway, no lo adopta en silencio.
+    baseline-on-migrate: false
+
+reservations:
+  airport-catalog:
+    # El maestro de aeropuertos cambia muy poco y se consulta en cada operación.
+    cache-ttl: 30m
+  outbox:
+    # Despacho de notificaciones hacia el sistema externo.
+    dispatch-enabled: true
+    dispatch-interval: 5s
+    batch-size: 50
+    max-attempts: 5
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # Sondas de readiness/liveness para el orquestador. La seguridad de estos
+        # endpoints queda fuera del alcance de este esqueleto.
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+logging:
+  level:
+    com.edteam.reservations: INFO

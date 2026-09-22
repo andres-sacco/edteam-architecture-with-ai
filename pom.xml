@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.5.7</version>
+        <relativePath/>
+    </parent>
+
+    <groupId>com.edteam</groupId>
+    <artifactId>flight-reservations</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+    <name>flight-reservations</name>
+    <description>Sistema de reservas de vuelos - esqueleto con arquitectura hexagonal</description>
+
+    <properties>
+        <java.version>21</java.version>
+        <archunit.version>1.2.1</archunit.version>
+    </properties>
+
+    <dependencies>
+        <!--
+          Starter web: levanta Tomcat embebido y deja la aplicación escuchando en
+          el puerto configurado (8080). Todavía no hay endpoints —están fuera del
+          alcance de este esqueleto—, así que el servidor arranca sin rutas
+          propias; al sumar el adaptador REST conviene agregar también
+          spring-boot-starter-validation para validar los DTOs de entrada.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
+        <!--
+          Persistencia: JPA/Hibernate sobre PostgreSQL. Trae spring-tx, así que
+          los @Transactional de los casos de uso ahora sí demarcan transacciones
+          reales (antes eran inertes por falta de TransactionManager).
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- Migraciones versionadas: el esquema lo gobierna Flyway, no Hibernate. -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Test de arquitectura: verifica que las dependencias entre capas no se violen. -->
+        <dependency>
+            <groupId>com.tngtech.archunit</groupId>
+            <artifactId>archunit-junit5</artifactId>
+            <version>${archunit.version}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <!--
+          Testcontainers: los tests de integración corren contra un PostgreSQL
+          real en Docker, que es la única forma de validar de verdad las
+          migraciones de Flyway, los UNIQUE y el locking optimista. Van en la
+          fase verify (failsafe) para que 'mvn test' siga sin necesitar Docker.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-testcontainers</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+            <!--
+              'mvn test' corre sólo los unitarios (*Test): rápidos y sin Docker.
+              'mvn verify' agrega los de integración (*IT), que necesitan Docker.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>integration-test</goal>
+                            <goal>verify</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <compilerArgs>
+                        <arg>-parameters</arg>
+                        <!-- Se excluye 'serial': estas excepciones no se serializan. -->
+                        <arg>-Xlint:all,-serial</arg>
+                    </compilerArgs>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>
