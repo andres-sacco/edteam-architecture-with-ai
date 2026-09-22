@@ -5,6 +5,7 @@ import com.edteam.reservations.infrastructure.adapter.out.persistence.entity.Pas
 import com.edteam.reservations.infrastructure.adapter.out.persistence.entity.ReservationJpaEntity;
 import com.edteam.reservations.infrastructure.adapter.out.persistence.entity.ReservationStatusJpa;
 import com.edteam.reservations.infrastructure.adapter.out.persistence.entity.SegmentJpaEntity;
+import com.edteam.reservations.infrastructure.adapter.out.persistence.entity.UserJpaEntity;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
@@ -55,6 +56,14 @@ public final class JpaEntityFixtures {
                 List.of(segment(100L, "EZE", "SCL", TestFixtures.DEPARTURE)));
     }
 
+    /** Usuario ya persistido, con el id de referencia de los fixtures. */
+    public static UserJpaEntity user() {
+        UserJpaEntity entity = new UserJpaEntity(
+                null, TestFixtures.USER_EMAIL, "Ana", "Pérez", TestFixtures.NOW);
+        ReflectionTestUtils.setField(entity, "id", TestFixtures.USER_ID.value());
+        return entity;
+    }
+
     public static ReservationJpaEntity reservation(long id,
                                                    int version,
                                                    ReservationStatusJpa status,
@@ -62,7 +71,7 @@ public final class JpaEntityFixtures {
                                                    Set<PassengerJpaEntity> passengers,
                                                    UUID idempotencyKey) {
         ReservationJpaEntity entity = new ReservationJpaEntity(
-                TestFixtures.USER_ID.value(),
+                user(),
                 itinerary,
                 status,
                 TestFixtures.NOW,

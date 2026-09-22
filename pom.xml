@@ -20,24 +20,50 @@
     <properties>
         <java.version>21</java.version>
         <archunit.version>1.2.1</archunit.version>
+        <!--
+          Línea 2.8.x: es la que acompaña a Spring Boot 3.5. La 3.x ya apunta a
+          Boot 4 / Spring Framework 7 y no arranca con este parent.
+        -->
+        <springdoc.version>2.8.17</springdoc.version>
     </properties>
 
     <dependencies>
         <!--
-          Starter web: levanta Tomcat embebido y deja la aplicación escuchando en
-          el puerto configurado (8080). Todavía no hay endpoints —están fuera del
-          alcance de este esqueleto—, así que el servidor arranca sin rutas
-          propias; al sumar el adaptador REST conviene agregar también
-          spring-boot-starter-validation para validar los DTOs de entrada.
+          Starter web: levanta Tomcat embebido y sirve los endpoints del
+          adaptador REST de entrada en el puerto configurado (8080).
         -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
 
+        <!--
+          Bean Validation: valida los DTOs de entrada de forma declarativa, de
+          modo que un pedido malformado se rechace con 400 en el borde y no
+          llegue nunca al caso de uso.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
+        <!--
+          springdoc: genera el documento OpenAPI a partir de los controllers,
+          los DTOs y sus anotaciones de validación, y publica Swagger UI para
+          explorarlo y probarlo desde el navegador.
+
+          El starter '-ui' trae también el '-api', así que el documento queda
+          disponible aunque se apague la interfaz (springdoc.swagger-ui.enabled).
+        -->
+        <dependency>
+            <groupId>org.springdoc</groupId>
+            <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+            <version>${springdoc.version}</version>
         </dependency>
 
         <!--

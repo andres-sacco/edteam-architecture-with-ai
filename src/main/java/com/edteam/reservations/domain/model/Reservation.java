@@ -16,8 +16,8 @@ import java.util.Set;
 /**
  * Raíz del agregado: la reserva.
  *
- * <p>Pertenece a un usuario (referenciado por {@link UserId}), apunta a un
- * {@link Itinerary} y lleva uno o más {@link Passenger}. Concentra las reglas
+ * <p>Pertenece a un {@link User}, apunta a un {@link Itinerary} y lleva uno o
+ * más {@link Passenger}. Concentra las reglas
  * de creación, confirmación, modificación y cancelación. No conoce
  * persistencia, HTTP ni Spring: sólo tipos de {@code java.*} y del dominio.
  *
@@ -46,7 +46,7 @@ import java.util.Set;
 public final class Reservation {
 
     private final Optional<ReservationId> id;
-    private final UserId userId;
+    private final User user;
     private final IdempotencyKey idempotencyKey;
     private final Itinerary itinerary;
     private final List<Passenger> passengers;
@@ -56,7 +56,7 @@ public final class Reservation {
     private final long version;
 
     private Reservation(Optional<ReservationId> id,
-                        UserId userId,
+                        User user,
                         IdempotencyKey idempotencyKey,
                         Itinerary itinerary,
                         List<Passenger> passengers,
@@ -65,7 +65,15 @@ public final class Reservation {
                         Instant updatedAt,
                         long version) {
         this.id = Objects.requireNonNull(id, "El id es obligatorio (usar Optional.empty() si no está asignado)");
-        this.userId = Objects.requireNonNull(userId, "El usuario es obligatorio");
+        this.user = Objects.requireNonNull(user, "El usuario es obligatorio");
+        if (user.id().isEmpty()) {
+            // Una reserva se atribuye a un usuario que ya existe: la clave
+            // foránea del modelo de datos no admite otra cosa. Verificarlo acá
+            // evita que el error aparezca recién al persistir.
+            throw new InvalidReservationException(
+                    "No se puede atribuir una reserva al usuario %s: todavía no está dado de alta"
+                            .formatted(user.email()));
+        }
         this.idempotencyKey = Objects.requireNonNull(idempotencyKey, "La clave de idempotencia es obligatoria");
         this.itinerary = Objects.requireNonNull(itinerary, "El itinerario es obligatorio");
         this.status = Objects.requireNonNull(status, "El estado es obligatorio");
@@ -89,7 +97,7 @@ public final class Reservation {
      *                                            o si alguno tiene fecha de nacimiento futura
      * @throws ItineraryAlreadyDepartedException si el itinerario ya arrancó
      */
-    public static Reservation create(UserId userId,
+    public static Reservation create(User user,
                                      IdempotencyKey idempotencyKey,
                                      Itinerary itinerary,
                                      List<Passenger> passengers,
@@ -105,7 +113,7 @@ public final class Reservation {
                             .formatted(itinerary.origin(), itinerary.destination(), itinerary.firstDeparture()));
         }
 
-        return new Reservation(Optional.empty(), userId, idempotencyKey, itinerary, passengers,
+        return new Reservation(Optional.empty(), user, idempotencyKey, itinerary, passengers,
                 ReservationStatus.PENDING, now, now, 0L);
     }
 
@@ -116,7 +124,7 @@ public final class Reservation {
      * ya pasó.
      */
     public static Reservation rehydrate(ReservationId id,
-                                        UserId userId,
+                                        User user,
                                         IdempotencyKey idempotencyKey,
                                         Itinerary itinerary,
                                         List<Passenger> passengers,
@@ -128,7 +136,7 @@ public final class Reservation {
         if (passengers.isEmpty()) {
             throw new InvalidReservationException("La reserva %s no tiene pasajeros".formatted(id));
         }
-        return new Reservation(Optional.of(id), userId, idempotencyKey, itinerary, passengers,
+        return new Reservation(Optional.of(id), user, idempotencyKey, itinerary, passengers,
                 status, createdAt, updatedAt, version);
     }
 
@@ -197,13 +205,13 @@ public final class Reservation {
      */
     public Reservation withId(ReservationId assignedId) {
         Objects.requireNonNull(assignedId, "El id asignado es obligatorio");
-        return new Reservation(Optional.of(assignedId), userId, idempotencyKey, itinerary, passengers,
+        return new Reservation(Optional.of(assignedId), user, idempotencyKey, itinerary, passengers,
                 status, createdAt, updatedAt, version);
     }
 
     /** Devuelve una copia con la versión indicada, tal como quedó almacenada. */
     public Reservation withVersion(long newVersion) {
-        return new Reservation(id, userId, idempotencyKey, itinerary, passengers,
+        return new Reservation(id, user, idempotencyKey, itinerary, passengers,
                 status, createdAt, updatedAt, newVersion);
     }
 
@@ -218,14 +226,14 @@ public final class Reservation {
             throw new IllegalArgumentException(
                     "La lista de pasajeros resueltos debe tener el mismo tamaño que la original");
         }
-        return new Reservation(id, userId, idempotencyKey, itinerary, resolvedPassengers,
+        return new Reservation(id, user, idempotencyKey, itinerary, resolvedPassengers,
                 status, createdAt, updatedAt, version);
     }
 
     /** Devuelve una copia con el itinerario indicado, ya persistido y con su id. */
     public Reservation withItinerary(Itinerary persistedItinerary) {
         Objects.requireNonNull(persistedItinerary, "El itinerario es obligatorio");
-        return new Reservation(id, userId, idempotencyKey, persistedItinerary, passengers,
+        return new Reservation(id, user, idempotencyKey, persistedItinerary, passengers,
                 status, createdAt, updatedAt, version);
     }
 
@@ -243,8 +251,22 @@ public final class Reservation {
                 "La reserva %s todavía no tiene id asignado".formatted(idempotencyKey)));
     }
 
+    /**
+     * Dueño de la reserva.
+     *
+     * <p>Se guarda el usuario y no sólo su id porque hacen falta las dos
+     * caras: los eventos de dominio identifican al destinatario por
+     * {@link UserId} —para que un cambio de email no obligue a reemitirlos— y
+     * la API lo expone por {@link Email}, que es lo que el cliente conoce. Un
+     * único campo obligaría a resolver la otra mitad en cada lectura.
+     */
+    public User user() {
+        return user;
+    }
+
+    /** Id del dueño de la reserva. */
     public UserId userId() {
-        return userId;
+        return user.requireId();
     }
 
     public IdempotencyKey idempotencyKey() {
@@ -276,7 +298,7 @@ public final class Reservation {
     }
 
     private Reservation copyWith(Itinerary newItinerary, ReservationStatus newStatus, Instant now) {
-        return new Reservation(id, userId, idempotencyKey, newItinerary, passengers,
+        return new Reservation(id, user, idempotencyKey, newItinerary, passengers,
                 newStatus, createdAt, now, version);
     }
 
@@ -331,7 +353,7 @@ public final class Reservation {
     @Override
     public String toString() {
         return "Reservation[id=%s, usuario=%s, estado=%s, itinerario=%s-%s, pasajeros=%d, version=%d]"
-                .formatted(describeId(), userId, status, itinerary.origin(), itinerary.destination(),
+                .formatted(describeId(), user.email(), status, itinerary.origin(), itinerary.destination(),
                         passengers.size(), version);
     }
 }

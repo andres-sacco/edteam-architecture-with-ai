@@ -4,6 +4,7 @@ import com.edteam.reservations.application.port.in.CreateReservationCommand;
 import com.edteam.reservations.application.port.in.ItineraryData;
 import com.edteam.reservations.application.port.in.PassengerData;
 import com.edteam.reservations.application.port.in.SegmentData;
+import com.edteam.reservations.application.port.in.UserData;
 import com.edteam.reservations.domain.model.AirportCode;
 import com.edteam.reservations.domain.model.IdempotencyKey;
 import com.edteam.reservations.domain.model.Itinerary;
@@ -14,8 +15,10 @@ import com.edteam.reservations.domain.model.PassengerId;
 import com.edteam.reservations.domain.model.Reservation;
 import com.edteam.reservations.domain.model.ReservationId;
 import com.edteam.reservations.domain.model.ReservationStatus;
+import com.edteam.reservations.domain.model.Email;
 import com.edteam.reservations.domain.model.Segment;
 import com.edteam.reservations.domain.model.SegmentId;
+import com.edteam.reservations.domain.model.User;
 import com.edteam.reservations.domain.model.UserId;
 
 import java.time.Clock;
@@ -48,6 +51,7 @@ public final class TestFixtures {
     public static final String AIRLINE = "AEROLINEAS ARGENTINAS";
 
     public static final UserId USER_ID = UserId.of(1L);
+    public static final String USER_EMAIL = "ana.perez@example.com";
     public static final ReservationId RESERVATION_ID = ReservationId.of(10L);
     public static final IdempotencyKey IDEMPOTENCY_KEY =
             IdempotencyKey.of(UUID.fromString("11111111-1111-1111-1111-111111111111"));
@@ -135,18 +139,28 @@ public final class TestFixtures {
                 List.of(segmentData(EZE, SCL, DEPARTURE), segmentData(SCL, MAD, CONNECTION_DEPARTURE)));
     }
 
+    /** Datos de entrada del usuario que reserva. */
+    public static UserData userData() {
+        return new UserData(USER_EMAIL, "Ana", "Pérez");
+    }
+
+    /** Usuario ya persistido, con el id de referencia. */
+    public static User storedUser() {
+        return User.of(USER_ID, Email.of(USER_EMAIL), "Ana", "Pérez", NOW);
+    }
+
     public static List<PassengerData> passengerData() {
         return List.of(new PassengerData("Ana", "Pérez", LocalDate.of(1990, 5, 20), "30123456"));
     }
 
     public static CreateReservationCommand createCommand() {
         return new CreateReservationCommand(
-                USER_ID.value(), IDEMPOTENCY_KEY.value().toString(), itineraryData(), passengerData());
+                userData(), IDEMPOTENCY_KEY.value().toString(), itineraryData(), passengerData());
     }
 
     /** Reserva nueva, sin id ni versión, en estado PENDING. */
     public static Reservation newReservation() {
-        return Reservation.create(USER_ID, IDEMPOTENCY_KEY, newItinerary(), newPassengers(), NOW);
+        return Reservation.create(storedUser(), IDEMPOTENCY_KEY, newItinerary(), newPassengers(), NOW);
     }
 
     /** Reserva ya persistida, con la versión indicada. */
@@ -158,7 +172,7 @@ public final class TestFixtures {
     public static Reservation storedReservation(long version, ReservationStatus status) {
         return Reservation.rehydrate(
                 RESERVATION_ID,
-                USER_ID,
+                storedUser(),
                 IDEMPOTENCY_KEY,
                 existingItinerary(50L),
                 List.of(existingPassenger(200L)),

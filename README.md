@@ -1,11 +1,12 @@
-# Sistema de reservas de vuelos — esqueleto
+# Sistema de reservas de vuelos
 
 Backend del sistema de reservas de vuelos. **Java 21 + Spring Boot 3.5 + Maven**, con
 arquitectura hexagonal (puertos y adaptadores).
 
-El dominio, los casos de uso y la persistencia sobre PostgreSQL están implementados.
-Endpoints REST y seguridad quedan fuera del alcance a propósito
-(ver [Fuera de alcance](#fuera-de-alcance)).
+El dominio, los casos de uso, la persistencia sobre PostgreSQL y la API REST están
+implementados. El contrato OpenAPI se genera a partir del código con springdoc y se
+publica en `/v3/api-docs`, con **Swagger UI** en `/swagger-ui.html`. La seguridad queda
+fuera del alcance a propósito (ver [Fuera de alcance](#fuera-de-alcance)).
 
 ## Cómo ejecutarlo
 
@@ -20,10 +21,52 @@ docker compose up -d
 ```
 
 La aplicación queda escuchando en **http://localhost:8080** y Flyway crea el esquema en
-el arranque. Todavía no hay endpoints de negocio; para verificar que levantó:
+el arranque. Para verificar que levantó:
 
 ```bash
 curl http://localhost:8080/actuator/health
+```
+
+Y para explorar y probar la API desde el navegador:
+**http://localhost:8080/swagger-ui.html** — el botón *Try it out* ejecuta contra
+`localhost:8080`, el host desde el que estás mirando la UI, no contra un entorno fijo.
+
+El contrato, en YAML o en JSON:
+
+```bash
+curl http://localhost:8080/v3/api-docs.yaml
+```
+
+## La API
+
+Cinco operaciones sobre `/v1/reservations`. No hace falta preparar nada en la base: quien
+reserva viaja en el cuerpo del alta y se da de alta solo la primera vez.
+
+| Método | Ruta | Qué hace |
+|---|---|---|
+| `POST` | `/v1/reservations` | Crea una reserva. Requiere `Idempotency-Key` |
+| `GET` | `/v1/reservations` | Lista con filtros y paginación |
+| `GET` | `/v1/reservations/{id}` | Devuelve una reserva y su `ETag` |
+| `PUT` | `/v1/reservations/{id}` | Cambia el itinerario. Requiere `If-Match` |
+| `DELETE` | `/v1/reservations/{id}` | Cancela (baja lógica). Requiere `If-Match` |
+
+Crear una reserva:
+
+```bash
+curl -i -X POST http://localhost:8080/v1/reservations -H 'Content-Type: application/json' -H "Idempotency-Key: $(uuidgen)" -d '{"user":{"email":"ana.perez@example.com","firstName":"Ana","lastName":"Pérez"},"itinerary":{"price":"1250.50","currency":"USD","segments":[{"originAirportCode":"EZE","destinationAirportCode":"SCL","airline":"AEROLINEAS ARGENTINAS","departureAt":"2027-03-15T22:40:00Z"}]},"passengers":[{"firstName":"Ana","lastName":"Pérez","birthDate":"1990-05-20","documentNumber":"30123456"}]}'
+```
+
+La respuesta trae `Location` y `ETag: "0"`. Ese `ETag` es lo que hay que mandar en
+`If-Match` para modificar o cancelar:
+
+```bash
+curl -i -X DELETE http://localhost:8080/v1/reservations/1 -H 'If-Match: "0"'
+```
+
+Listar con filtros. El usuario se identifica por email, el mismo que se mandó al crear:
+
+```bash
+curl -G http://localhost:8080/v1/reservations --data-urlencode 'userId=ana.perez@example.com' -d 'status=PENDING' -d 'sort=firstDepartureAt,asc' -d 'page=0' -d 'size=20'
 ```
 
 Los tests, separados por lo que necesitan:
@@ -36,7 +79,7 @@ Los tests, separados por lo que necesitan:
 ./mvnw verify
 ```
 
-`test` corre los 180 unitarios: rápidos y sin Docker. `verify` agrega los 27 de
+`test` corre los 244 unitarios: rápidos y sin Docker. `verify` agrega los 43 de
 integración, que levantan un PostgreSQL con Testcontainers.
 
 ## Estructura
@@ -52,10 +95,11 @@ com.edteam.reservations
 │   ├── port/in                 #   Casos de uso + comandos (lo que entra)
 │   ├── port/out                #   Contratos hacia afuera (lo que necesita)
 │   ├── service                 #   Implementación de los casos de uso
+│   ├── query                   #   Criterio de búsqueda y página de resultados
 │   ├── outbox                  #   Modelo del outbox de eventos
 │   └── exception               #   Errores de orquestación
 └── infrastructure              # Detalles reemplazables.
-    ├── adapter/in/rest         #   (vacío) acá van los controllers
+    ├── adapter/in/rest         #   Controllers, DTOs, mappers y manejo de errores
     ├── adapter/in/scheduling   #   Disparador del despacho de notificaciones
     ├── adapter/out/persistence #   PostgreSQL: entidades JPA, mappers, adapter
     ├── adapter/out/airport     #   Maestro de aeropuertos (stub) + cache
@@ -78,6 +122,84 @@ el build si alguien la viola.
 **Por qué hexagonal.** El sistema tiene que ser consumido por web, mobile y partners
 externos. Con la lógica detrás de puertos de entrada, la API REST es un adaptador más:
 mañana se agrega un consumidor de mensajería o un cliente gRPC sin tocar los casos de uso.
+
+**La API es un adaptador, no el sistema.** El contrato OpenAPI se genera desde el código
+con springdoc: sale de los mappings, de los tipos de los DTOs, de sus anotaciones de
+validación y de las `@Operation` / `@Schema` que los describen. No hay archivo que
+mantener, así que no puede quedar viejo.
+
+El costo de generarlo es que **lo documentado vale lo que valgan las anotaciones**: un
+endpoint sin `@Operation` aparece vacío y un código de estado que el advice devuelve pero
+que nadie declaró no aparece en ningún lado, y nada de eso rompe el build por sí solo. Por
+eso `OpenApiContractTest` compara el documento contra tres cosas que no son las
+anotaciones: las rutas que Spring tiene registradas (en los dos sentidos), los códigos de
+estado que `ReservationControllerTest` ejercita contra el controller real, y el cuerpo de
+una respuesta de error de verdad, propiedad por propiedad.
+
+Los DTOs son propios del adaptador y el agregado nunca se serializa —son también los que
+el generador describe—. Dos consecuencias concretas: los ids salen como strings opacos (que en la base sean enteros no es asunto
+del cliente) y la representación no expone ni la versión ni la clave de idempotencia.
+
+**Quién reserva viaja con la reserva.** El sistema no expone un alta de usuarios, así que
+pedir un `userId` en el alta obligaba a que la fila ya estuviera cargada por fuera de la
+aplicación: cualquier id que no existiera chocaba contra la clave foránea. El alta ahora
+lleva el email, el nombre y el apellido de quien reserva, y el usuario se resuelve por
+email: si ya reservó antes se reutiliza su registro, y si no, se lo da de alta.
+
+Es el mismo criterio que el adaptador de persistencia ya aplicaba a segmentos y pasajeros
+—reutilizar la fila por su clave natural— y usa el `UNIQUE` sobre `usuario.email` que el
+modelo de datos ya tenía. Reservar **no** actualiza el perfil de un usuario existente:
+pisarle el nombre con el del último pedido convertiría una reserva en una edición
+encubierta, y cualquiera podría renombrar a otro con sólo conocer su email.
+
+**El email es el identificador del usuario en toda la API.** El `userId` de las respuestas
+y el del filtro del listado son el email, no el id de la base. Es lo único que el cliente
+conoce: manda un email al reservar, así que pedirle después un número que nunca eligió lo
+obliga a guardarse una correspondencia que no es asunto suyo. El id interno sigue existiendo
+—es la clave foránea— pero no cruza el borde.
+
+Del lado del dominio la reserva referencia al `User` completo, no a un escalar, porque
+hacen falta las dos caras: los eventos identifican al destinatario por `UserId` —para que
+un cambio de email no obligue a reemitirlos, como documenta `DomainEvent`— y la API lo
+expone por email. Guardar una sola mitad obligaría a resolver la otra en cada lectura. El
+costo es un join a `usuario` por lectura de reserva, que antes se evitaba a propósito: ese
+trade-off se dio vuelta cuando el email pasó a estar en cada respuesta.
+
+Cuando llegue la autenticación, el usuario saldrá del token y el campo `user` del cuerpo
+desaparece.
+
+**Idempotencia y concurrencia, en el vocabulario de HTTP.** Los dos mecanismos del
+diseño ya existían en los casos de uso; el adaptador los traduce al protocolo en lugar
+de inventar los suyos:
+
+| Diseño | HTTP | Dónde vive la traducción |
+|---|---|---|
+| `idempotencyKey` del comando | Header `Idempotency-Key` en el `POST` | `ReservationController` |
+| `expectedVersion` del comando | `ETag` en las respuestas, `If-Match` al escribir | `EntityVersion` |
+
+La clave va en un header y no en el cuerpo porque describe el intento de ejecución, no
+el recurso. El alta responde **201** cuando crea y **200** cuando reconoce un reintento;
+para poder distinguirlos sin volver a consultar, `CreateReservationUseCase` devuelve
+`CreateReservationResult` (la reserva más si fue alta efectiva) en vez de la reserva sola.
+Cuando dos pedidos con la misma clave corren a la vez, el perdedor recibe
+`DuplicateReservationException` con su transacción ya descartada: el controller reintenta
+**una** vez —desde afuera, en una transacción nueva— y devuelve la reserva ganadora.
+
+**Errores: un solo formato.** Todo error sale como `ProblemDetail` (RFC 7807,
+`application/problem+json`), incluidos los que genera Spring —método no soportado, JSON
+malformado, ruta inexistente—, con un campo `code` estable contra el que los clientes
+pueden programar. El `detail` es texto para humanos. Una excepción no prevista se loguea
+completa del lado del servidor y afuera sale un 500 sin detalle: ni stack traces ni
+mensajes internos.
+
+**Listar sin filtrar Spring Data.** El listado necesitaba paginación, y `Page`,
+`Pageable` y `Specification` son tipos del proveedor. Cruzarlos por el puerto ataría los
+casos de uso a Spring Data y terminaría serializando su estructura hacia el cliente. En
+su lugar la aplicación define `ReservationSearchCriteria` y `ResultPage<T>`, y el
+adaptador los traduce. Del lado de JPA, la página se resuelve en dos consultas: primero
+los ids (una fila por reserva, `LIMIT` real en la base) y después los agregados de esa
+página con `@EntityGraph`. Hacerlo en una sola obligaría a Hibernate a traer todo y
+paginar en memoria, que es justo lo que no se quiere en un listado.
 
 **Maestro de aeropuertos: decisión abierta.** Puede ser una tabla propia o un proveedor
 externo. Justamente por eso los casos de uso dependen de `AirportCatalogPort`, no de una
@@ -108,8 +230,11 @@ contempla:
 
 | Preocupación | Cómo se resuelve |
 |---|---|
-| Dos usuarios modificando la misma reserva | Optimistic locking: `expectedVersion` en los comandos, `@Version` en la entidad → `ConcurrentUpdateException` (409 en REST) |
-| Reservas duplicadas por reintentos | `idempotency_key` con `UNIQUE`: la búsqueda previa cubre el reintento secuencial y la constraint cierra la carrera |
+| Dos usuarios modificando la misma reserva | Optimistic locking: `If-Match` → `expectedVersion` en los comandos, `@Version` en la entidad → `ConcurrentUpdateException` → 409 |
+| Reservas duplicadas por reintentos | `Idempotency-Key` → `idempotency_key` con `UNIQUE`: la búsqueda previa cubre el reintento secuencial y la constraint cierra la carrera |
+| Dos altas simultáneas con la misma clave | El perdedor recibe `DuplicateReservationException` y el controller reintenta una vez, en una transacción nueva |
+| Dos reservas simultáneas del mismo usuario nuevo | `INSERT ... ON CONFLICT DO NOTHING` sobre `usuario`, igual que con segmentos y pasajeros |
+| Paginar un listado con colecciones | Dos consultas (ids paginados + agregados de esa página) y desempate por id, para que la página 2 no repita filas de la página 1 |
 | Dos reservas simultáneas del mismo vuelo | `INSERT ... ON CONFLICT DO NOTHING` al resolver segmentos y pasajeros, para no romper la transacción |
 | Estado compartido entre hilos | El agregado es inmutable: cada operación devuelve una instancia nueva |
 | Latencia y carga sobre el maestro de aeropuertos | Cache con TTL delante del puerto |
@@ -126,28 +251,40 @@ Cada punto tiene su lugar ya preparado:
 
 | Pendiente | Dónde va | Qué hay que hacer |
 |---|---|---|
-| Endpoints REST | `infrastructure/adapter/in/rest` | Controllers contra los puertos de entrada, DTOs propios y un `@RestControllerAdvice` que mapee las excepciones (ver el `package-info.java`) |
+| Seguridad | `adapter/in/rest` + config | No hay autenticación ni autorización: hoy cualquiera puede leer y cancelar cualquier reserva. Va `spring-boot-starter-security` con un esquema Bearer (declarado con `@SecurityScheme`, para que aparezca en el documento generado), los `401`/`403` en las `@ApiResponse` y el filtro de reservas por usuario autenticado en el listado |
 | Outbox persistente | `infrastructure/adapter/out/outbox` | El outbox sigue en memoria porque el modelo de datos no tiene su tabla. Con una tabla `outbox_message` escrita en la misma transacción que la reserva, la notificación deja de perderse si se cae el proceso; el `pollPending` pasa a `SELECT ... FOR UPDATE SKIP LOCKED` |
-| Seguridad | — | `spring-boot-starter-security` junto con el adaptador REST |
-| Casos de uso de usuario | `application` | Hoy la reserva sólo referencia al usuario por id y la clave foránea garantiza que exista. El alta y la consulta de usuarios necesitan su propio puerto |
-| Reintento de la carrera por idempotencia | `adapter/in/rest` | Cuando dos pedidos con la misma clave corren a la vez, el perdedor recibe `DuplicateReservationException`. Reintentar una vez desde el adaptador de entrada devuelve la reserva ganadora |
+| Recurso de usuarios | `application` + `adapter/in/rest` | El alta de usuarios ocurre como efecto de reservar, que alcanza para que la API sea usable pero no es un ciclo de vida: no hay forma de consultar, corregir ni dar de baja a un usuario. Cuando haga falta, va como recurso propio (`/v1/users`) con sus casos de uso |
+| Cambio de email | `application` | Hoy el email identifica al usuario en la API, así que cambiarlo es cambiar de identificador de cara al cliente. Con un recurso de usuarios habrá que decidir si el `userId` de la API pasa a ser un identificador propio y estable, y el email queda como un atributo más |
+| Confirmar una reserva | `adapter/in/rest` | `ConfirmReservationUseCase` existe y está testeado, pero no está expuesto: no entra limpio en el contrato sin un verbo en la URL o un `PATCH` de estado, y la transición va a colgar del resultado del pago. Hay que decidir la forma antes de publicarla |
+| Contrato: el 500 | `ReservationController` | Las `@ApiResponse` declaran 200/201/400/404/409, que son las respuestas del diseño. La aplicación puede responder 500 ante un error no previsto (cuerpo `ProblemDetail`, código `INTERNAL_ERROR`) y eso todavía no está declarado |
+| Swagger UI abierta | `application.yml` | La UI está expuesta sin autenticación y permite ejecutar pedidos contra la API. Junto con la seguridad hay que decidir si se publica y para quién (`springdoc.swagger-ui.enabled`) |
 
 ## Tests
 
-207 tests. Los unitarios (`mvn test`) no necesitan infraestructura; los de integración
+287 tests. Los unitarios (`mvn test`) no necesitan infraestructura; los de integración
 (`mvn verify`) levantan PostgreSQL con Testcontainers.
 
-**Unitarios (180)**
+**Unitarios (244)**
 
 - **Dominio** — reglas del agregado y de los value objects, con tiempo fijo.
 - **Aplicación** — casos de uso con los puertos mockeados: qué se persiste, qué se
   notifica y, sobre todo, qué **no** se hace cuando una validación falla.
-- **Mappers** — la traducción entre dominio y JPA en los dos sentidos.
+- **API** — `ReservationControllerTest` es el slice de la capa web con los puertos
+  mockeados: códigos de estado, `Location`, `ETag`, el comando que recibe cada caso de
+  uso, y el cuerpo de error de cada una de las traducciones (400/404/409), incluidos los
+  errores del propio framework.
+- **Contrato** — `OpenApiContractTest` verifica que el documento **generado** describa de
+  verdad esta API: operaciones contra rutas registradas en los dos sentidos, códigos de
+  estado contra los que el adaptador realmente devuelve, el esquema de error contra el
+  cuerpo de un error real, y los parámetros de consulta del listado uno por uno.
+- **Mappers** — la traducción entre dominio y JPA, y entre DTOs y comandos, en los dos
+  sentidos.
 - **Adaptadores** — cache del maestro de aeropuertos, outbox y notificaciones.
 - **Arquitectura** — ArchUnit sobre las reglas de dependencia entre capas, incluida la de
-  que el dominio no importe `jakarta.persistence`.
+  que el dominio no importe `jakarta.persistence` y la de que los adaptadores de entrada
+  hablen con los puertos y no con los servicios.
 
-**Integración (27)**
+**Integración (43)**
 
 - `ReservationPersistenceAdapterIT` — el adaptador contra PostgreSQL: reutilización de
   segmentos y pasajeros, orden de los tramos, `UNIQUE` de idempotencia, clave foránea de
@@ -155,4 +292,11 @@ Cada punto tiene su lugar ya preparado:
   modificando la misma reserva; cuatro reservando el mismo vuelo a la vez).
 - `ReservationsApplicationIT` — levanta el contexto completo, valida que el mapeo coincida
   con el esquema de Flyway y corre el flujo crear → consultar → confirmar → modificar →
-  cancelar, más la idempotencia y el despacho del outbox.
+  cancelar, más la idempotencia, el alta y la reutilización del usuario, y el despacho del
+  outbox.
+- `ReservationApiIT` — el mismo flujo pero **por HTTP** contra la base real: el `ETag` de
+  una respuesta usado en el `If-Match` de la siguiente, el reintento que devuelve 200 sin
+  duplicar filas, el `ETag` viejo que da 409 sin escribir, el listado con sus filtros, su
+  orden y su paginación resueltos en SQL, el alta del usuario como parte de la reserva —con
+  la base arrancando vacía—, el filtro del listado por email, y el documento OpenAPI
+  generado por el contexto completo, con Swagger UI respondiendo.

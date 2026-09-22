@@ -30,5 +30,25 @@ services:
       start_period: 10s
     restart: unless-stopped
 
+  # Catálogo de vuelos (servicio externo simulado) y su base MySQL.
+  api-catalog:
+    image: adschosen/api-catalog:1.1.0
+    container_name: api-catalog
+    ports:
+      - "6070:6070"
+    depends_on:
+      - api-catalog-db
+    restart: always
+
+  api-catalog-db:
+    image: mysql:8.0
+    container_name: api-catalog-db
+    environment:
+      MYSQL_DATABASE: flights_catalog
+      MYSQL_ROOT_PASSWORD: muppet
+    ports:
+      - "3310:3306"
+    restart: always
+
 volumes:
   postgres-data:

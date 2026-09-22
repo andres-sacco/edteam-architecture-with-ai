@@ -3,13 +3,17 @@ package com.edteam.reservations.application.service;
 import com.edteam.reservations.application.port.in.ItineraryData;
 import com.edteam.reservations.application.port.in.PassengerData;
 import com.edteam.reservations.application.port.in.SegmentData;
+import com.edteam.reservations.application.port.in.UserData;
 import com.edteam.reservations.domain.model.AirportCode;
+import com.edteam.reservations.domain.model.Email;
 import com.edteam.reservations.domain.model.Itinerary;
 import com.edteam.reservations.domain.model.Money;
 import com.edteam.reservations.domain.model.Passenger;
 import com.edteam.reservations.domain.model.Segment;
+import com.edteam.reservations.domain.model.User;
 import org.springframework.stereotype.Component;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 
@@ -35,6 +39,18 @@ public class ItineraryAssembler {
                 .toList();
 
         return Itinerary.newItinerary(new Money(data.price(), data.currency()), segments);
+    }
+
+    /**
+     * Candidato a usuario, todavía sin id.
+     *
+     * <p>{@code registeredAt} lo decide el caso de uso a partir del reloj
+     * inyectado, no el cliente: es un dato del sistema. Si el usuario ya
+     * existe, el adaptador de salida conserva el que tenía.
+     */
+    public User toUser(UserData data, Instant now) {
+        Objects.requireNonNull(data, "Los datos del usuario son obligatorios");
+        return User.newUser(Email.of(data.email()), data.firstName(), data.lastName(), now);
     }
 
     public List<Passenger> toPassengers(List<PassengerData> data) {

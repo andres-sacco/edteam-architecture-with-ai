@@ -2,21 +2,24 @@ package com.edteam.reservations.application.service;
 
 import com.edteam.reservations.application.exception.DuplicateReservationException;
 import com.edteam.reservations.application.port.in.CreateReservationCommand;
+import com.edteam.reservations.application.port.in.CreateReservationResult;
 import com.edteam.reservations.application.port.in.CreateReservationUseCase;
 import com.edteam.reservations.application.port.out.EventOutboxPort;
 import com.edteam.reservations.application.port.out.ReservationRepositoryPort;
+import com.edteam.reservations.application.port.out.UserRepositoryPort;
 import com.edteam.reservations.domain.event.ReservationCreated;
 import com.edteam.reservations.domain.model.IdempotencyKey;
 import com.edteam.reservations.domain.model.Itinerary;
 import com.edteam.reservations.domain.model.Passenger;
 import com.edteam.reservations.domain.model.Reservation;
-import com.edteam.reservations.domain.model.UserId;
+import com.edteam.reservations.domain.model.User;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
+import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -47,6 +50,17 @@ import java.util.Optional;
  * </ol>
  * En ninguno de los dos casos se notifica de nuevo: la notificación corresponde
  * a la reserva que se creó, no a cada intento.
+ *
+ * <h2>El usuario</h2>
+ * Se resuelve por email: si ya reservó antes se reutiliza su fila, y si no, se
+ * da de alta. Es el mismo criterio que el adaptador de persistencia aplica a
+ * segmentos y pasajeros, y por el mismo motivo: la clave natural del modelo de
+ * datos es lo que permite reconocer a la misma entidad entre reservas.
+ *
+ * <p>Se resuelve <em>después</em> de las validaciones del itinerario y de los
+ * pasajeros: no tiene sentido dar de alta a alguien por un pedido que se va a
+ * rechazar. Como todo ocurre en la misma transacción, un fallo posterior
+ * tampoco deja el usuario suelto.
  */
 @Service
 public class CreateReservationService implements CreateReservationUseCase {
@@ -54,17 +68,20 @@ public class CreateReservationService implements CreateReservationUseCase {
     private static final Logger log = LoggerFactory.getLogger(CreateReservationService.class);
 
     private final ReservationRepositoryPort reservationRepository;
+    private final UserRepositoryPort userRepository;
     private final ItineraryAssembler itineraryAssembler;
     private final AirportExistenceValidator airportValidator;
     private final EventOutboxPort eventOutbox;
     private final Clock clock;
 
     public CreateReservationService(ReservationRepositoryPort reservationRepository,
+                                    UserRepositoryPort userRepository,
                                     ItineraryAssembler itineraryAssembler,
                                     AirportExistenceValidator airportValidator,
                                     EventOutboxPort eventOutbox,
                                     Clock clock) {
         this.reservationRepository = Objects.requireNonNull(reservationRepository);
+        this.userRepository = Objects.requireNonNull(userRepository);
         this.itineraryAssembler = Objects.requireNonNull(itineraryAssembler);
         this.airportValidator = Objects.requireNonNull(airportValidator);
         this.eventOutbox = Objects.requireNonNull(eventOutbox);
@@ -73,7 +90,7 @@ public class CreateReservationService implements CreateReservationUseCase {
 
     @Override
     @Transactional
-    public Reservation create(CreateReservationCommand command) {
+    public CreateReservationResult create(CreateReservationCommand command) {
         Objects.requireNonNull(command, "El comando es obligatorio");
 
         IdempotencyKey idempotencyKey = IdempotencyKey.of(command.idempotencyKey());
@@ -82,23 +99,27 @@ public class CreateReservationService implements CreateReservationUseCase {
             Reservation existing = alreadyCreated.get();
             log.info("Reintento con clave {}: se devuelve la reserva existente id={}",
                     idempotencyKey, existing.requireId());
-            return existing;
+            return CreateReservationResult.alreadyExisted(existing);
         }
 
         Itinerary itinerary = itineraryAssembler.toItinerary(command.itinerary());
         airportValidator.validate(itinerary);
         List<Passenger> passengers = itineraryAssembler.toPassengers(command.passengers());
 
+        Instant now = clock.instant();
+        User user = userRepository.findOrRegister(itineraryAssembler.toUser(command.user(), now));
+
         Reservation reservation = Reservation.create(
-                UserId.of(command.userId()), idempotencyKey, itinerary, passengers, clock.instant());
+                user, idempotencyKey, itinerary, passengers, now);
 
         Reservation saved = reservationRepository.save(reservation);
 
         eventOutbox.enqueue(List.of(ReservationCreated.of(saved)));
 
         log.info("Reserva creada id={} usuario={} itinerario={}-{} pasajeros={}",
-                saved.requireId(), saved.userId(), saved.itinerary().origin(), saved.itinerary().destination(),
+                saved.requireId(), saved.user().email(), saved.itinerary().origin(),
+                saved.itinerary().destination(),
                 saved.passengers().size());
-        return saved;
+        return CreateReservationResult.created(saved);
     }
 }

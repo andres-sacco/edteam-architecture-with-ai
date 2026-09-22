@@ -7,6 +7,7 @@ import com.edteam.reservations.application.port.in.CancelReservationUseCase;
 import com.edteam.reservations.application.port.in.ConfirmReservationCommand;
 import com.edteam.reservations.application.port.in.ConfirmReservationUseCase;
 import com.edteam.reservations.application.port.in.CreateReservationCommand;
+import com.edteam.reservations.application.port.in.CreateReservationResult;
 import com.edteam.reservations.application.port.in.CreateReservationUseCase;
 import com.edteam.reservations.application.port.in.DispatchPendingNotificationsUseCase;
 import com.edteam.reservations.application.port.in.GetReservationUseCase;
@@ -74,16 +75,17 @@ class ReservationsApplicationIT extends AbstractPostgresIT {
     @Autowired
     private Clock clock;
 
-    private long userId;
-
     @BeforeEach
-    void createUser() {
-        userId = insertUser("ana.perez@example.com");
+    void resetOutbox() {
+        // El outbox vive en memoria y el contexto se comparte entre los tests
+        // de la clase: sin esto, los eventos de un test se cuentan en el
+        // siguiente. Es el equivalente al TRUNCATE de la base.
+        eventOutbox.clear();
     }
 
     private CreateReservationCommand createCommand(Instant departure) {
         return new CreateReservationCommand(
-                userId,
+                TestFixtures.userData(),
                 UUID.randomUUID().toString(),
                 new com.edteam.reservations.application.port.in.ItineraryData(
                         new java.math.BigDecimal("1250.50"), "USD",
@@ -117,7 +119,7 @@ class ReservationsApplicationIT extends AbstractPostgresIT {
     void runsTheFullReservationFlow() {
         Instant departure = clock.instant().plus(Duration.ofDays(30));
 
-        Reservation created = createReservation.create(createCommand(departure));
+        Reservation created = createReservation.create(createCommand(departure)).reservation();
         assertThat(created.status()).isEqualTo(ReservationStatus.PENDING);
         assertThat(created.version()).isZero();
         assertThat(created.id()).isPresent();
@@ -158,10 +160,13 @@ class ReservationsApplicationIT extends AbstractPostgresIT {
     void isIdempotentOnRetry() {
         CreateReservationCommand command = createCommand(clock.instant().plus(Duration.ofDays(40)));
 
-        Reservation primera = createReservation.create(command);
-        Reservation reintento = createReservation.create(command);
+        CreateReservationResult primera = createReservation.create(command);
+        CreateReservationResult reintento = createReservation.create(command);
 
-        assertThat(reintento.requireId()).isEqualTo(primera.requireId());
+        assertThat(primera.created()).isTrue();
+        // El reintento no da de alta nada: es lo que el adaptador traduce a 200 en lugar de 201.
+        assertThat(reintento.created()).isFalse();
+        assertThat(reintento.reservation().requireId()).isEqualTo(primera.reservation().requireId());
         assertThat(countRows("reserva")).isEqualTo(1L);
         // Una sola notificación: la del alta, no una por intento.
         assertThat(eventOutbox.findByStatus(OutboxStatus.PENDING))
@@ -179,32 +184,54 @@ class ReservationsApplicationIT extends AbstractPostgresIT {
         // Misma clave, otro contenido: sigue siendo el mismo intento para el cliente,
         // así que se devuelve la reserva ya creada en lugar de una nueva.
         CreateReservationCommand mismaClaveOtroVuelo = new CreateReservationCommand(
-                userId, command.idempotencyKey(),
+                TestFixtures.userData(), command.idempotencyKey(),
                 new com.edteam.reservations.application.port.in.ItineraryData(
                         new java.math.BigDecimal("999.00"), "USD",
                         List.of(TestFixtures.segmentData(TestFixtures.EZE, TestFixtures.GRU, departure))),
                 TestFixtures.passengerData());
 
-        assertThat(createReservation.create(mismaClaveOtroVuelo).itinerary().destination())
+        assertThat(createReservation.create(mismaClaveOtroVuelo).reservation().itinerary().destination())
                 .isEqualTo(TestFixtures.SCL);
         assertThat(countRows("reserva")).isEqualTo(1L);
     }
 
     @Test
-    @DisplayName("una reserva para un usuario inexistente se rechaza por la clave foránea")
-    void rejectsReservationForUnknownUser() {
-        CreateReservationCommand command = new CreateReservationCommand(
-                999_999L, UUID.randomUUID().toString(),
-                new com.edteam.reservations.application.port.in.ItineraryData(
-                        new java.math.BigDecimal("100.00"), "USD",
-                        List.of(TestFixtures.segmentData(TestFixtures.EZE, TestFixtures.SCL,
-                                clock.instant().plus(Duration.ofDays(10))))),
-                TestFixtures.passengerData());
+    @DisplayName("da de alta al usuario cuando es su primera reserva")
+    void registersTheUserOnTheirFirstReservation() {
+        assertThat(countRows("usuario")).isZero();
 
-        assertThatThrownBy(() -> createReservation.create(command))
-                .isInstanceOf(com.edteam.reservations.application.exception.UnknownUserException.class);
+        Reservation created = createReservation.create(
+                createCommand(clock.instant().plus(Duration.ofDays(10)))).reservation();
 
-        assertThat(countRows("reserva")).isZero();
+        assertThat(countRows("usuario")).isEqualTo(1L);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT email FROM usuario WHERE id = ?", String.class, created.userId().value()))
+                .isEqualTo(TestFixtures.USER_EMAIL);
+    }
+
+    @Test
+    @DisplayName("la segunda reserva del mismo email reutiliza el usuario en vez de duplicarlo")
+    void reusesTheUserAcrossReservations() {
+        Reservation primera = createReservation.create(
+                createCommand(clock.instant().plus(Duration.ofDays(10)))).reservation();
+        Reservation segunda = createReservation.create(
+                createCommand(clock.instant().plus(Duration.ofDays(20)))).reservation();
+
+        assertThat(segunda.userId()).isEqualTo(primera.userId());
+        assertThat(countRows("usuario")).isEqualTo(1L);
+        assertThat(countRows("reserva")).isEqualTo(2L);
+    }
+
+    @Test
+    @DisplayName("reservar no le pisa el perfil al usuario que ya existe")
+    void doesNotOverwriteAnExistingProfile() {
+        long existente = insertUser(TestFixtures.USER_EMAIL);
+
+        Reservation created = createReservation.create(
+                createCommand(clock.instant().plus(Duration.ofDays(10)))).reservation();
+
+        assertThat(created.userId().value()).isEqualTo(existente);
+        assertThat(countRows("usuario")).isEqualTo(1L);
     }
 
     @Test
@@ -212,7 +239,7 @@ class ReservationsApplicationIT extends AbstractPostgresIT {
     void notifiesEveryRelevantOperation() {
         Instant departure = clock.instant().plus(Duration.ofDays(45));
 
-        Reservation created = createReservation.create(createCommand(departure));
+        Reservation created = createReservation.create(createCommand(departure)).reservation();
         Reservation confirmed = confirmReservation.confirm(
                 new ConfirmReservationCommand(created.requireId().value(), created.version()));
         cancelReservation.cancel(new CancelReservationCommand(created.requireId().value(), confirmed.version()));
@@ -239,7 +266,8 @@ class ReservationsApplicationIT extends AbstractPostgresIT {
     @Test
     @DisplayName("una modificación con versión vieja se rechaza con 409 de negocio")
     void rejectsStaleVersion() {
-        Reservation created = createReservation.create(createCommand(clock.instant().plus(Duration.ofDays(60))));
+        Reservation created = createReservation.create(
+                createCommand(clock.instant().plus(Duration.ofDays(60)))).reservation();
         confirmReservation.confirm(new ConfirmReservationCommand(created.requireId().value(), 0L));
 
         assertThatThrownBy(() -> cancelReservation.cancel(

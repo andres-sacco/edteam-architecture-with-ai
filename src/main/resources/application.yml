@@ -64,6 +64,37 @@ reservations:
     batch-size: 50
     max-attempts: 5
 
+springdoc:
+  # No se declara 'springdoc.open-api.servers': sin esa lista, el documento sale
+  # con el origen del pedido que lo pidió, así que Swagger UI ejecuta siempre
+  # contra el host desde el que se la está mirando (en local, localhost:8080).
+  #
+  # Con una lista fija encabezada por producción, el botón "Try it out" del
+  # entorno local dispararía pedidos reales contra producción. Si un entorno
+  # necesita publicar su lista de servidores, la declara acá sin tocar código:
+  #
+  #   open-api:
+  #     servers:
+  #       - url: https://api.edteam.example
+  #         description: Producción
+  #       - url: https://api.sandbox.edteam.example
+  #         description: Sandbox para integraciones de partners
+  api-docs:
+    # El documento generado. Es la fuente de verdad del contrato: sale de los
+    # controllers, los DTOs y sus anotaciones, así que no puede quedar viejo.
+    path: /v3/api-docs
+  # Claves ordenadas: dos generaciones del mismo código producen el mismo
+  # archivo, así el documento se puede versionar y su diff se puede revisar.
+  writer-with-order-by-keys: true
+  swagger-ui:
+    path: /swagger-ui.html
+    tags-sorter: alpha
+    display-request-duration: true
+    # Swagger UI queda expuesta porque todavía no hay autenticación. En cuanto
+    # se sume seguridad hay que decidir si se publica y para quién: una UI que
+    # permite ejecutar pedidos contra la API productiva no va abierta.
+    enabled: true
+
 management:
   endpoints:
     web:
