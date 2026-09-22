@@ -55,6 +55,43 @@ public final class EntityVersion {
         }
     }
 
+    /**
+     * {@code true} si el {@code If-None-Match} recibido incluye la versión
+     * indicada, es decir: si el cliente ya tiene esta representación.
+     *
+     * <p>A diferencia de {@link #parseIfMatch(String)}, acá nada se rechaza. La
+     * semántica de los dos headers es opuesta: {@code If-Match} protege una
+     * escritura y sin él no hay forma de detectar una carrera, así que un valor
+     * malformado tiene que ser un 400. {@code If-None-Match} sólo pregunta
+     * "¿cambió?", y ante un valor que no se entiende la respuesta correcta es
+     * la representación completa —un {@code 200}, no un error—: el cliente
+     * pierde el ahorro y nada más.
+     *
+     * <p>Se admite la lista separada por comas y el comodín {@code *}, que
+     * significa "cualquier representación existente": si llegamos hasta acá, la
+     * reserva existe.
+     */
+    public static boolean matchesIfNoneMatch(String ifNoneMatch, long version) {
+        if (ifNoneMatch == null || ifNoneMatch.isBlank()) {
+            return false;
+        }
+
+        String expected = toETag(version);
+        for (String candidate : ifNoneMatch.split(",")) {
+            String value = candidate.trim();
+            if ("*".equals(value)) {
+                return true;
+            }
+            if (value.startsWith("W/")) {
+                value = value.substring(2).trim();
+            }
+            if (expected.equals(value)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** El {@code If-Match} recibido no es un {@code ETag} de esta API. */
     public static class InvalidIfMatchException extends RuntimeException {
 

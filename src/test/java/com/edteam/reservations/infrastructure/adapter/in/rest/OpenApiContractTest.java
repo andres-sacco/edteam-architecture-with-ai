@@ -86,7 +86,7 @@ class OpenApiContractTest {
     private static final Map<String, Set<String>> EXPECTED_STATUS_CODES = Map.of(
             "post " + RESERVATIONS, Set.of("200", "201", "400", "409"),
             "get " + RESERVATIONS, Set.of("200", "400"),
-            "get " + RESERVATION, Set.of("200", "400", "404"),
+            "get " + RESERVATION, Set.of("200", "304", "400", "404"),
             "put " + RESERVATION, Set.of("200", "400", "404", "409"),
             "delete " + RESERVATION, Set.of("200", "400", "404", "409"));
 
@@ -115,6 +115,14 @@ class OpenApiContractTest {
 
     @MockitoBean
     private CancelReservationUseCase cancelReservation;
+
+    /**
+     * El cache de versiones es una dependencia del controller. Acá alcanza con
+     * un mock: lo que se verifica es el documento, no el comportamiento del
+     * cache, y un mock devuelve siempre un miss, o sea el camino al origen.
+     */
+    @MockitoBean
+    private ReservationVersionCache versionCache;
 
     @BeforeAll
     static void resetCache() {
@@ -267,6 +275,24 @@ class OpenApiContractTest {
                 .get("headers").has("ETag")).isTrue();
         assertThat(paths.get(RESERVATION).get("delete").get("responses").get("200")
                 .get("headers").has("ETag")).isTrue();
+    }
+
+    @Test
+    @DisplayName("documenta If-None-Match y el 304, que es lo que hace usable la lectura condicional")
+    void documentsTheConditionalRead() throws Exception {
+        // Un 304 que la API devuelve y el documento no menciona convierte al
+        // cliente generado en uno que trata la respuesta como un error.
+        JsonNode header = parameterOf(RESERVATION, "get", "If-None-Match");
+
+        assertThat(header).as("parámetro If-None-Match en el GET").isNotNull();
+        assertThat(header.get("in").asText()).isEqualTo("header");
+        assertThat(header.get("required").asBoolean())
+                .as("If-None-Match es opcional, a diferencia de If-Match")
+                .isFalse();
+
+        JsonNode notModified = document().get("paths").get(RESERVATION).get("get").get("responses").get("304");
+        assertThat(notModified).as("respuesta 304 declarada").isNotNull();
+        assertThat(notModified.get("headers").has("ETag")).isTrue();
     }
 
     @Test

@@ -1,0 +1,1010 @@
+# Contrato de la API de Reservas de Vuelos (OpenAPI 3.0).
+#
+# Generado por springdoc a partir de los controllers, los DTOs y sus anotaciones
+# de Bean Validation, y convertido de OpenAPI 3.1 a 3.0.
+#
+# No editar a mano: la fuente de verdad es el codigo. Para regenerarlo:
+#   curl http://localhost:8080/v3/api-docs.yaml
+
+openapi: 3.0.3
+info:
+  contact:
+    email: reservas@edteam.example
+    name: Equipo de Reservas
+  description: |
+    Permite crear, consultar, listar, actualizar y cancelar reservas de vuelos.
+    Una reserva pertenece a un único usuario, tiene un itinerario (compuesto por
+    segmentos ordenados) y al menos un pasajero.
+
+    ## Principios del contrato
+
+    - **El contrato es propio de la API.** Los esquemas no son el modelo de dominio
+      ni el de persistencia: son una representación pensada para múltiples
+      consumidores (web, mobile, partners). El modelo interno puede cambiar sin
+      romper este contrato, y viceversa.
+    - **Identificadores opacos.** Todo `id` es un `string` sin semántica para el
+      cliente. Que hoy sea un entero en la base es un detalle de implementación.
+    - **Versionado en la URL.** Los cambios incompatibles viajan en un `/v2`; dentro
+      de `/v1` sólo se agregan campos opcionales. Los clientes deben ignorar los
+      campos que no conozcan.
+    - **Concurrencia con ETag.** La versión del recurso se expresa con el header
+      `ETag` y se controla con `If-Match`. El número de versión interno no forma
+      parte del cuerpo de ninguna representación.
+    - **Importes como string.** Los montos se serializan en decimal exacto
+      (`"1350.00"`) para evitar la pérdida de precisión de los flotantes IEEE en los
+      clientes JavaScript.
+    - **Errores con RFC 7807.** Todas las respuestas de error usan
+      `application/problem+json`, con un campo `code` estable y legible por máquina
+      para que el cliente no tenga que parsear textos.
+
+    ## Idempotencia
+
+    El alta exige un header `Idempotency-Key` (un UUID que genera el cliente). Clave
+    nueva responde **201**; clave ya usada responde **200** con la reserva que se
+    creó con ella, sin duplicar nada. La clave manda sobre el cuerpo: un reintento
+    con la misma clave y contenido distinto devuelve igual la reserva original.
+
+    ## Concurrencia optimista
+
+    Las lecturas devuelven un `ETag`. Modificar o cancelar exige mandarlo en
+    `If-Match`. Si la reserva cambió mientras tanto, la operación se rechaza con
+    **409** y no escribe nada.
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+  title: API de Reservas de Vuelos
+  version: 1.0.0
+servers:
+- url: http://localhost:8080
+  description: Generated server url
+tags:
+- description: Ciclo de vida de las reservas de vuelos.
+  name: Reservas
+paths:
+  /v1/reservations:
+    get:
+      description: |-
+        Devuelve una página de reservas, de la más reciente a la más antigua.
+
+        Todos los filtros son opcionales y se combinan con AND. La paginación
+        es obligatoria e incondicional: si el cliente no envía `page` y `size`
+        se aplican los valores por defecto, nunca se devuelve la colección
+        completa.
+      operationId: listReservations
+      parameters:
+      - description: Devuelve sólo las reservas del usuario indicado. El usuario se identifica por su
+          email, igual que en el alta.
+        example: ana.perez@example.com
+        in: query
+        name: userId
+        required: false
+        schema:
+          type: string
+          format: email
+          description: Devuelve sólo las reservas del usuario indicado. El usuario se identifica por su
+            email, igual que en el alta.
+          example: ana.perez@example.com
+          maxLength: 150
+          minLength: 0
+      - description: 'Devuelve sólo las reservas en alguno de los estados indicados. Repetible: `?status=PENDING&status=CONFIRMED`.'
+        in: query
+        name: status
+        required: false
+        schema:
+          type: array
+          description: 'Devuelve sólo las reservas en alguno de los estados indicados. Repetible: `?status=PENDING&status=CONFIRMED`.'
+          items:
+            type: string
+            description: |-
+              Estado de la reserva dentro del contrato de la API. El conjunto de valores
+              es propio de la API: los literales que use el almacenamiento interno no se
+              filtran acá.
+
+              - `PENDING`: creada, todavía sin confirmar.
+              - `CONFIRMED`: confirmada y vigente.
+              - `CANCELLED`: cancelada; el registro se conserva por trazabilidad.
+
+              Los clientes deben tolerar valores nuevos: agregar un estado es un cambio
+              compatible dentro de `/v1`.
+            enum:
+            - PENDING
+            - CONFIRMED
+            - CANCELLED
+            example: PENDING
+      - description: Devuelve las reservas cuyo primer tramo despega en esta fecha/hora o después.
+        example: '2027-03-01T00:00:00Z'
+        in: query
+        name: departureFrom
+        required: false
+        schema:
+          type: string
+          format: date-time
+          description: Devuelve las reservas cuyo primer tramo despega en esta fecha/hora o después.
+          example: '2027-03-01T00:00:00Z'
+      - description: Devuelve las reservas cuyo primer tramo despega en esta fecha/hora o antes. Si es
+          anterior a `departureFrom`, la respuesta es 400.
+        example: '2027-03-31T23:59:59Z'
+        in: query
+        name: departureTo
+        required: false
+        schema:
+          type: string
+          format: date-time
+          description: Devuelve las reservas cuyo primer tramo despega en esta fecha/hora o antes. Si
+            es anterior a `departureFrom`, la respuesta es 400.
+          example: '2027-03-31T23:59:59Z'
+      - description: Número de página, base 0.
+        in: query
+        name: page
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 0
+          description: Número de página, base 0.
+          minimum: 0
+      - description: Cantidad de elementos por página.
+        in: query
+        name: size
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 20
+          description: Cantidad de elementos por página.
+          maximum: 100
+          minimum: 1
+      - description: Criterio de ordenamiento, como `campo,dirección`. Los campos ordenables son parte
+          del contrato y no del modelo interno.
+        in: query
+        name: sort
+        required: false
+        schema:
+          type: string
+          default: createdAt,desc
+          description: Criterio de ordenamiento, como `campo,dirección`. Los campos ordenables son parte
+            del contrato y no del modelo interno.
+          enum:
+          - createdAt,asc
+          - createdAt,desc
+          - firstDepartureAt,asc
+          - firstDepartureAt,desc
+          pattern: ^(createdAt|firstDepartureAt),(asc|desc)$
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReservationPage'
+          description: Página de reservas. Puede venir vacía; eso no es un error.
+        '400':
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+          description: Algún parámetro de consulta es inválido.
+      summary: Listar reservas
+      tags:
+      - Reservas
+    post:
+      description: |-
+        Crea una reserva en estado `PENDING` para el usuario indicado.
+
+        ## El usuario
+
+        Se lo identifica por su email, que viaja en el cuerpo junto con su
+        nombre. Si ya reservó antes se reutiliza su registro; si es la
+        primera vez, se lo da de alta como parte de la reserva. No hace
+        falta —ni es posible— darlo de alta por separado: la API no expone
+        un recurso de usuarios.
+
+        El email es también su identificador en el resto de la API: vuelve
+        en `userId` de la respuesta y es lo que se pasa como `userId` para
+        filtrar el listado.
+
+        ## Idempotencia
+
+        El header `Idempotency-Key` es obligatorio: el cliente genera un UUID
+        por intento de reserva y lo reenvía en cada reintento.
+
+        - Clave nueva → se crea la reserva y se responde **201**, con
+          `Location` apuntando al recurso creado.
+        - Clave ya usada → se responde **200** con la reserva que se creó con
+          esa clave. El reintento es seguro y no duplica nada.
+
+        La clave manda sobre el cuerpo: si un reintento llega con la misma
+        clave y un contenido distinto, se devuelve igual la reserva original
+        y el contenido nuevo se ignora. La clave identifica *el intento*, y
+        dos intentos con la misma clave son el mismo pedido para el cliente.
+
+        Cuando dos pedidos con la misma clave llegan a la vez, la restricción
+        de unicidad del almacenamiento deja pasar a uno solo; el otro se
+        resuelve internamente y también recibe **200** con la reserva
+        ganadora.
+      operationId: createReservation
+      parameters:
+      - description: |-
+          UUID generado por el cliente que identifica el intento de
+          creación. Debe mantenerse constante entre reintentos del mismo
+          pedido y ser distinto entre pedidos distintos.
+        example: 3f1a9c7e-0f6e-4a39-9d2c-8b5f0c1e7a44
+        in: header
+        name: Idempotency-Key
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateReservationRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reservation'
+          description: 'Reintento: la clave ya había sido usada. Devuelve la reserva creada con esa clave,
+            sin crear una nueva.'
+          headers:
+            ETag:
+              description: Versión actual del recurso. Se envía tal cual en `If-Match` al actualizar o
+                cancelar.
+              schema:
+                type: string
+                example: '"0"'
+              style: simple
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reservation'
+          description: Reserva creada.
+          headers:
+            ETag:
+              description: Versión actual del recurso. Se envía tal cual en `If-Match` al actualizar o
+                cancelar.
+              schema:
+                type: string
+                example: '"0"'
+              style: simple
+            Location:
+              description: URI de la reserva creada.
+              schema:
+                type: string
+                example: /v1/reservations/1042
+              style: simple
+        '400':
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+          description: |-
+            El pedido es inválido. Además de los errores de formato, incluye
+            los datos que existen pero no resuelven:
+
+            - `USER_NOT_FOUND`: el usuario del cuerpo no se pudo
+              resolver. Es 400 y no 404 porque el recurso que identifica
+              la URI —la colección de reservas— sí existe: lo que está
+              mal es un dato del cuerpo.
+            - `UNKNOWN_AIRPORT`: algún código de aeropuerto no está en el
+              catálogo.
+            - `ITINERARY_ALREADY_DEPARTED`: el primer tramo ya salió.
+        '409':
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+          description: 'No se pudo resolver la carrera por la `Idempotency-Key`. Es una situación excepcional:
+            el caso normal de clave repetida responde 200.'
+      summary: Crear una reserva
+      tags:
+      - Reservas
+  /v1/reservations/{reservationId}:
+    delete:
+      description: |-
+        Cancela la reserva. La cancelación es **lógica**: la reserva pasa a
+        `CANCELLED` y se conserva por trazabilidad, penalidades y reintegros.
+        El recurso sigue siendo accesible por `GET` después de cancelarlo.
+
+        Por eso la respuesta es **200** con la representación resultante y no
+        un `204`: el cliente necesita ver el estado final y la fecha de
+        cancelación.
+
+        Requiere `If-Match`, igual que la actualización.
+      operationId: cancelReservation
+      parameters:
+      - description: Identificador opaco de la reserva.
+        example: 1042
+        in: path
+        name: reservationId
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - description: |-
+          `ETag` de la última representación leída de la reserva. Sirve para detectar
+          escrituras concurrentes.
+
+          Ausente o malformado, la respuesta es 400: sin saber sobre qué versión trabajó
+          el cliente no hay forma de detectar una escritura concurrente, y dos pedidos
+          simultáneos se pisarían en silencio. Se admite también la forma débil
+          (`W/"7"`), porque algunos proxies reescriben así el `ETag` que ellos mismos
+          comprimieron.
+        example: '7'
+        in: header
+        name: If-Match
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reservation'
+          description: Reserva cancelada.
+          headers:
+            ETag:
+              description: Versión actual del recurso. Se envía tal cual en `If-Match` al actualizar o
+                cancelar.
+              schema:
+                type: string
+                example: '"8"'
+              style: simple
+        '400':
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+          description: El `If-Match` está ausente o malformado, o el itinerario ya despegó (`ITINERARY_ALREADY_DEPARTED`).
+        '404':
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+          description: No existe una reserva con ese identificador.
+        '409':
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+          description: |-
+            La operación choca con el estado actual del recurso:
+
+            - `CONCURRENT_UPDATE`: el `If-Match` no coincide con la versión
+              almacenada.
+            - `RESERVATION_ALREADY_CANCELLED`: la reserva ya estaba
+              cancelada.
+      summary: Cancelar una reserva
+      tags:
+      - Reservas
+    get:
+      description: |-
+        Devuelve la representación completa de la reserva, con su itinerario y
+        sus pasajeros resueltos.
+
+        El `ETag` de la respuesta es el que hay que enviar en `If-Match` para
+        actualizar o cancelar la reserva.
+
+        ## Lecturas condicionales
+
+        Reenviando ese mismo `ETag` en `If-None-Match`, una reserva que no
+        cambió se responde con **304** y sin cuerpo. Es lo recomendado para
+        las pantallas que refrescan periódicamente.
+
+        ## Por qué la respuesta es `no-store`
+
+        El cuerpo incluye documento y fecha de nacimiento de los pasajeros, y
+        la API todavía no tiene autenticación. `Cache-Control: no-store,
+        private` impide que un proxy compartido, un CDN o el disco del
+        navegador conserven esos datos. Conservar el `ETag` en el estado de la
+        aplicación cliente —que es lo que ya hace falta para poder mandar
+        `If-Match`— no está afectado por eso.
+      operationId: getReservation
+      parameters:
+      - description: Identificador opaco de la reserva.
+        example: 1042
+        in: path
+        name: reservationId
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - description: |-
+          `ETag` de la representación que el cliente ya tiene. Si coincide con la
+          versión actual, la respuesta es **304** sin cuerpo.
+
+          A diferencia de `If-Match`, es opcional y tolerante: un valor que no se
+          entiende no es un 400, simplemente devuelve la representación completa. Se
+          admite la lista separada por comas, la forma débil (`W/"7"`) y el comodín
+          `*`.
+        example: '"7"'
+        in: header
+        name: If-None-Match
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reservation'
+          description: Reserva encontrada.
+          headers:
+            ETag:
+              description: Versión actual del recurso. Se envía tal cual en `If-Match` al actualizar o
+                cancelar.
+              schema:
+                type: string
+                example: '"7"'
+              style: simple
+        '304':
+          description: La reserva no cambió respecto del `ETag` enviado en `If-None-Match`. No lleva cuerpo.
+          headers:
+            ETag:
+              description: Versión actual del recurso. Se envía tal cual en `If-Match` al actualizar o
+                cancelar.
+              schema:
+                type: string
+                example: '"7"'
+              style: simple
+        '400':
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+          description: El identificador no es válido.
+        '404':
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+          description: No existe una reserva con ese identificador.
+      summary: Obtener una reserva
+      tags:
+      - Reservas
+    put:
+      description: |-
+        Reemplaza el itinerario de una reserva vigente. Es un reemplazo
+        completo: la lista de segmentos enviada pasa a ser la única del
+        itinerario.
+
+        Los pasajeros y el usuario no se modifican por esta operación: son
+        parte de la identidad comercial de la reserva. Cambiarlos implica
+        cancelar y volver a reservar.
+
+        Requiere `If-Match` con el `ETag` obtenido en la última lectura. Si la
+        reserva cambió mientras tanto, la operación se rechaza con **409** y
+        no escribe nada; el cliente debe releer y decidir.
+      operationId: updateReservation
+      parameters:
+      - description: Identificador opaco de la reserva.
+        example: 1042
+        in: path
+        name: reservationId
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - description: |-
+          `ETag` de la última representación leída de la reserva. Sirve para detectar
+          escrituras concurrentes.
+
+          Ausente o malformado, la respuesta es 400: sin saber sobre qué versión trabajó
+          el cliente no hay forma de detectar una escritura concurrente, y dos pedidos
+          simultáneos se pisarían en silencio. Se admite también la forma débil
+          (`W/"7"`), porque algunos proxies reescriben así el `ETag` que ellos mismos
+          comprimieron.
+        example: '7'
+        in: header
+        name: If-Match
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateReservationRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reservation'
+          description: Reserva actualizada.
+          headers:
+            ETag:
+              description: Versión actual del recurso. Se envía tal cual en `If-Match` al actualizar o
+                cancelar.
+              schema:
+                type: string
+                example: '"8"'
+              style: simple
+        '400':
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+          description: El cuerpo es inválido, el `If-Match` está ausente o malformado, o el itinerario
+            vigente ya despegó (`ITINERARY_ALREADY_DEPARTED`).
+        '404':
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+          description: No existe una reserva con ese identificador.
+        '409':
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+          description: |-
+            La operación choca con el estado actual del recurso:
+
+            - `CONCURRENT_UPDATE`: el `If-Match` no coincide con la versión
+              almacenada.
+            - `RESERVATION_NOT_MODIFIABLE`: la reserva está cancelada.
+      summary: Actualizar el itinerario de una reserva
+      tags:
+      - Reservas
+components:
+  schemas:
+    CreateReservationRequest:
+      type: object
+      description: |-
+        Datos para crear una reserva.
+
+        La clave de idempotencia **no** va acá: viaja en el header
+        `Idempotency-Key`, porque describe el intento de ejecución y no el recurso
+        que se está creando.
+      properties:
+        itinerary:
+          $ref: '#/components/schemas/ItineraryRequest'
+        passengers:
+          type: array
+          description: Pasajeros de la reserva.
+          items:
+            $ref: '#/components/schemas/PassengerRequest'
+          maxItems: 9
+          minItems: 1
+        user:
+          $ref: '#/components/schemas/UserRequest'
+      required:
+      - itinerary
+      - passengers
+      - user
+    FieldError:
+      type: object
+      description: Un campo rechazado por la validación del pedido.
+      properties:
+        code:
+          type: string
+          description: Motivo del rechazo, legible por máquina.
+          example: PATTERN
+        field:
+          type: string
+          description: Ruta del campo inválido dentro del cuerpo del pedido, en notación de punto y corchetes.
+          example: itinerary.segments[0].originAirportCode
+        message:
+          type: string
+          description: Explicación legible por humanos.
+          example: Debe ser un código IATA de 3 letras mayúsculas
+    Itinerary:
+      type: object
+      description: Itinerario reservado, con sus tramos en orden de vuelo.
+      properties:
+        destination:
+          type: string
+          description: 'Destino del viaje: el del último tramo.'
+          example: MAD
+        firstDepartureAt:
+          type: string
+          format: date-time
+          description: Salida del primer tramo, en UTC.
+          example: '2027-03-15T22:40:00Z'
+        id:
+          type: string
+          description: Identificador opaco del itinerario.
+          example: '204'
+        origin:
+          type: string
+          description: 'Origen del viaje: el del primer tramo.'
+          example: EZE
+        price:
+          $ref: '#/components/schemas/Money'
+        segments:
+          type: array
+          description: Tramos en orden de vuelo.
+          items:
+            $ref: '#/components/schemas/Segment'
+    ItineraryRequest:
+      type: object
+      description: |-
+        Itinerario a reservar.
+
+        El orden del arreglo `segments` **es** el orden de vuelo: no se envía un
+        campo de posición, para que no haya dos fuentes de verdad que puedan
+        contradecirse.
+
+        Reglas que validan el 400: cada tramo debe tener origen distinto del
+        destino, las salidas deben ser crecientes, el destino de un tramo debe ser
+        el origen del siguiente, y todos los códigos deben existir en el catálogo
+        de aeropuertos.
+      properties:
+        currency:
+          type: string
+          description: Código de moneda ISO 4217.
+          example: USD
+          minLength: 1
+          pattern: ^[A-Z]{3}$
+        price:
+          type: string
+          description: Precio total del itinerario, en decimal exacto como string.
+          example: '1350.00'
+          minLength: 1
+          pattern: ^\d{1,8}(\.\d{1,2})?$
+        segments:
+          type: array
+          description: Tramos en orden de vuelo. El primero sale del origen.
+          items:
+            $ref: '#/components/schemas/SegmentRequest'
+          maxItems: 10
+          minItems: 1
+      required:
+      - currency
+      - price
+      - segments
+    Money:
+      type: object
+      description: Importe con su moneda. Nunca se envía un monto sin moneda.
+      properties:
+        amount:
+          type: string
+          description: Importe en decimal exacto, con dos decimales.
+          example: '1350.00'
+        currency:
+          type: string
+          description: Código de moneda ISO 4217.
+          example: USD
+    PageMetadata:
+      type: object
+      description: Metadatos de paginación de un listado.
+      properties:
+        number:
+          type: integer
+          format: int32
+          description: Número de la página devuelta, base 0.
+          example: 0
+        size:
+          type: integer
+          format: int32
+          description: Tamaño de página solicitado.
+          example: 20
+        totalElements:
+          type: integer
+          format: int64
+          description: Cantidad total de reservas que cumplen el filtro.
+          example: 137
+        totalPages:
+          type: integer
+          format: int32
+          description: Cantidad total de páginas para el tamaño pedido.
+          example: 7
+    Passenger:
+      type: object
+      description: Pasajero incluido en la reserva.
+      properties:
+        birthDate:
+          type: string
+          format: date
+          description: Fecha de nacimiento, sin hora ni zona horaria.
+          example: '1990-04-17'
+        documentNumber:
+          type: string
+          nullable: true
+          description: Número de documento. Nulo si el pasajero no lo tiene cargado.
+          example: '30123456'
+        firstName:
+          type: string
+          example: Ana
+        id:
+          type: string
+          description: Identificador opaco del pasajero.
+          example: '118'
+        lastName:
+          type: string
+          example: Pérez
+    PassengerRequest:
+      type: object
+      description: Pasajero a incluir en la reserva.
+      properties:
+        birthDate:
+          type: string
+          format: date
+          description: Fecha de nacimiento, sin hora ni zona horaria.
+          example: '1990-04-17'
+        documentNumber:
+          type: string
+          description: Número de documento. Opcional; si se envía, identifica unívocamente al pasajero
+            y permite reconocerlo en reservas posteriores.
+          example: '30123456'
+          maxLength: 50
+          minLength: 0
+        firstName:
+          type: string
+          description: Nombre del pasajero.
+          example: Ana
+          maxLength: 100
+          minLength: 0
+        lastName:
+          type: string
+          description: Apellido del pasajero.
+          example: Pérez
+          maxLength: 100
+          minLength: 0
+      required:
+      - birthDate
+      - firstName
+      - lastName
+    Problem:
+      type: object
+      description: |-
+        Error en formato RFC 7807 (`application/problem+json`), extendido con un
+        campo `code`.
+
+        Los clientes deben decidir en base a `status` y `code`, nunca en base a
+        `title` o `detail`: esos dos son texto para humanos y pueden cambiar o
+        traducirse sin previo aviso.
+      properties:
+        code:
+          type: string
+          description: Código de error estable. Es la parte del contrato de errores contra la que los
+            clientes pueden programar.
+          enum:
+          - VALIDATION_ERROR
+          - UNKNOWN_AIRPORT
+          - INVALID_ITINERARY
+          - INVALID_PASSENGER
+          - INVALID_RESERVATION
+          - USER_NOT_FOUND
+          - RESERVATION_NOT_FOUND
+          - IDEMPOTENCY_KEY_REUSED
+          - CONCURRENT_UPDATE
+          - RESERVATION_ALREADY_CANCELLED
+          - RESERVATION_NOT_MODIFIABLE
+          - ITINERARY_ALREADY_DEPARTED
+          - RESOURCE_NOT_FOUND
+          - UNSUPPORTED_REQUEST
+          - INTERNAL_ERROR
+          example: RESERVATION_NOT_FOUND
+        detail:
+          type: string
+          description: Explicación puntual de este error en particular.
+          example: No existe la reserva 9999
+        errors:
+          type: array
+          description: |-
+            Detalle campo por campo, presente cuando el error se puede atribuir a
+            campos concretos del pedido. Un error que no señala ningún campo —un
+            usuario inexistente, un conflicto de concurrencia— no lo trae.
+          items:
+            $ref: '#/components/schemas/FieldError'
+        instance:
+          type: string
+          format: uri
+          description: URI del pedido que produjo el error.
+          example: /v1/reservations/9999
+        status:
+          type: integer
+          format: int32
+          description: Código HTTP, repetido en el cuerpo para facilitar el logueo.
+          example: 404
+          maximum: 599
+          minimum: 400
+        title:
+          type: string
+          description: Resumen legible del tipo de problema.
+          example: Reserva inexistente
+        type:
+          type: string
+          format: uri
+          description: URI que identifica el tipo de problema.
+          example: https://api.edteam.example/problems/reservation-not-found
+    Reservation:
+      type: object
+      description: |-
+        Representación de una reserva.
+
+        No incluye el número de versión interno: la concurrencia se maneja con
+        `ETag` / `If-Match`. Tampoco la clave de idempotencia, que identifica un
+        intento de creación y no le sirve a quien lee la reserva.
+      properties:
+        cancelledAt:
+          type: string
+          nullable: true
+          format: date-time
+          description: Momento de la cancelación, en UTC. Nulo si la reserva no está cancelada.
+          example: null
+        createdAt:
+          type: string
+          format: date-time
+          description: Momento de creación, en UTC.
+          example: '2026-09-22T14:03:11Z'
+        id:
+          type: string
+          description: Identificador opaco de la reserva.
+          example: '1042'
+        itinerary:
+          $ref: '#/components/schemas/Itinerary'
+        passengers:
+          type: array
+          description: Pasajeros de la reserva, al menos uno.
+          items:
+            $ref: '#/components/schemas/Passenger'
+        status:
+          type: string
+          description: |-
+            Estado de la reserva dentro del contrato de la API. El conjunto de valores
+            es propio de la API: los literales que use el almacenamiento interno no se
+            filtran acá.
+
+            - `PENDING`: creada, todavía sin confirmar.
+            - `CONFIRMED`: confirmada y vigente.
+            - `CANCELLED`: cancelada; el registro se conserva por trazabilidad.
+
+            Los clientes deben tolerar valores nuevos: agregar un estado es un cambio
+            compatible dentro de `/v1`.
+          enum:
+          - PENDING
+          - CONFIRMED
+          - CANCELLED
+          example: PENDING
+        updatedAt:
+          type: string
+          format: date-time
+          description: Momento de la última modificación, en UTC.
+          example: '2026-09-22T14:03:11Z'
+        userId:
+          type: string
+          description: |-
+            Identificador del usuario dueño de la reserva: su email.
+
+            Es el mismo valor que se envía en `user.email` al crear la reserva, y el
+            que se pasa como `userId` para filtrar el listado. El identificador
+            interno de la base no se expone: el email es lo que el cliente conoce y
+            lo que no cambia de significado entre entornos.
+
+            El nombre y el apellido del usuario no forman parte de este recurso.
+          example: ana.perez@example.com
+    ReservationPage:
+      type: object
+      description: |-
+        Página de reservas.
+
+        La colección viaja envuelta en un objeto y nunca como arreglo en la raíz,
+        para poder agregarle metadatos sin romper a los clientes.
+      properties:
+        items:
+          type: array
+          description: Reservas de la página, en el orden pedido.
+          items:
+            $ref: '#/components/schemas/Reservation'
+        page:
+          $ref: '#/components/schemas/PageMetadata'
+    Segment:
+      type: object
+      description: Tramo del itinerario reservado.
+      properties:
+        airline:
+          type: string
+          description: Aerolínea operadora.
+          example: AR
+        departureAt:
+          type: string
+          format: date-time
+          description: Fecha y hora de salida, en UTC.
+          example: '2027-03-15T22:40:00Z'
+        destinationAirportCode:
+          type: string
+          description: Código IATA del aeropuerto de destino.
+          example: GRU
+        id:
+          type: string
+          description: Identificador opaco del tramo.
+          example: '310'
+        originAirportCode:
+          type: string
+          description: Código IATA del aeropuerto de origen.
+          example: EZE
+        position:
+          type: integer
+          format: int32
+          description: Posición del tramo dentro del itinerario, base 1.
+          example: 1
+    SegmentRequest:
+      type: object
+      description: Tramo de un itinerario a reservar.
+      properties:
+        airline:
+          type: string
+          description: Aerolínea operadora del tramo.
+          example: AR
+          maxLength: 50
+          minLength: 0
+        departureAt:
+          type: string
+          format: date-time
+          description: Fecha y hora de salida, en UTC. Debe ser futura.
+          example: '2027-03-15T22:40:00Z'
+        destinationAirportCode:
+          type: string
+          description: Código IATA del aeropuerto de destino.
+          example: GRU
+          minLength: 1
+          pattern: ^[A-Z]{3}$
+        originAirportCode:
+          type: string
+          description: Código IATA del aeropuerto de origen.
+          example: EZE
+          minLength: 1
+          pattern: ^[A-Z]{3}$
+      required:
+      - airline
+      - departureAt
+      - destinationAirportCode
+      - originAirportCode
+    UpdateReservationRequest:
+      type: object
+      description: |-
+        Datos para actualizar una reserva.
+
+        Sólo el itinerario es modificable: el usuario dueño y los pasajeros forman
+        parte de la identidad comercial de la reserva, y cambiarlos exige cancelar
+        y reservar de nuevo.
+      properties:
+        itinerary:
+          $ref: '#/components/schemas/ItineraryRequest'
+      required:
+      - itinerary
+    UserRequest:
+      type: object
+      description: |-
+        Datos de quien reserva.
+
+        Se lo identifica por email. Si ya existe un usuario con ese email se
+        reutiliza —y su nombre y apellido almacenados no se modifican—; si no,
+        se lo da de alta junto con la reserva.
+
+        El email es también el identificador del usuario en el resto de la API:
+        vuelve en `userId` de la respuesta y es lo que se pasa como `userId` para
+        filtrar el listado. El identificador interno de la base no se expone.
+      properties:
+        email:
+          type: string
+          format: email
+          description: Email de quien reserva. Es su identificador de negocio.
+          example: ana.perez@example.com
+          maxLength: 150
+          minLength: 0
+        firstName:
+          type: string
+          description: Nombre de quien reserva.
+          example: Ana
+          maxLength: 100
+          minLength: 0
+        lastName:
+          type: string
+          description: Apellido de quien reserva.
+          example: Pérez
+          maxLength: 100
+          minLength: 0
+      required:
+      - email
+      - firstName
+      - lastName

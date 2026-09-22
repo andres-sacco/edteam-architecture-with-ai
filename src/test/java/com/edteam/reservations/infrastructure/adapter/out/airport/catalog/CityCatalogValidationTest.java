@@ -8,6 +8,7 @@ import com.edteam.reservations.application.service.AirportExistenceValidator;
 import com.edteam.reservations.domain.model.AirportCode;
 import com.edteam.reservations.domain.model.Itinerary;
 import com.edteam.reservations.infrastructure.adapter.out.airport.CachingAirportCatalog;
+import com.edteam.reservations.infrastructure.cache.InMemoryCacheStore;
 import com.edteam.reservations.support.TestFixtures;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -29,7 +30,7 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 
 /**
  * La validación que corre en cada POST y PUT, con la cadena real armada:
- * validador → cache → adaptador del puerto → cliente HTTP.
+ * validador → cache → adaptador del puerto → reintentos → cliente HTTP.
  *
  * <p>Los tests de {@code RestCityCatalogClient} prueban la traducción de cada
  * respuesta HTTP. Lo que se prueba acá es la consecuencia para el pedido, que
@@ -47,6 +48,9 @@ class CityCatalogValidationTest {
     private static final AirportCode SCL = AirportCode.of("SCL");
     private static final AirportCode MIA = AirportCode.of("MIA");
 
+    private static final RetryingCityCatalogClient.Retry RETRY =
+            new RetryingCityCatalogClient.Retry(3, Duration.ofMillis(10), Duration.ofMillis(40));
+
     private MockRestServiceServer server;
     private AirportExistenceValidator validator;
 
@@ -57,9 +61,16 @@ class CityCatalogValidationTest {
         // orden de esa consulta no es parte del contrato.
         server = MockRestServiceServer.bindTo(builder).ignoreExpectOrder(true).build();
 
+        // El sleeper no duerme: lo que se prueba acá es la cadena, no el reloj.
+        // La política de backoff tiene sus propios tests.
+        CityCatalogClient client = new RetryingCityCatalogClient(
+                new RestCityCatalogClient(builder.build()), RETRY, duration -> true);
+
         AirportCatalogPort catalog = new CachingAirportCatalog(
-                new CatalogAirportCatalog(new RestCityCatalogClient(builder.build())),
-                Duration.ofMinutes(30),
+                new CatalogAirportCatalog(client),
+                new InMemoryCacheStore(TestFixtures.fixedClock(), 100),
+                new CachingAirportCatalog.Ttl(
+                        Duration.ofMinutes(30), Duration.ofMinutes(5), Duration.ofHours(2)),
                 TestFixtures.fixedClock());
         validator = new AirportExistenceValidator(catalog);
     }
@@ -150,6 +161,49 @@ class CityCatalogValidationTest {
         validator.validate(directItinerary());
 
         // Con expectativas de una sola vez, un segundo viaje a la red haría fallar el test.
+        server.verify();
+    }
+
+    @Test
+    @DisplayName("un 503 pasajero se reintenta y el pedido sigue: el usuario no ve la caída")
+    void retriesTransientFailures() {
+        // Primer intento 503, segundo 200. Es el caso que justifica los
+        // reintentos: sin ellos, un hipo del proveedor rechaza una reserva
+        // perfectamente válida.
+        server.expect(requestTo(BASE_URL + "/city/BUE"))
+                .andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE));
+        expectCity("BUE", "Buenos Aires");
+        expectCity("SCL", "Santiago");
+
+        assertThatCode(() -> validator.validate(directItinerary())).doesNotThrowAnyException();
+
+        server.verify();
+    }
+
+    @Test
+    @DisplayName("un 429 también se reintenta: nos están limitando, no nos equivocamos")
+    void retriesRateLimiting() {
+        server.expect(requestTo(BASE_URL + "/city/BUE"))
+                .andRespond(withStatus(HttpStatus.TOO_MANY_REQUESTS));
+        expectCity("BUE", "Buenos Aires");
+        expectCity("SCL", "Santiago");
+
+        assertThatCode(() -> validator.validate(directItinerary())).doesNotThrowAnyException();
+
+        server.verify();
+    }
+
+    @Test
+    @DisplayName("un 401 no se reintenta: la credencial no se arregla insistiendo")
+    void doesNotRetryABrokenIntegration() {
+        // Exactamente una llamada: con ExpectedCount.once(), un reintento
+        // haría fallar el test.
+        server.expect(ExpectedCount.once(), requestTo(BASE_URL + "/city/BUE"))
+                .andRespond(withStatus(HttpStatus.UNAUTHORIZED));
+
+        assertThatThrownBy(() -> validator.validate(directItinerary()))
+                .isInstanceOf(AirportCatalogIntegrationException.class);
+
         server.verify();
     }
 

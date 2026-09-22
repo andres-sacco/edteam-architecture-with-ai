@@ -5,10 +5,15 @@ import com.edteam.reservations.application.port.out.EventOutboxPort;
 import com.edteam.reservations.infrastructure.adapter.out.airport.CachingAirportCatalog;
 import com.edteam.reservations.infrastructure.adapter.out.airport.StaticAirportCatalog;
 import com.edteam.reservations.infrastructure.adapter.out.airport.catalog.CatalogAirportCatalog;
+import com.edteam.reservations.infrastructure.adapter.out.airport.catalog.CityCatalogClient;
 import com.edteam.reservations.infrastructure.adapter.out.airport.catalog.RestCityCatalogClient;
+import com.edteam.reservations.infrastructure.adapter.out.airport.catalog.RetryingCityCatalogClient;
 import com.edteam.reservations.infrastructure.adapter.out.outbox.InMemoryEventOutbox;
+import com.edteam.reservations.infrastructure.cache.CacheStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.http.client.ClientHttpRequestFactoryBuilder;
+import org.springframework.boot.http.client.ClientHttpRequestFactorySettings;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpHeaders;
@@ -51,39 +56,83 @@ public class AdapterConfiguration {
      * <p>La decisión de envolver con cache no cambia según el origen: es
      * todavía más necesaria con el cliente REST, porque es la que hace que la
      * mayoría de las reservas no toquen la red.
+     *
+     * <p>El almacén del cache llega inyectado y ya no lo arma el decorador:
+     * eso es lo que permite que la misma composición corra con Redis o con el
+     * fallback en memoria según la configuración. Es exactamente el reemplazo
+     * por un cache distribuido que este decorador estaba pensado para
+     * permitir, y no toca ni a {@code CatalogAirportCatalog} ni al caso de uso.
      */
     @Bean
     public AirportCatalogPort airportCatalogPort(AirportCatalogProperties properties,
+                                                 CacheStore cityCatalogCacheStore,
                                                  RestClient.Builder restClientBuilder,
                                                  Clock clock) {
         AirportCatalogPort origin;
         if (properties.hasRemoteCatalog()) {
-            origin = new CatalogAirportCatalog(new RestCityCatalogClient(catalogRestClient(restClientBuilder, properties)));
-            log.info("Maestro de aeropuertos: API de catálogo en {}", properties.baseUrl());
+            origin = new CatalogAirportCatalog(catalogClient(restClientBuilder, properties));
+            log.info("Maestro de aeropuertos: API de catálogo en {} (connect {} ms, read {} ms, {} intentos)",
+                    properties.baseUrl(),
+                    properties.connectTimeout().toMillis(),
+                    properties.readTimeout().toMillis(),
+                    properties.retry().maxAttempts());
         } else {
             origin = StaticAirportCatalog.withDefaults();
             log.info("Maestro de aeropuertos: stub en memoria (no hay 'reservations.airport-catalog.base-url')");
         }
-        return new CachingAirportCatalog(origin, properties.cacheTtl(), clock);
+        return new CachingAirportCatalog(origin, cityCatalogCacheStore, properties.cacheTtlPolicy(), clock);
     }
 
     /**
-     * Cliente HTTP del catálogo.
+     * Cliente del catálogo: transporte, traducción HTTP y reintentos.
+     *
+     * <p>El orden de las capas es el que importa. De adentro hacia afuera:
+     * {@code RestCityCatalogClient} clasifica la respuesta —404 es "no
+     * existe", 5xx y 429 son transitorios, el resto es integración rota— y
+     * {@link RetryingCityCatalogClient} se apoya en esa clasificación para
+     * reintentar sólo lo que tiene sentido reintentar. Más arriba,
+     * {@code CachingAirportCatalog} hace que la mayoría de las consultas ni
+     * lleguen hasta acá.
+     */
+    private static CityCatalogClient catalogClient(RestClient.Builder builder, AirportCatalogProperties properties) {
+        return new RetryingCityCatalogClient(
+                new RestCityCatalogClient(catalogRestClient(builder, properties)),
+                properties.retryPolicy());
+    }
+
+    /**
+     * Transporte HTTP del catálogo.
      *
      * <p>Se parte del {@code RestClient.Builder} de Spring Boot para heredar
      * los converters y la instrumentación (métricas, trazas) ya configurados;
-     * acá sólo se agrega lo propio de este proveedor: la URL base y la
-     * credencial.
+     * acá sólo se agrega lo propio de este proveedor: la URL base, la
+     * credencial y los timeouts.
      *
-     * <p><strong>Sin timeouts ni reintentos</strong>, por la decisión tomada
-     * para esta iteración. Si se revisa, el cambio es local a este método —un
-     * {@code requestFactory} con timeouts— y no toca al cliente ni al puerto.
-     * La credencial se manda como header por defecto: nunca en la query
+     * <p><strong>Los timeouts no son opcionales.</strong> Sin read timeout,
+     * una llamada contra un proveedor que acepta la conexión y no contesta
+     * queda colgada hasta que corte el sistema operativo, y el pedido de
+     * reserva que la disparó queda colgado con ella; con
+     * {@code maximum-pool-size: 20}, unas pocas de esas agotan el pool y la
+     * degradación del catálogo se transforma en una caída nuestra. El caché
+     * baja la cantidad de llamadas expuestas, pero no acota el daño de la que
+     * sí sale: eso sólo lo hace el timeout.
+     *
+     * <p>Se separan connect y read a propósito: establecer la conexión es
+     * rápido o no va a pasar (500 ms alcanzan de sobra), mientras que
+     * responder una consulta puede legítimamente tardar más (2 s). Un valor
+     * único obligaría a elegir el más permisivo para los dos.
+     *
+     * <p>La credencial se manda como header por defecto: nunca en la query
      * string, donde quedaría escrita en logs de acceso y proxies.
      */
     private static RestClient catalogRestClient(RestClient.Builder builder, AirportCatalogProperties properties) {
+        ClientHttpRequestFactorySettings timeouts = ClientHttpRequestFactorySettings.defaults()
+                .withConnectTimeout(properties.connectTimeout())
+                .withReadTimeout(properties.readTimeout());
+
         RestClient.Builder configured = builder.clone()
                 .baseUrl(properties.baseUrl())
+                .requestFactory(ClientHttpRequestFactoryBuilder.detect().build(timeouts))
                 .defaultHeader(HttpHeaders.ACCEPT, MediaType.APPLICATION_JSON_VALUE);
         if (properties.hasApiKey()) {
             configured = configured.defaultHeader(properties.apiKeyHeader(), properties.apiKey());

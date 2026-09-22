@@ -27,6 +27,7 @@ import com.edteam.reservations.domain.model.ReservationId;
 import com.edteam.reservations.domain.model.ReservationStatus;
 import com.edteam.reservations.infrastructure.adapter.in.rest.mapper.ReservationRestMapper;
 import com.edteam.reservations.support.TestFixtures;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -34,6 +35,7 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -57,6 +59,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.hamcrest.Matchers.containsString;
 
 /**
  * Slice del adaptador REST: sólo la capa web, con los puertos de entrada
@@ -68,7 +71,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * que todo encaje contra una base real lo prueba {@code ReservationApiIT}.
  */
 @WebMvcTest(ReservationController.class)
-@Import(ReservationRestMapper.class)
+@Import({ReservationRestMapper.class, TestVersionCacheConfiguration.class})
 @DisplayName("API de reservas")
 class ReservationControllerTest {
 
@@ -144,6 +147,15 @@ class ReservationControllerTest {
 
     @MockitoBean
     private CancelReservationUseCase cancelReservation;
+
+    @Autowired
+    private ReservationVersionCache versionCache;
+
+    /** El contexto se comparte entre los tests de la clase; el cache, no debería. */
+    @BeforeEach
+    void resetVersionCache() {
+        List.of(1L, 10L, 999L).forEach(id -> versionCache.forget(ReservationId.of(id)));
+    }
 
     @Nested
     @DisplayName("POST /v1/reservations")
@@ -381,6 +393,90 @@ class ReservationControllerTest {
 
             verifyNoInteractions(getReservation);
         }
+
+        @Test
+        @DisplayName("la respuesta es no-store: el cuerpo lleva documento y fecha de nacimiento")
+        void forbidsIntermediateCaching() throws Exception {
+            when(getReservation.getById(any())).thenReturn(TestFixtures.storedReservation(3L));
+
+            mockMvc.perform(get("/v1/reservations/10"))
+                    .andExpect(status().isOk())
+                    .andExpect(header().string(HttpHeaders.CACHE_CONTROL, containsString("no-store")))
+                    .andExpect(header().string(HttpHeaders.CACHE_CONTROL, containsString("private")));
+        }
+
+        @Test
+        @DisplayName("con la versión ya cacheada, un If-None-Match que coincide responde 304 sin tocar el origen")
+        void servesNotModifiedFromCache() throws Exception {
+            versionCache.remember(ReservationId.of(10L), 3L);
+
+            mockMvc.perform(get("/v1/reservations/10").header(HttpHeaders.IF_NONE_MATCH, "\"3\""))
+                    .andExpect(status().isNotModified())
+                    .andExpect(header().string("ETag", "\"3\""))
+                    .andExpect(content().string(""));
+
+            // Éste es el ahorro que justifica el cache: ni consulta, ni
+            // hidratación de cinco tablas, ni un dato de pasajero serializado.
+            verifyNoInteractions(getReservation);
+        }
+
+        @Test
+        @DisplayName("con el cache frío lee del origen y responde 304 igual: ahorra el payload, no la consulta")
+        void servesNotModifiedAfterReadingTheOrigin() throws Exception {
+            when(getReservation.getById(ReservationId.of(10L))).thenReturn(TestFixtures.storedReservation(3L));
+
+            mockMvc.perform(get("/v1/reservations/10").header(HttpHeaders.IF_NONE_MATCH, "\"3\""))
+                    .andExpect(status().isNotModified())
+                    .andExpect(header().string("ETag", "\"3\""))
+                    .andExpect(content().string(""));
+
+            verify(getReservation, times(1)).getById(ReservationId.of(10L));
+        }
+
+        @Test
+        @DisplayName("la primera lectura deja la versión cacheada para la próxima")
+        void populatesTheCacheOnRead() throws Exception {
+            when(getReservation.getById(ReservationId.of(10L))).thenReturn(TestFixtures.storedReservation(3L));
+
+            mockMvc.perform(get("/v1/reservations/10")).andExpect(status().isOk());
+
+            assertThat(versionCache.find(ReservationId.of(10L))).hasValue(3L);
+        }
+
+        @Test
+        @DisplayName("con un If-None-Match de otra versión devuelve la representación completa")
+        void returnsFullBodyWhenTheVersionChanged() throws Exception {
+            versionCache.remember(ReservationId.of(10L), 4L);
+            when(getReservation.getById(ReservationId.of(10L))).thenReturn(TestFixtures.storedReservation(4L));
+
+            mockMvc.perform(get("/v1/reservations/10").header(HttpHeaders.IF_NONE_MATCH, "\"3\""))
+                    .andExpect(status().isOk())
+                    .andExpect(header().string("ETag", "\"4\""))
+                    .andExpect(jsonPath("$.id").value("10"));
+        }
+
+        @Test
+        @DisplayName("un If-None-Match malformado no es un 400: devuelve la representación completa")
+        void tolerantWithMalformedIfNoneMatch() throws Exception {
+            when(getReservation.getById(any())).thenReturn(TestFixtures.storedReservation(3L));
+
+            mockMvc.perform(get("/v1/reservations/10").header(HttpHeaders.IF_NONE_MATCH, "basura"))
+                    .andExpect(status().isOk())
+                    .andExpect(header().string("ETag", "\"3\""));
+        }
+
+        @Test
+        @DisplayName("sin If-None-Match la versión cacheada no se usa: nunca se responde 304 de más")
+        void ignoresTheCacheWithoutTheHeader() throws Exception {
+            versionCache.remember(ReservationId.of(10L), 3L);
+            when(getReservation.getById(ReservationId.of(10L))).thenReturn(TestFixtures.storedReservation(3L));
+
+            mockMvc.perform(get("/v1/reservations/10"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.id").value("10"));
+
+            verify(getReservation, times(1)).getById(ReservationId.of(10L));
+        }
     }
 
     @Nested
@@ -410,6 +506,16 @@ class ReservationControllerTest {
             assertThat(criteria.getValue().direction()).isEqualTo(SortDirection.DESC);
             assertThat(criteria.getValue().userEmail()).isEmpty();
             assertThat(criteria.getValue().statuses()).isEmpty();
+        }
+
+        @Test
+        @DisplayName("la página tampoco se puede guardar: lleva los pasajeros de hasta 100 reservas")
+        void forbidsIntermediateCaching() throws Exception {
+            when(listReservations.list(any())).thenReturn(ResultPage.empty(0, 20));
+
+            mockMvc.perform(get("/v1/reservations"))
+                    .andExpect(status().isOk())
+                    .andExpect(header().string(HttpHeaders.CACHE_CONTROL, containsString("no-store")));
         }
 
         @Test
@@ -509,6 +615,44 @@ class ReservationControllerTest {
             assertThat(command.getValue().reservationId()).isEqualTo(10L);
             assertThat(command.getValue().expectedVersion()).isEqualTo(3L);
             assertThat(command.getValue().newItinerary().segments()).hasSize(2);
+        }
+
+        @Test
+        @DisplayName("invalida la versión cacheada: una escritura no puede dejar servir un 304 viejo")
+        void invalidatesTheCachedVersion() throws Exception {
+            versionCache.remember(ReservationId.of(10L), 3L);
+            when(modifyReservation.modify(any())).thenReturn(TestFixtures.storedReservation(4L));
+
+            mockMvc.perform(put("/v1/reservations/10")
+                            .header("If-Match", "\"3\"")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(UPDATE_BODY))
+                    .andExpect(status().isOk());
+
+            assertThat(versionCache.find(ReservationId.of(10L)))
+                    .as("se borra, no se actualiza: un DEL es idempotente ante fallos parciales")
+                    .isEmpty();
+        }
+
+        @Test
+        @DisplayName("después de modificar, un If-None-Match con la versión vieja ya no da 304")
+        void staleETagNoLongerMatchesAfterAWrite() throws Exception {
+            versionCache.remember(ReservationId.of(10L), 3L);
+            when(modifyReservation.modify(any())).thenReturn(TestFixtures.storedReservation(4L));
+            when(getReservation.getById(ReservationId.of(10L))).thenReturn(TestFixtures.storedReservation(4L));
+
+            mockMvc.perform(put("/v1/reservations/10")
+                            .header("If-Match", "\"3\"")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(UPDATE_BODY))
+                    .andExpect(status().isOk());
+
+            // Si esto devolviera 304, el cliente se quedaría con la versión 3 y
+            // su próximo PUT mandaría If-Match: "3" → un 409 perfectamente
+            // evitable. Es el caso que el diseño del cache tiene que descartar.
+            mockMvc.perform(get("/v1/reservations/10").header(HttpHeaders.IF_NONE_MATCH, "\"3\""))
+                    .andExpect(status().isOk())
+                    .andExpect(header().string("ETag", "\"4\""));
         }
 
         @Test
@@ -615,6 +759,19 @@ class ReservationControllerTest {
             verify(cancelReservation).cancel(command.capture());
             assertThat(command.getValue().reservationId()).isEqualTo(10L);
             assertThat(command.getValue().expectedVersion()).isEqualTo(3L);
+        }
+
+        @Test
+        @DisplayName("también invalida la versión cacheada")
+        void invalidatesTheCachedVersion() throws Exception {
+            versionCache.remember(ReservationId.of(10L), 3L);
+            when(cancelReservation.cancel(any()))
+                    .thenReturn(TestFixtures.storedReservation(4L, ReservationStatus.CANCELLED));
+
+            mockMvc.perform(delete("/v1/reservations/10").header("If-Match", "\"3\""))
+                    .andExpect(status().isOk());
+
+            assertThat(versionCache.find(ReservationId.of(10L))).isEmpty();
         }
 
         @Test

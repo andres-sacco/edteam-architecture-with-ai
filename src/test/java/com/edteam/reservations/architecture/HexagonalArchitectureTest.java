@@ -81,6 +81,23 @@ class HexagonalArchitectureTest {
     }
 
     @Test
+    @DisplayName("el cache es un detalle de infraestructura y no se filtra hacia adentro")
+    void cacheStaysInInfrastructure() {
+        // Un cache es una decisión de despliegue: qué se guarda, dónde y por
+        // cuánto tiempo. En cuanto el dominio o un caso de uso importan Redis
+        // —o el almacén propio que lo envuelve— esa decisión deja de poder
+        // revisarse sin tocar la lógica de negocio, y los puertos empiezan a
+        // cambiar de firma para acomodarla.
+        noClasses().that().resideInAnyPackage(BASE + ".domain..", BASE + ".application..")
+                .should().dependOnClassesThat().resideInAnyPackage(
+                        "org.springframework.data.redis..",
+                        "org.springframework.cache..",
+                        BASE + ".infrastructure.cache..")
+                .because("el cache vive en infraestructura: los casos de uso no saben que existe")
+                .check(productionClasses);
+    }
+
+    @Test
     @DisplayName("los puertos son interfaces")
     void portsAreInterfaces() {
         classes().that().resideInAPackage(BASE + ".application.port.out..")

@@ -86,7 +86,7 @@ public class ReservationPersistenceAdapter implements ReservationRepositoryPort 
     private static final String FK_RESERVA_USUARIO = "fk_reserva_usuario";
 
     private final ReservationJpaRepository reservationRepository;
-    private final ReservationSearchJpaQuery reservationSearch;
+    private final ReservationSearchQuery reservationSearch;
     private final ItineraryJpaRepository itineraryRepository;
     private final SegmentJpaRepository segmentRepository;
     private final PassengerJpaRepository passengerRepository;
@@ -97,7 +97,7 @@ public class ReservationPersistenceAdapter implements ReservationRepositoryPort 
     private final PassengerMapper passengerMapper;
 
     public ReservationPersistenceAdapter(ReservationJpaRepository reservationRepository,
-                                         ReservationSearchJpaQuery reservationSearch,
+                                         ReservationSearchQuery reservationSearch,
                                          ItineraryJpaRepository itineraryRepository,
                                          SegmentJpaRepository segmentRepository,
                                          PassengerJpaRepository passengerRepository,

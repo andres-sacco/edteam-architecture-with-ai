@@ -27,4 +27,3 @@ Cada ADR documenta una decisión significativa, su contexto y sus consecuencias.
 
 | # | Decisión | Estado | Prompt origen |
 |---|----------|--------|---------------|
-| — | _(sin ADRs todavía)_ | — | — |

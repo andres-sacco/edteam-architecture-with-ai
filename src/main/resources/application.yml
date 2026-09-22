@@ -5,6 +5,14 @@ server:
 spring:
   application:
     name: flight-reservations
+  autoconfigure:
+    exclude:
+      # El starter de Redis viene con repositorios al estilo Spring Data, que
+      # acá no se usan: el cache se maneja con StringRedisTemplate desde
+      # 'infrastructure.cache'. Sin esta exclusión, el escaneo intenta asignar
+      # los repositorios JPA a Redis y ensucia el arranque con una advertencia
+      # por cada uno.
+      - org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration
   lifecycle:
     # Con muchos usuarios concurrentes, un deploy no debería cortar pedidos en
     # curso: se deja de aceptar nuevos y se espera a que terminen los abiertos.
@@ -47,6 +55,22 @@ spring:
         order_inserts: true
         order_updates: true
 
+  data:
+    redis:
+      # Conexión al cache distribuido. Sólo se usa si
+      # 'reservations.cache.redis.enabled' está en true; si no, el cache es el
+      # fallback en memoria y estos valores no se tocan.
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      # La credencial nunca va en el archivo: viene del entorno.
+      password: ${REDIS_PASSWORD:}
+      # Un cache lento es peor que un cache ausente: si Redis no contesta en
+      # este tiempo, el almacén degrada al origen y el pedido sigue. Es el
+      # único timeout del sistema, y está acá por la misma razón por la que los
+      # del catálogo irían en 'spring.http.client': en un solo lugar.
+      timeout: 200ms
+      connect-timeout: 200ms
+
   flyway:
     enabled: true
     locations: classpath:db/migration
@@ -54,9 +78,39 @@ spring:
     baseline-on-migrate: false
 
 reservations:
+  cache:
+    redis:
+      # Coincide con el 'redis' de compose.yaml, así que 'docker compose up -d'
+      # y listo. Apagarlo (CACHE_REDIS_ENABLED=false) deja el cache en memoria
+      # del proceso: la aplicación arranca igual, que es lo que permite correr
+      # los tests y levantar la app sin Redis. Es el mismo criterio que con el
+      # catálogo externo.
+      #
+      # Encendido es lo que convierte N caches fríos —uno por instancia— en uno
+      # compartido que además sobrevive a los reinicios.
+      enabled: ${CACHE_REDIS_ENABLED:true}
+    # Cota del cache en memoria (el fallback). Contra Redis la cota la pone el
+    # proveedor: en un free tier, 'allkeys-lru'.
+    max-entries: 50000
+    # El total de una paginación es una pista para la interfaz, no un
+    # invariante de negocio: que esté 45s desactualizado no rompe nada, y a
+    # cambio hace innecesaria una invalidación que sería imposible de calcular.
+    reservation-count-ttl: 45s
+    # Acá sí hay invalidación activa en cada escritura. El TTL es la red de
+    # seguridad para cuando se pierda: acota el daño a un minuto en lugar de
+    # dejarlo permanente.
+    reservation-version-ttl: 60s
+
   airport-catalog:
     # El maestro de aeropuertos cambia muy poco y se consulta en cada operación.
     cache-ttl: 30m
+    # Más corto que el positivo: un código que hoy no existe puede darse de alta,
+    # y el costo de equivocarse es rechazar una reserva válida.
+    negative-cache-ttl: 5m
+    # Ventana para servir el último valor conocido si el catálogo devuelve 5xx,
+    # 429 o no contesta. Convierte una caída del proveedor en una degradación
+    # silenciosa en lugar de un rechazo masivo de reservas.
+    stale-while-error: 2h
     # Catálogo de ciudades: las ciudades del itinerario se validan contra este
     # servicio en cada POST y PUT. Coincide con el 'api-catalog' de
     # compose.yaml, así que 'docker compose up -d' y listo.
@@ -68,10 +122,34 @@ reservations:
     # no pide autenticación, así que sin la variable no se manda el header.
     api-key: ${CATALOG_API_KEY:}
     api-key-header: X-API-Key
+    # Timeouts de este proveedor, no globales: el read timeout que tolera el
+    # catálogo no tiene por qué ser el del próximo servicio que se integre.
     #
-    # Ese cliente no define timeouts ni reintenta (decisión explícita de esta
-    # iteración). Los timeouts del cliente HTTP se configuran en un solo lugar,
-    # 'spring.http.client', si más adelante se decide ponerlos.
+    # Sin read timeout, una llamada contra un proveedor que acepta la conexión
+    # y no contesta queda colgada hasta que corte el sistema operativo, y con
+    # ella el pedido de reserva. Con un pool de 20 conexiones, unas pocas de
+    # esas convierten la degradación del catálogo en una caída nuestra.
+    connect-timeout: 500ms
+    read-timeout: 2s
+    retry:
+      # Sólo aplican a GET /city/{code}, que es una lectura idempotente:
+      # repetirla no puede duplicar ni cambiar nada. Las escrituras del sistema
+      # siguen sin reintentarse.
+      #
+      # Se reintenta únicamente lo transitorio (5xx, 429, timeout, error de
+      # conexión). Un 4xx que no es 404 o un cuerpo que no cumple el contrato
+      # dan lo mismo por más que se insista.
+      #
+      # Peor caso por ciudad: 2s + 100ms + 2s + 200ms + 2s ≈ 6,5s. Es alto, y
+      # lo que lo hace tolerable es que el cache está por encima: sólo lo pagan
+      # las consultas que no están cacheadas.
+      max-attempts: 3
+      initial-backoff: 100ms
+      # Techo de la espera: sin él la progresión exponencial se vuelve absurda.
+      # El jitter se sortea sobre este valor, para que varias instancias no
+      # reintenten todas en el mismo instante contra un proveedor que ya está
+      # devolviendo 429.
+      max-backoff: 500ms
   outbox:
     # Despacho de notificaciones hacia el sistema externo.
     dispatch-enabled: true
@@ -114,13 +192,22 @@ management:
   endpoints:
     web:
       exposure:
-        # Sondas de readiness/liveness para el orquestador. La seguridad de estos
-        # endpoints queda fuera del alcance de este esqueleto.
-        include: health,info
+        # Sondas de readiness/liveness para el orquestador, más las métricas:
+        # sin ellas no hay forma de saber si el cache acierta ni de enterarse el
+        # día que deja de hacerlo. La seguridad de estos endpoints queda fuera
+        # del alcance de este esqueleto.
+        include: health,info,metrics
   endpoint:
     health:
       probes:
         enabled: true
+  health:
+    redis:
+      # Apagado a propósito. El cache es opcional por diseño y su caída degrada
+      # al origen sin afectar al cliente; dejar que marque la aplicación como
+      # DOWN la sacaría de rotación por un componente del que no depende para
+      # responder.
+      enabled: false
 
 logging:
   level:

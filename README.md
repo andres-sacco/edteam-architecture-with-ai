@@ -20,6 +20,13 @@ docker compose up -d
 ./mvnw spring-boot:run
 ```
 
+`docker compose up -d` levanta PostgreSQL, **Redis** (el cache distribuido) y el
+catálogo de ciudades. Los tres son opcionales en distinta medida: sin Redis la
+aplicación arranca igual y el cache cae al de memoria del proceso
+(`CACHE_REDIS_ENABLED=false`), y sin el catálogo se usa el maestro de
+aeropuertos en memoria (`reservations.airport-catalog.base-url=`). PostgreSQL sí
+hace falta.
+
 La aplicación queda escuchando en **http://localhost:8080** y Flyway crea el esquema en
 el arranque. Para verificar que levantó:
 
@@ -79,8 +86,11 @@ Los tests, separados por lo que necesitan:
 ./mvnw verify
 ```
 
-`test` corre los 244 unitarios: rápidos y sin Docker. `verify` agrega los 43 de
-integración, que levantan un PostgreSQL con Testcontainers.
+`test` corre los 352 unitarios: rápidos y sin Docker. `verify` agrega los 49 de
+integración, que levantan un PostgreSQL con Testcontainers. Ninguno de los dos
+necesita Redis: los de integración corren con el cache en memoria, que es
+también la forma de verificar en cada build que la aplicación arranca sin el
+cache distribuido.
 
 ## Estructura
 
@@ -105,6 +115,7 @@ com.edteam.reservations
     ├── adapter/out/airport     #   Maestro de aeropuertos (stub) + cache
     ├── adapter/out/notification#   Notificaciones (stub que loguea)
     ├── adapter/out/outbox      #   Outbox en memoria (stub)
+    ├── cache                   #   Almacén del cache: Redis, memoria y métricas
     └── config                  #   Cableado y properties
 ```
 
@@ -203,8 +214,60 @@ paginar en memoria, que es justo lo que no se quiere en un listado.
 
 **Maestro de aeropuertos: decisión abierta.** Puede ser una tabla propia o un proveedor
 externo. Justamente por eso los casos de uso dependen de `AirportCatalogPort`, no de una
-implementación. Hoy responde un set fijo en memoria, decorado con `CachingAirportCatalog`
-(TTL configurable): se consulta un aeropuerto por cada punta de cada tramo y cambia muy poco.
+implementación. Con `base-url` configurada se consulta la API de catálogo; sin ella queda
+un set fijo en memoria. En los dos casos va decorado con `CachingAirportCatalog`: se
+consulta una ciudad por cada punta de cada tramo, en cada `POST` y cada `PUT`, y el dato
+cambia muy poco.
+
+**Resiliencia del catálogo: timeouts y reintentos.** Es la única dependencia de red del
+camino del pedido, así que la cadena está armada por capas y cada una hace una sola cosa
+([ADR 0002](docs/adr/0002-timeouts-y-reintentos-del-catalogo.md)):
+
+```
+CachingAirportCatalog        ← la mayoría de las consultas mueren acá
+  └─ CatalogAirportCatalog
+      └─ RetryingCityCatalogClient   ← reintenta sólo lo transitorio, con backoff y jitter
+          └─ RestCityCatalogClient   ← clasifica la respuesta HTTP
+              └─ RestClient          ← connect 500 ms, read 2 s
+```
+
+Los timeouts son de este proveedor y no globales: sin read timeout, una llamada contra un
+servicio que acepta la conexión y no contesta cuelga el pedido de reserva hasta que corte
+el sistema operativo, y con un pool de 20 conexiones unas pocas de esas convierten la
+degradación del catálogo en una caída nuestra. Sólo se reintenta lo transitorio (5xx, 429,
+timeout, error de conexión): un 4xx que no es 404 da lo mismo por más que se insista.
+
+Se puede reintentar porque `GET /city/{code}` es una lectura idempotente. Las escrituras
+del sistema siguen sin reintentarse: el alta lo es sólo gracias a la `Idempotency-Key` —y
+ese reintento lo decide el controller— y el `PUT` depende de una versión que un reintento
+ciego pisaría.
+
+**Cache: metadatos y escalares, nunca representaciones.** Tres puntos, salidos de un
+análisis de cuellos de botella sobre este código
+([ADR 0001](docs/adr/0001-cache-sobre-los-cuellos-de-botella.md)):
+
+| Qué se cachea | Clave | TTL | Invalidación |
+|---|---|---|---|
+| Existe / no existe la ciudad en el catálogo | `catalog:city:{CODE}` | 30 m · 5 m los negativos | Sólo TTL, con `stale-while-error` |
+| El `count` del listado para una combinación de filtros | `rsv:count:{hash}` | 45 s | Sólo TTL |
+| La versión de una reserva, para responder `304` | `rsv:ver:{id}` | 60 s | `DEL` post-commit en `PUT` y `DELETE` |
+
+Lo que **no** se cachea es tan importante como lo que sí: los cuerpos de las respuestas
+llevan `documentNumber` y `birthDate` de personas físicas, y la API todavía no tiene
+autenticación, así que cualquier entrada sería legible por cualquiera que alcance el
+endpoint. Por eso las cinco operaciones responden además `Cache-Control: no-store, private`.
+
+Dos detalles que son el corazón del diseño:
+
+- **Una caché caída no puede tumbar el servicio.** Ninguna operación de `CacheStore`
+  propaga un error: una lectura que falla es indistinguible de un miss, y todo degrada a
+  ir al origen. Por lo mismo `management.health.redis` está apagado: la caché es opcional
+  por diseño y no debe sacar la instancia de rotación.
+- **Una lectura cacheada no puede provocar un `409` evitable.** Si la versión cacheada
+  quedara vieja, un cliente recibiría `304`, se quedaría con su representación anterior y
+  su próximo `If-Match` chocaría contra el locking optimista. Lo cierran tres reglas: la
+  escritura **borra** la clave en vez de actualizarla, el TTL corto acota una invalidación
+  perdida, y el camino de escritura nunca lee de la caché.
 
 **Persistencia.** El esquema lo gobierna Flyway e Hibernate corre con
 `ddl-auto: validate`, así que la aplicación no arranca si el mapeo y las tablas se
@@ -237,7 +300,11 @@ contempla:
 | Paginar un listado con colecciones | Dos consultas (ids paginados + agregados de esa página) y desempate por id, para que la página 2 no repita filas de la página 1 |
 | Dos reservas simultáneas del mismo vuelo | `INSERT ... ON CONFLICT DO NOTHING` al resolver segmentos y pasajeros, para no romper la transacción |
 | Estado compartido entre hilos | El agregado es inmutable: cada operación devuelve una instancia nueva |
-| Latencia y carga sobre el maestro de aeropuertos | Cache con TTL delante del puerto |
+| Latencia y carga sobre el maestro de aeropuertos | Cache con TTL delante del puerto, compartido en Redis |
+| Un proveedor externo lento colgando pedidos y agotando el pool | Timeouts propios del catálogo (500 ms / 2 s) |
+| Un hipo del catálogo rechazando reservas válidas | Reintentos con backoff exponencial y jitter, sólo para fallos transitorios |
+| Estampida contra el origen en cada deploy o scale-out | Cache compartido entre instancias, que sobrevive a los reinicios |
+| Refrescos periódicos del mismo recurso | `If-None-Match` → `304`, resuelto contra el cache sin tocar la base |
 | Notificaciones lentas compitiendo con los pedidos | Despacho fuera del hilo del usuario, con pool propio |
 | Muchos pedidos concurrentes de I/O | Threads virtuales (`spring.threads.virtual.enabled`) |
 | Deploys sin cortar pedidos en curso | Graceful shutdown |
@@ -257,14 +324,17 @@ Cada punto tiene su lugar ya preparado:
 | Cambio de email | `application` | Hoy el email identifica al usuario en la API, así que cambiarlo es cambiar de identificador de cara al cliente. Con un recurso de usuarios habrá que decidir si el `userId` de la API pasa a ser un identificador propio y estable, y el email queda como un atributo más |
 | Confirmar una reserva | `adapter/in/rest` | `ConfirmReservationUseCase` existe y está testeado, pero no está expuesto: no entra limpio en el contrato sin un verbo en la URL o un `PATCH` de estado, y la transición va a colgar del resultado del pago. Hay que decidir la forma antes de publicarla |
 | Contrato: el 500 | `ReservationController` | Las `@ApiResponse` declaran 200/201/400/404/409, que son las respuestas del diseño. La aplicación puede responder 500 ante un error no previsto (cuerpo `ProblemDetail`, código `INTERNAL_ERROR`) y eso todavía no está declarado |
+| Índices del listado | `db/migration` | Faltan `reserva(fecha_creacion DESC, id DESC)` —el orden por defecto— y `segmento(fecha_vuelo)`. El cache del `count` tapa parte del costo, pero con `OFFSET` creciente el listado se degrada igual: cada página es una consulta distinta |
+| Presupuesto de tiempo del pedido | `AirportExistenceValidator` | Cada consulta al catálogo tiene su techo (timeout × reintentos), pero el itinerario completo no: son hasta 8 ciudades en serie. Las candidatas son resolverlas en paralelo —son independientes— y un circuit breaker que deje de intentar mientras el proveedor esté caído |
 | Swagger UI abierta | `application.yml` | La UI está expuesta sin autenticación y permite ejecutar pedidos contra la API. Junto con la seguridad hay que decidir si se publica y para quién (`springdoc.swagger-ui.enabled`) |
 
 ## Tests
 
-287 tests. Los unitarios (`mvn test`) no necesitan infraestructura; los de integración
-(`mvn verify`) levantan PostgreSQL con Testcontainers.
+401 tests. Los unitarios (`mvn test`) no necesitan infraestructura; los de integración
+(`mvn verify`) levantan PostgreSQL con Testcontainers. Cuatro quedan apagados por
+defecto: son los que pegan contra el catálogo real (`-Dcatalog.live=true`).
 
-**Unitarios (244)**
+**Unitarios (352)**
 
 - **Dominio** — reglas del agregado y de los value objects, con tiempo fijo.
 - **Aplicación** — casos de uso con los puertos mockeados: qué se persiste, qué se
@@ -279,12 +349,17 @@ Cada punto tiene su lugar ya preparado:
   cuerpo de un error real, y los parámetros de consulta del listado uno por uno.
 - **Mappers** — la traducción entre dominio y JPA, y entre DTOs y comandos, en los dos
   sentidos.
-- **Adaptadores** — cache del maestro de aeropuertos, outbox y notificaciones.
+- **Adaptadores** — outbox, notificaciones, y la cadena del catálogo: qué se reintenta y
+  qué no, que la espera crezca y lleve jitter, y que un 401 no se reintente nunca.
+- **Cache** — cada decorador contra un almacén en memoria con reloj controlado: que el hit
+  no vaya al origen, que el TTL expire, que la invalidación borre la clave, que una
+  escritura no deje servir datos viejos, que lo guardado sea un escalar y no una
+  representación, y que con el almacén caído todo siga funcionando contra el origen.
 - **Arquitectura** — ArchUnit sobre las reglas de dependencia entre capas, incluida la de
   que el dominio no importe `jakarta.persistence` y la de que los adaptadores de entrada
   hablen con los puertos y no con los servicios.
 
-**Integración (43)**
+**Integración (49)**
 
 - `ReservationPersistenceAdapterIT` — el adaptador contra PostgreSQL: reutilización de
   segmentos y pasajeros, orden de los tramos, `UNIQUE` de idempotencia, clave foránea de
@@ -294,6 +369,11 @@ Cada punto tiene su lugar ya preparado:
   con el esquema de Flyway y corre el flujo crear → consultar → confirmar → modificar →
   cancelar, más la idempotencia, el alta y la reutilización del usuario, y el despacho del
   outbox.
+- `CacheIT` — el cache enchufado y **sin Redis**: que la aplicación arranque con el
+  fallback en memoria, que las métricas salgan por Actuator etiquetadas por cache, que
+  una lectura condicional responda `304` sin cuerpo, que después de un `PUT` el `ETag`
+  viejo deje de dar `304` —y el `If-Match` siguiente no coma un `409` evitable—, y que en
+  el cache no quede un solo dato de pasajero.
 - `ReservationApiIT` — el mismo flujo pero **por HTTP** contra la base real: el `ETag` de
   una respuesta usado en el `If-Match` de la siguiente, el reintento que devuelve 200 sin
   duplicar filas, el `ETag` viejo que da 409 sin escribir, el listado con sus filtros, su

@@ -39,7 +39,12 @@ import java.util.function.Supplier;
         // Maestro de ciudades: el stub en memoria. El build no puede depender de
         // que el servicio de catálogo esté levantado; lo que hay que probar acá
         // es el flujo contra PostgreSQL, y la traducción HTTP ya tiene sus tests.
-        "reservations.airport-catalog.base-url="
+        "reservations.airport-catalog.base-url=",
+        // Cache en memoria, por el mismo motivo: el build no puede depender de
+        // que haya un Redis levantado. Con esto además se verifica en cada
+        // corrida que la aplicación arranca y funciona sin el cache
+        // distribuido, que es una restricción explícita del diseño.
+        "reservations.cache.redis.enabled=false"
 })
 public abstract class AbstractPostgresIT {
 

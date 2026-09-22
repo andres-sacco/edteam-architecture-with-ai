@@ -26,7 +26,7 @@ La persistencia es PostgreSQL y las reservas usan locking optimista: una lectura
 
 ## Tarea
 
-Detectar los cuellos de botella que más se beneficiarían de una caché.
+Detectar los cuellos de botella que más se beneficiarían de una caché. Incluí comunicaciones externas con otras aplicaciones.
 
 ## Restricciones
 

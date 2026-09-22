@@ -92,6 +92,18 @@
             <artifactId>flyway-database-postgresql</artifactId>
         </dependency>
 
+        <!--
+          Redis (Lettuce): soporte del cache distribuido. Está en el classpath
+          siempre, pero el adaptador que lo usa se cablea sólo si
+          'reservations.cache.redis.enabled' es true; sin eso, el cache es el
+          fallback en memoria y la aplicación arranca sin Redis, igual que
+          arranca sin el catálogo externo.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>

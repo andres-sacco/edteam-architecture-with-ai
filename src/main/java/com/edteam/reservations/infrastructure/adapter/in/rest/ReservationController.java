@@ -32,7 +32,9 @@ import jakarta.validation.Valid;
 import org.springdoc.core.annotations.ParameterObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -49,6 +51,7 @@ import org.springframework.web.util.UriComponentsBuilder;
 
 import java.net.URI;
 import java.util.Objects;
+import java.util.OptionalLong;
 import java.util.UUID;
 
 /**
@@ -78,6 +81,31 @@ import java.util.UUID;
  *       {@code If-Match} en las operaciones que escriben. Es el mecanismo
  *       estándar de HTTP para lo mismo que hace {@code expectedVersion}.</li>
  * </ul>
+ *
+ * <h2>Lo que este adaptador hace con el cache</h2>
+ * Dos cosas, y las dos son de protocolo:
+ *
+ * <ul>
+ *   <li><b>Peticiones condicionales.</b> El {@code ETag} ya se emitía; ahora
+ *       se acepta {@code If-None-Match} en la lectura por id y se responde
+ *       {@code 304 Not Modified} cuando el cliente ya tiene esa versión.
+ *       {@link ReservationVersionCache} permite resolver ese 304 sin tocar la
+ *       base: es lo único que se cachea de este endpoint, porque el cuerpo
+ *       lleva documento y fecha de nacimiento de personas físicas.</li>
+ *   <li><b>{@code Cache-Control: no-store, private} en toda respuesta de
+ *       reserva.</b> Por la misma razón: la API todavía no tiene
+ *       autenticación, así que una representación guardada por un proxy
+ *       compartido, un CDN o el disco del navegador queda legible para
+ *       cualquiera que la alcance. El ahorro del 304 no se pierde: el cliente
+ *       que reenvía el {@code ETag} es el mismo que ya tiene que conservarlo
+ *       para poder mandar {@code If-Match}, y eso es estado de la aplicación,
+ *       no un cache HTTP.</li>
+ * </ul>
+ *
+ * <p>Toda operación que escribe invalida la versión cacheada después de que el
+ * caso de uso devolvió —o sea, con la transacción ya confirmada—. Ver
+ * {@link ReservationVersionCache} por qué se borra y no se actualiza, y por
+ * qué esto no puede generar un {@code 409} evitable.
  */
 @RestController
 @RequestMapping(path = "/v1/reservations", produces = MediaType.APPLICATION_JSON_VALUE)
@@ -106,25 +134,44 @@ public class ReservationController {
 
     private static final String NOT_FOUND_DESCRIPTION = "No existe una reserva con ese identificador.";
 
+    private static final String IF_NONE_MATCH_DESCRIPTION = """
+            `ETag` de la representación que el cliente ya tiene. Si coincide con la
+            versión actual, la respuesta es **304** sin cuerpo.
+
+            A diferencia de `If-Match`, es opcional y tolerante: un valor que no se
+            entiende no es un 400, simplemente devuelve la representación completa. Se
+            admite la lista separada por comas, la forma débil (`W/\"7\"`) y el comodín
+            `*`.""";
+
+    /**
+     * Ninguna representación de reserva puede quedar guardada fuera del
+     * cliente: llevan documento y fecha de nacimiento de los pasajeros, y la
+     * API no tiene todavía capa de seguridad.
+     */
+    private static final CacheControl NO_STORE = CacheControl.noStore().cachePrivate();
+
     private final CreateReservationUseCase createReservation;
     private final GetReservationUseCase getReservation;
     private final ListReservationsUseCase listReservations;
     private final ModifyReservationUseCase modifyReservation;
     private final CancelReservationUseCase cancelReservation;
     private final ReservationRestMapper mapper;
+    private final ReservationVersionCache versionCache;
 
     public ReservationController(CreateReservationUseCase createReservation,
                                  GetReservationUseCase getReservation,
                                  ListReservationsUseCase listReservations,
                                  ModifyReservationUseCase modifyReservation,
                                  CancelReservationUseCase cancelReservation,
-                                 ReservationRestMapper mapper) {
+                                 ReservationRestMapper mapper,
+                                 ReservationVersionCache versionCache) {
         this.createReservation = Objects.requireNonNull(createReservation);
         this.getReservation = Objects.requireNonNull(getReservation);
         this.listReservations = Objects.requireNonNull(listReservations);
         this.modifyReservation = Objects.requireNonNull(modifyReservation);
         this.cancelReservation = Objects.requireNonNull(cancelReservation);
         this.mapper = Objects.requireNonNull(mapper);
+        this.versionCache = Objects.requireNonNull(versionCache);
     }
 
     /**
@@ -224,11 +271,17 @@ public class ReservationController {
         CreateReservationResult result = createOnce(command);
         Reservation reservation = result.reservation();
 
+        // No invalida nada, a diferencia del PUT y el DELETE. Un alta efectiva
+        // estrena un id, que por definición no tiene versión cacheada; y un
+        // reintento devuelve la reserva ya creada sin cambiarle la versión, así
+        // que lo que hubiera en el cache sigue siendo correcto.
+
         ResponseEntity.BodyBuilder response = result.created()
                 ? ResponseEntity.created(locationOf(reservation))
                 : ResponseEntity.ok();
 
         return response.eTag(EntityVersion.toETag(reservation.version()))
+                .cacheControl(NO_STORE)
                 .body(mapper.toResponse(reservation));
     }
 
@@ -259,7 +312,26 @@ public class ReservationController {
         }
     }
 
-    /** Devuelve la reserva, con su {@code ETag} para poder modificarla después. */
+    /**
+     * Devuelve la reserva, con su {@code ETag} para poder modificarla después,
+     * o {@code 304} si el cliente ya tiene esa versión.
+     *
+     * <p>El 304 se resuelve en dos niveles, y el orden importa:
+     * <ol>
+     *   <li>Si la versión está en {@link ReservationVersionCache} y coincide
+     *       con el {@code If-None-Match}, se responde sin llamar al caso de
+     *       uso: ni consulta, ni hidratación de cinco tablas, ni
+     *       serialización de un solo dato de pasajero. Es el ahorro que
+     *       justifica el cache.</li>
+     *   <li>Si no está —cache frío o recién invalidado—, se lee del origen y
+     *       se compara contra la versión real. Ahí el 304 ahorra el payload
+     *       pero no la consulta, y de paso deja la versión cacheada para la
+     *       próxima.</li>
+     * </ol>
+     *
+     * <p>Una entrada desactualizada no puede provocar un {@code 409} evitable:
+     * ver el razonamiento completo en {@link ReservationVersionCache}.
+     */
     @GetMapping("/{reservationId}")
     @Operation(operationId = "getReservation",
             summary = "Obtener una reserva",
@@ -268,9 +340,29 @@ public class ReservationController {
                     sus pasajeros resueltos.
 
                     El `ETag` de la respuesta es el que hay que enviar en `If-Match` para
-                    actualizar o cancelar la reserva.""")
+                    actualizar o cancelar la reserva.
+
+                    ## Lecturas condicionales
+
+                    Reenviando ese mismo `ETag` en `If-None-Match`, una reserva que no
+                    cambió se responde con **304** y sin cuerpo. Es lo recomendado para
+                    las pantallas que refrescan periódicamente.
+
+                    ## Por qué la respuesta es `no-store`
+
+                    El cuerpo incluye documento y fecha de nacimiento de los pasajeros, y
+                    la API todavía no tiene autenticación. `Cache-Control: no-store,
+                    private` impide que un proxy compartido, un CDN o el disco del
+                    navegador conserven esos datos. Conservar el `ETag` en el estado de la
+                    aplicación cliente —que es lo que ya hace falta para poder mandar
+                    `If-Match`— no está afectado por eso.""")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Reserva encontrada.",
+                    headers = @Header(name = "ETag", description = ETAG_DESCRIPTION,
+                            schema = @Schema(type = "string", example = "\"7\""))),
+            @ApiResponse(responseCode = "304",
+                    description = "La reserva no cambió respecto del `ETag` enviado en "
+                            + "`If-None-Match`. No lleva cuerpo.",
                     headers = @Header(name = "ETag", description = ETAG_DESCRIPTION,
                             schema = @Schema(type = "string", example = "\"7\""))),
             @ApiResponse(responseCode = "400", description = "El identificador no es válido.",
@@ -282,12 +374,37 @@ public class ReservationController {
     })
     public ResponseEntity<ReservationResponse> getById(
             @Parameter(description = "Identificador opaco de la reserva.", example = "1042")
-            @PathVariable long reservationId) {
-        Reservation reservation = getReservation.getById(ReservationId.of(reservationId));
+            @PathVariable long reservationId,
+            @Parameter(name = "If-None-Match", in = ParameterIn.HEADER,
+                    description = IF_NONE_MATCH_DESCRIPTION, example = "\"7\"")
+            @RequestHeader(value = HttpHeaders.IF_NONE_MATCH, required = false) String ifNoneMatch) {
+
+        ReservationId id = ReservationId.of(reservationId);
+
+        OptionalLong knownVersion = ifNoneMatch == null ? OptionalLong.empty() : versionCache.find(id);
+        if (knownVersion.isPresent() && EntityVersion.matchesIfNoneMatch(ifNoneMatch, knownVersion.getAsLong())) {
+            return notModified(knownVersion.getAsLong());
+        }
+
+        Reservation reservation = getReservation.getById(id);
+        versionCache.remember(id, reservation.version());
+
+        if (EntityVersion.matchesIfNoneMatch(ifNoneMatch, reservation.version())) {
+            return notModified(reservation.version());
+        }
 
         return ResponseEntity.ok()
                 .eTag(EntityVersion.toETag(reservation.version()))
+                .cacheControl(NO_STORE)
                 .body(mapper.toResponse(reservation));
+    }
+
+    /** {@code 304} con el {@code ETag} que el cliente tiene que seguir usando. */
+    private static ResponseEntity<ReservationResponse> notModified(long version) {
+        return ResponseEntity.status(HttpStatus.NOT_MODIFIED)
+                .eTag(EntityVersion.toETag(version))
+                .cacheControl(NO_STORE)
+                .build();
     }
 
     /**
@@ -320,7 +437,7 @@ public class ReservationController {
             // objeto, que no le dice a nadie cómo se llama la API.
             @ParameterObject @Valid @ModelAttribute ListReservationsParams params) {
         ResultPage<Reservation> page = listReservations.list(mapper.toCriteria(params));
-        return ResponseEntity.ok(mapper.toResponse(page));
+        return ResponseEntity.ok().cacheControl(NO_STORE).body(mapper.toResponse(page));
     }
 
     /**
@@ -381,8 +498,14 @@ public class ReservationController {
         Reservation modified = modifyReservation.modify(
                 mapper.toCommand(reservationId, expectedVersion, request.itinerary()));
 
+        // Después del caso de uso, o sea con la transacción ya confirmada: si
+        // se borrara antes, una lectura concurrente podría repoblar el cache
+        // con la versión vieja entre el borrado y el commit.
+        versionCache.forget(ReservationId.of(reservationId));
+
         return ResponseEntity.ok()
                 .eTag(EntityVersion.toETag(modified.version()))
+                .cacheControl(NO_STORE)
                 .body(mapper.toResponse(modified));
     }
 
@@ -441,8 +564,11 @@ public class ReservationController {
         Reservation cancelled = cancelReservation.cancel(
                 mapper.toCancelCommand(reservationId, expectedVersion));
 
+        versionCache.forget(ReservationId.of(reservationId));
+
         return ResponseEntity.ok()
                 .eTag(EntityVersion.toETag(cancelled.version()))
+                .cacheControl(NO_STORE)
                 .body(mapper.toResponse(cancelled));
     }
 

@@ -1,8 +1,8 @@
-# Base de datos para desarrollo. No hace falta instalar PostgreSQL:
+# Infraestructura de desarrollo. No hace falta instalar nada a mano:
 #
-#   docker compose up -d        levanta la base
-#   docker compose down         la detiene (conserva los datos)
-#   docker compose down -v      la detiene y borra los datos
+#   docker compose up -d        levanta PostgreSQL, Redis y el catálogo
+#   docker compose down         los detiene (conserva los datos)
+#   docker compose down -v      los detiene y borra los datos
 #
 # Los valores coinciden con los de src/main/resources/application.yml, así que
 # 'mvn spring-boot:run' conecta sin configurar nada más.
@@ -29,6 +29,39 @@ services:
       retries: 10
       start_period: 10s
     restart: unless-stopped
+
+  # Cache distribuido. La aplicación arranca igual sin él —cae al cache en
+  # memoria del proceso— pero con Redis el cache es uno solo para todas las
+  # instancias y sobrevive a los reinicios.
+  redis:
+    image: redis:7-alpine
+    container_name: reservations-redis
+    ports:
+      - "6379:6379"
+    # Se replican acá las dos condiciones del free tier contra el que está
+    # dimensionado el cache, para que el entorno local se parezca a producción
+    # en lo único que importa: qué pasa cuando la memoria se llena.
+    #
+    #   maxmemory 30mb    el tope del plan gratuito típico
+    #   allkeys-lru       al llenarse desaloja lo menos usado, en lugar de
+    #                     empezar a rechazar escrituras (que es lo que hace
+    #                     'noeviction', el default) y dejar el cache congelado
+    #
+    # Con los TTL y los tamaños estimados en el ADR 0001 —decenas de KB el
+    # catálogo, cientos de KB los totales, ~90 B por reserva caliente— esto no
+    # debería llegar a activarse; si se activa, la métrica de evictions lo
+    # muestra antes de que se note como latencia.
+    command: ["redis-server", "--maxmemory", "30mb", "--maxmemory-policy", "allkeys-lru", "--save", ""]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+    # Sin volumen a propósito: es un cache. Lo que haya adentro se puede perder
+    # sin consecuencias, y persistirlo sólo agregaría I/O y un estado más que
+    # limpiar entre corridas. Por eso también '--save ""', que apaga el RDB.
 
   # Catálogo de vuelos (servicio externo simulado) y su base MySQL.
   api-catalog:

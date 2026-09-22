@@ -57,14 +57,14 @@ import java.util.stream.Collectors;
  * multiplica filas porque hay exactamente uno por itinerario.
  */
 @Component
-public class ReservationSearchJpaQuery {
+public class ReservationSearchJpaQuery implements ReservationSearchQuery {
 
     private static final int FIRST_SEGMENT_INDEX = 0;
 
     @PersistenceContext
     private EntityManager entityManager;
 
-    /** Cantidad total de reservas que cumplen el filtro, ignorando la paginación. */
+    @Override
     public long count(ReservationSearchCriteria criteria) {
         CriteriaBuilder builder = entityManager.getCriteriaBuilder();
         CriteriaQuery<Long> query = builder.createQuery(Long.class);
@@ -77,7 +77,7 @@ public class ReservationSearchJpaQuery {
         return entityManager.createQuery(query).getSingleResult();
     }
 
-    /** Ids de la página pedida, ya en el orden del criterio. */
+    @Override
     public List<Long> findPageOfIds(ReservationSearchCriteria criteria) {
         CriteriaBuilder builder = entityManager.getCriteriaBuilder();
         CriteriaQuery<Long> query = builder.createQuery(Long.class);

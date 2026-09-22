@@ -74,15 +74,26 @@ import java.util.Optional;
  * existe".
  *
  * <h2>Lo que este cliente NO hace</h2>
- * No define timeouts ni reintenta, por decisión de diseño explícita del
- * pedido. Conviene tenerlo presente en operación: sin read timeout, una
- * llamada contra un proveedor que acepta la conexión y no contesta queda
- * colgada hasta que el sistema operativo corte, y el pedido de reserva que la
- * disparó queda colgado con ella. La clasificación de fallos de arriba es
- * justamente lo que permite agregar después —sin tocar esta clase— un
- * timeout en el {@code ClientHttpRequestFactory}, un reintento sólo para los
- * errores transitorios o un decorador que sirva el último valor cacheado
- * cuando el catálogo no responde.
+ * No reintenta ni define timeouts, y eso es a propósito: esta clase traduce
+ * una respuesta HTTP a un resultado, y nada más. Las tres decisiones de
+ * resiliencia viven afuera, y cada una se apoya en la clasificación de arriba
+ * sin volver a mirar un código de estado:
+ *
+ * <ul>
+ *   <li><b>Timeouts</b> → en el {@code ClientHttpRequestFactory} que arma
+ *       {@code AdapterConfiguration} (500 ms de conexión, 2 s de lectura). Un
+ *       vencimiento llega acá como {@code ResourceAccessException}, o sea
+ *       como fallo transitorio, que es lo que es.</li>
+ *   <li><b>Reintentos</b> → {@link RetryingCityCatalogClient}, que envuelve a
+ *       esta clase y repite sólo lo transitorio, con espera exponencial y
+ *       jitter.</li>
+ *   <li><b>Último valor conocido ante una caída</b> →
+ *       {@code CachingAirportCatalog}, más arriba todavía.</li>
+ * </ul>
+ *
+ * <p>Que estén separadas es lo que permite testear la traducción HTTP contra
+ * un servidor simulado sin esperar backoffs, y cambiar la política de
+ * reintentos sin tocar una sola línea de clasificación.
  */
 public class RestCityCatalogClient implements CityCatalogClient {
 
