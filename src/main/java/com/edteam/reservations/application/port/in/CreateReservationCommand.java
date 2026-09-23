@@ -1,33 +1,31 @@
 package com.edteam.reservations.application.port.in;
 
+import com.edteam.reservations.domain.access.Actor;
+
 import java.util.List;
 import java.util.Objects;
 
 /**
- * Datos de entrada para crear una reserva.
+ * Pedido de alta de una reserva.
  *
- * <p>{@code idempotencyKey} lo genera el cliente y es lo que hace segura la
- * operación ante reintentos: dos pedidos con la misma clave producen una sola
- * reserva, incluso si llegan al mismo tiempo (el {@code UNIQUE} del modelo de
- * datos es el que cierra la carrera).
+ * <p>Ya no lleva {@code UserData}: el comprador es el {@code actor}, y el
+ * actor sale del token. Que el cliente declarara en el cuerpo a nombre de
+ * quién reservaba permitía dar de alta una reserva a nombre de cualquier
+ * email y hacer que la notificación —desde nuestro canal, con nuestra
+ * reputación— le llegara a la víctima.
  *
- * <p>El usuario viaja con sus datos y no como id: el sistema no expone un alta
- * de usuarios, así que exigir un id obligaría a que la fila ya estuviera
- * cargada por fuera de la aplicación. Se lo identifica por email —su clave
- * natural— y se lo da de alta si es la primera vez que reserva.
- *
- * @param user            quien reserva, identificado por su email
- * @param idempotencyKey  UUID generado por el cliente
- * @param itinerary       itinerario a reservar, con sus tramos en orden
- * @param passengers      al menos un pasajero
+ * @param actor          comprador; también el destinatario de las notificaciones
+ * @param idempotencyKey clave del intento, generada por el cliente
+ * @param itinerary      itinerario a reservar
+ * @param passengers     pasajeros; entre 1 y 9
  */
-public record CreateReservationCommand(UserData user,
+public record CreateReservationCommand(Actor actor,
                                        String idempotencyKey,
                                        ItineraryData itinerary,
                                        List<PassengerData> passengers) {
 
     public CreateReservationCommand {
-        Objects.requireNonNull(user, "user es obligatorio");
+        Objects.requireNonNull(actor, "El solicitante es obligatorio");
         Objects.requireNonNull(idempotencyKey, "idempotencyKey es obligatorio");
         Objects.requireNonNull(itinerary, "itinerary es obligatorio");
         Objects.requireNonNull(passengers, "passengers es obligatorio");

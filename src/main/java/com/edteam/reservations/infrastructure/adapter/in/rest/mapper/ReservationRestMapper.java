@@ -6,7 +6,7 @@ import com.edteam.reservations.application.port.in.ItineraryData;
 import com.edteam.reservations.application.port.in.ModifyReservationCommand;
 import com.edteam.reservations.application.port.in.PassengerData;
 import com.edteam.reservations.application.port.in.SegmentData;
-import com.edteam.reservations.application.port.in.UserData;
+import com.edteam.reservations.domain.access.Actor;
 import com.edteam.reservations.application.query.ReservationSearchCriteria;
 import com.edteam.reservations.application.query.ReservationSortBy;
 import com.edteam.reservations.application.query.ResultPage;
@@ -30,7 +30,6 @@ import com.edteam.reservations.infrastructure.adapter.in.rest.dto.ReservationRes
 import com.edteam.reservations.infrastructure.adapter.in.rest.dto.ReservationStatusDto;
 import com.edteam.reservations.infrastructure.adapter.in.rest.dto.SegmentRequest;
 import com.edteam.reservations.infrastructure.adapter.in.rest.dto.SegmentResponse;
-import com.edteam.reservations.infrastructure.adapter.in.rest.dto.UserRequest;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
@@ -63,23 +62,35 @@ public class ReservationRestMapper {
     // HTTP -> aplicación
     // ------------------------------------------------------------------
 
-    public CreateReservationCommand toCommand(CreateReservationRequest request, UUID idempotencyKey) {
+    /**
+     * El comprador no sale del cuerpo sino del {@code actor}, que el adaptador
+     * obtuvo del token. Es la traducción que hace imposible reservar a nombre
+     * de otro: no hay ningún camino por el que un dato del pedido termine
+     * siendo la identidad del titular.
+     */
+    public CreateReservationCommand toCommand(CreateReservationRequest request,
+                                              UUID idempotencyKey,
+                                              Actor actor) {
         Objects.requireNonNull(request, "El pedido es obligatorio");
         Objects.requireNonNull(idempotencyKey, "La clave de idempotencia es obligatoria");
+        Objects.requireNonNull(actor, "El solicitante es obligatorio");
 
         return new CreateReservationCommand(
-                toUserData(request.user()),
+                actor,
                 idempotencyKey.toString(),
                 toItineraryData(request.itinerary()),
                 request.passengers().stream().map(ReservationRestMapper::toPassengerData).toList());
     }
 
-    public ModifyReservationCommand toCommand(long reservationId, long expectedVersion, ItineraryRequest itinerary) {
-        return new ModifyReservationCommand(reservationId, expectedVersion, toItineraryData(itinerary));
+    public ModifyReservationCommand toCommand(long reservationId,
+                                              long expectedVersion,
+                                              ItineraryRequest itinerary,
+                                              Actor actor) {
+        return new ModifyReservationCommand(reservationId, expectedVersion, toItineraryData(itinerary), actor);
     }
 
-    public CancelReservationCommand toCancelCommand(long reservationId, long expectedVersion) {
-        return new CancelReservationCommand(reservationId, expectedVersion);
+    public CancelReservationCommand toCancelCommand(long reservationId, long expectedVersion, Actor actor) {
+        return new CancelReservationCommand(reservationId, expectedVersion, actor);
     }
 
     /**
@@ -103,7 +114,9 @@ public class ReservationRestMapper {
                 .collect(Collectors.toUnmodifiableSet());
 
         return new ReservationSearchCriteria(
-                // Un 'userId=' vacío significa "sin filtro", no "usuario con email vacío".
+                // Un 'userId=' vacío significa "sin filtro", no "usuario con email
+                // vacío". Y "sin filtro" ya no significa "todas": el caso de uso
+                // reduce el criterio al alcance del solicitante antes de consultar.
                 Optional.ofNullable(params.userId())
                         .filter(email -> !email.isBlank())
                         .map(Email::of),
@@ -114,10 +127,6 @@ public class ReservationRestMapper {
                 params.size(),
                 sortBy,
                 direction);
-    }
-
-    private static UserData toUserData(UserRequest request) {
-        return new UserData(request.email(), request.firstName(), request.lastName());
     }
 
     private static ItineraryData toItineraryData(ItineraryRequest request) {

@@ -27,3 +27,4 @@ Cada ADR documenta una decisión significativa, su contexto y sus consecuencias.
 
 | # | Decisión | Estado | Prompt origen |
 |---|----------|--------|---------------|
+| [0003](0003-autenticacion-autorizacion-y-datos-sensibles.md) | Autenticación, autorización por recurso y datos sensibles | Aceptado | [12 — Remediación de seguridad](../prompts/12-remediacion-de-seguridad.md) |

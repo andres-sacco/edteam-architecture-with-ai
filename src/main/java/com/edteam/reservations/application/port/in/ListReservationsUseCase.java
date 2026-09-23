@@ -1,17 +1,14 @@
 package com.edteam.reservations.application.port.in;
 
-import com.edteam.reservations.application.query.ReservationSearchCriteria;
 import com.edteam.reservations.application.query.ResultPage;
 import com.edteam.reservations.domain.model.Reservation;
 
-/** Puerto de entrada: listar reservas con filtros y paginación. */
+/** Listado paginado de reservas, acotado a lo que el solicitante puede ver. */
 public interface ListReservationsUseCase {
 
     /**
-     * Devuelve la página de reservas que cumple el criterio.
-     *
-     * <p>Una página vacía no es un error: significa que no hay reservas que
-     * cumplan el filtro, o que se pidió una página más allá del final.
+     * @throws com.edteam.reservations.domain.access.ReservationAccessDeniedException
+     *         si un titular pide explícitamente el listado de otro usuario
      */
-    ResultPage<Reservation> list(ReservationSearchCriteria criteria);
+    ResultPage<Reservation> list(ListReservationsQuery query);
 }

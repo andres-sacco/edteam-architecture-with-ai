@@ -7,18 +7,22 @@ import com.edteam.reservations.application.port.in.CreateReservationResult;
 import com.edteam.reservations.application.port.in.ItineraryData;
 import com.edteam.reservations.application.port.in.PassengerData;
 import com.edteam.reservations.application.port.out.AirportCatalogPort;
+import com.edteam.reservations.application.port.out.AuditTrailPort;
 import com.edteam.reservations.application.port.out.EventOutboxPort;
 import com.edteam.reservations.application.port.out.ReservationRepositoryPort;
 import com.edteam.reservations.application.port.out.UserRepositoryPort;
+import com.edteam.reservations.domain.access.Actor;
 import com.edteam.reservations.domain.event.DomainEvent;
 import com.edteam.reservations.domain.event.ReservationCreated;
 import com.edteam.reservations.domain.exception.InvalidReservationException;
 import com.edteam.reservations.domain.exception.ItineraryAlreadyDepartedException;
 import com.edteam.reservations.domain.model.AirportCode;
+import com.edteam.reservations.domain.model.Email;
 import com.edteam.reservations.domain.model.Reservation;
 import com.edteam.reservations.domain.model.ReservationId;
 import com.edteam.reservations.domain.model.ReservationStatus;
 import com.edteam.reservations.domain.model.User;
+import com.edteam.reservations.domain.model.UserId;
 import com.edteam.reservations.support.TestFixtures;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -61,6 +65,9 @@ class CreateReservationServiceTest {
     @Mock
     private UserRepositoryPort userRepository;
 
+    @Mock
+    private AuditTrailPort auditTrail;
+
     private CreateReservationService service;
 
     @BeforeEach
@@ -71,13 +78,17 @@ class CreateReservationServiceTest {
                 new ItineraryAssembler(),
                 new AirportExistenceValidator(airportCatalog),
                 eventOutbox,
+                auditTrail,
                 TestFixtures.fixedClock());
 
         // Camino feliz por defecto; cada test lo sobreescribe si necesita otro.
         // Se declara lenient porque varios tests fallan antes de llegar a usarlo,
         // que es justamente lo que verifican.
         lenient().when(airportCatalog.exists(any(AirportCode.class))).thenReturn(true);
-        lenient().when(reservationRepository.findByIdempotencyKey(TestFixtures.IDEMPOTENCY_KEY))
+        lenient().when(userRepository.findByEmail(any()))
+                .thenReturn(Optional.of(TestFixtures.storedUser()));
+        lenient().when(reservationRepository.findByIdempotencyKey(
+                        TestFixtures.USER_ID, TestFixtures.IDEMPOTENCY_KEY))
                 .thenReturn(Optional.empty());
         lenient().when(userRepository.findOrRegister(any(User.class))).thenReturn(TestFixtures.storedUser());
         lenient().when(reservationRepository.save(any(Reservation.class)))
@@ -131,7 +142,7 @@ class CreateReservationServiceTest {
     @DisplayName("ante un reintento con la misma clave devuelve la reserva existente y no vuelve a notificar")
     void isIdempotentOnRetry() {
         Reservation existente = TestFixtures.storedReservation(2L);
-        when(reservationRepository.findByIdempotencyKey(TestFixtures.IDEMPOTENCY_KEY))
+        when(reservationRepository.findByIdempotencyKey(TestFixtures.USER_ID, TestFixtures.IDEMPOTENCY_KEY))
                 .thenReturn(Optional.of(existente));
 
         CreateReservationResult result = service.create(TestFixtures.createCommand());
@@ -140,8 +151,9 @@ class CreateReservationServiceTest {
         // Lo que distingue un reintento de un alta: el adaptador lo traduce a 200 en vez de 201.
         assertThat(result.created()).isFalse();
         verify(reservationRepository, never()).save(any());
-        // Tampoco se toca al usuario: el reintento no da de alta a nadie.
-        verifyNoInteractions(userRepository);
+        // El reintento consulta al usuario —necesita su id para alcanzar la
+        // clave— pero no da de alta a nadie.
+        verify(userRepository, never()).findOrRegister(any());
         verify(eventOutbox, never()).enqueue(anyCollection());
     }
 
@@ -161,7 +173,7 @@ class CreateReservationServiceTest {
     @DisplayName("valida contra el maestro todos los aeropuertos del itinerario")
     void validatesEveryAirport() {
         CreateReservationCommand conEscala = new CreateReservationCommand(
-                TestFixtures.userData(), TestFixtures.IDEMPOTENCY_KEY.value().toString(),
+                TestFixtures.owner(), TestFixtures.IDEMPOTENCY_KEY.value().toString(),
                 TestFixtures.connectingItineraryData(), TestFixtures.passengerData());
 
         service.create(conEscala);
@@ -191,7 +203,7 @@ class CreateReservationServiceTest {
                 List.of(TestFixtures.segmentData(TestFixtures.EZE, TestFixtures.SCL,
                         TestFixtures.NOW.minus(Duration.ofDays(1)))));
         CreateReservationCommand command = new CreateReservationCommand(
-                TestFixtures.userData(), TestFixtures.IDEMPOTENCY_KEY.value().toString(),
+                TestFixtures.owner(), TestFixtures.IDEMPOTENCY_KEY.value().toString(),
                 pasado, TestFixtures.passengerData());
 
         assertThatThrownBy(() -> service.create(command))
@@ -205,7 +217,7 @@ class CreateReservationServiceTest {
     @DisplayName("rechaza una reserva sin pasajeros")
     void rejectsReservationWithoutPassengers() {
         CreateReservationCommand command = new CreateReservationCommand(
-                TestFixtures.userData(), TestFixtures.IDEMPOTENCY_KEY.value().toString(),
+                TestFixtures.owner(), TestFixtures.IDEMPOTENCY_KEY.value().toString(),
                 TestFixtures.itineraryData(), List.of());
 
         assertThatThrownBy(() -> service.create(command))
@@ -219,7 +231,7 @@ class CreateReservationServiceTest {
     @DisplayName("rechaza el mismo pasajero dos veces en la reserva")
     void rejectsDuplicatePassengers() {
         CreateReservationCommand command = new CreateReservationCommand(
-                TestFixtures.userData(), TestFixtures.IDEMPOTENCY_KEY.value().toString(),
+                TestFixtures.owner(), TestFixtures.IDEMPOTENCY_KEY.value().toString(),
                 TestFixtures.itineraryData(),
                 List.of(new PassengerData("Ana", "Pérez", LocalDate.of(1990, 5, 20), "30123456"),
                         new PassengerData("Ana", "Pérez", LocalDate.of(1990, 5, 20), "30123456")));
@@ -233,7 +245,7 @@ class CreateReservationServiceTest {
     @DisplayName("rechaza una clave de idempotencia que no es un UUID")
     void rejectsMalformedIdempotencyKey() {
         CreateReservationCommand command = new CreateReservationCommand(
-                TestFixtures.userData(), "no-es-un-uuid",
+                TestFixtures.owner(), "no-es-un-uuid",
                 TestFixtures.itineraryData(), TestFixtures.passengerData());
 
         assertThatThrownBy(() -> service.create(command))
@@ -254,15 +266,17 @@ class CreateReservationServiceTest {
     void requiresDependencies() {
         assertThatThrownBy(() -> new CreateReservationService(
                 null, userRepository, new ItineraryAssembler(),
-                new AirportExistenceValidator(airportCatalog), eventOutbox, TestFixtures.fixedClock()))
+                new AirportExistenceValidator(airportCatalog), eventOutbox, auditTrail,
+                TestFixtures.fixedClock()))
                 .isInstanceOf(NullPointerException.class);
         assertThatThrownBy(() -> new CreateReservationService(
                 reservationRepository, null, new ItineraryAssembler(),
-                new AirportExistenceValidator(airportCatalog), eventOutbox, TestFixtures.fixedClock()))
+                new AirportExistenceValidator(airportCatalog), eventOutbox, auditTrail,
+                TestFixtures.fixedClock()))
                 .isInstanceOf(NullPointerException.class);
         assertThatThrownBy(() -> new CreateReservationService(
                 reservationRepository, userRepository, new ItineraryAssembler(),
-                new AirportExistenceValidator(airportCatalog), eventOutbox, null))
+                new AirportExistenceValidator(airportCatalog), eventOutbox, auditTrail, null))
                 .isInstanceOf(NullPointerException.class);
     }
 
@@ -293,22 +307,33 @@ class CreateReservationServiceTest {
         assertThatThrownBy(() -> service.create(TestFixtures.createCommand()))
                 .isInstanceOf(UnknownAirportException.class);
 
-        verifyNoInteractions(userRepository);
+        // Se lo busca —hace falta su id para resolver la clave de
+        // idempotencia— pero no se lo registra: un pedido inválido no puede
+        // dejar una fila en el maestro de usuarios.
+        verify(userRepository, never()).findOrRegister(any());
     }
 
     @Test
-    @DisplayName("un email inválido se rechaza antes de tocar la base")
-    void rejectsInvalidEmail() {
-        CreateReservationCommand command = new CreateReservationCommand(
-                new com.edteam.reservations.application.port.in.UserData("no-es-un-email", "Ana", "Pérez"),
-                TestFixtures.IDEMPOTENCY_KEY.value().toString(),
-                TestFixtures.itineraryData(), TestFixtures.passengerData());
+    @DisplayName("la reserva queda a nombre del solicitante, no de nadie más")
+    void theBuyerIsAlwaysTheCaller() {
+        // Mitigación de T-07. Ya no hay ningún dato del cuerpo que pueda
+        // terminar siendo la identidad del comprador: el único origen posible
+        // es el Actor, y el Actor viene del token.
+        Actor otro = TestFixtures.stranger();
+        when(userRepository.findByEmail(Email.of(TestFixtures.OTHER_USER_EMAIL)))
+                .thenReturn(Optional.empty());
+        when(userRepository.findOrRegister(any(User.class)))
+                .thenAnswer(invocation -> invocation.<User>getArgument(0).id().isPresent()
+                        ? invocation.<User>getArgument(0)
+                        : User.of(UserId.of(77L), otro.email(), otro.firstName(), otro.lastName(),
+                                TestFixtures.NOW));
 
-        assertThatThrownBy(() -> service.create(command))
-                .isInstanceOf(com.edteam.reservations.domain.exception.InvalidUserException.class);
+        service.create(TestFixtures.createCommand(otro));
 
-        verifyNoInteractions(userRepository);
-        verify(reservationRepository, never()).save(any());
+        ArgumentCaptor<User> registered = ArgumentCaptor.captor();
+        verify(userRepository).findOrRegister(registered.capture());
+        assertThat(registered.getValue().email()).isEqualTo(Email.of(TestFixtures.OTHER_USER_EMAIL));
+        assertThat(registered.getValue().firstName()).isEqualTo("Bruno");
     }
 
     @Test

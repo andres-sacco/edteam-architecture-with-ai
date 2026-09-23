@@ -44,7 +44,36 @@ import java.util.function.Supplier;
         // que haya un Redis levantado. Con esto además se verifica en cada
         // corrida que la aplicación arranca y funciona sin el cache
         // distribuido, que es una restricción explícita del diseño.
-        "reservations.cache.redis.enabled=false"
+        "reservations.cache.redis.enabled=false",
+        // El total de una paginación se cachea 45 segundos y no se invalida:
+        // es una pista para la interfaz, no un invariante, y ésa es una
+        // decisión de diseño explícita. Pero en los tests el contexto se
+        // comparte y la base se trunca por detrás del cache, así que un total
+        // cacheado de un test anterior haría que el resultado del siguiente
+        // dependa del orden de ejecución. Con un TTL de 1ms el cache existe
+        // —se siguen contando sus métricas— y nunca acierta entre tests.
+        "reservations.cache.reservation-count-ttl=1ms",
+        // Tokens HMAC firmados con la clave de desarrollo: es lo que permite
+        // que el test de integración ejercite la cadena completa —firma,
+        // claims, conversión a Actor, autorización por recurso— sin depender
+        // de que haya un proveedor de identidad levantado. Mismo criterio que
+        // con Redis y con el catálogo.
+        "reservations.security.jwt.dev-tokens=true",
+        // La cuota se prueba aparte: un contador por proceso compartido entre
+        // los tests haría que el resultado dependa del orden de ejecución.
+        "reservations.security.rate-limit.enabled=false",
+        // Encendidos a propósito: lo que hay que verificar no es que estén
+        // apagados —eso es el default de application.yml— sino que, cuando un
+        // entorno decide publicarlos, se puedan usar de verdad y que lo que la
+        // UI ejecuta siga exigiendo token.
+        "springdoc.api-docs.enabled=true",
+        "springdoc.swagger-ui.enabled=true",
+        // Actuator vuelve al puerto de la aplicación sólo para los tests:
+        // MockMvc levanta un único contexto servlet simulado y no puede pedir
+        // contra dos puertos. Que en producción vaya a un puerto de gestión
+        // aparte es una decisión de despliegue, no de código, y por eso no hay
+        // test que la cubra: la cubre el manifiesto que no publica ese puerto.
+        "management.server.port="
 })
 public abstract class AbstractPostgresIT {
 
@@ -60,7 +89,8 @@ public abstract class AbstractPostgresIT {
 
     /** Orden de borrado: primero las tablas que referencian a otras. */
     private static final String TRUNCATE_ALL = """
-            TRUNCATE TABLE reserva_pasajero, reserva, itinerario_segmento, itinerario, segmento, pasajero, usuario
+            TRUNCATE TABLE auditoria, reserva_pasajero, reserva, itinerario_segmento, itinerario,
+                           segmento, pasajero, usuario
             RESTART IDENTITY CASCADE
             """;
 
@@ -109,6 +139,19 @@ public abstract class AbstractPostgresIT {
         return jdbcTemplate.queryForObject(
                 "INSERT INTO usuario (email, nombre, apellido, fecha_alta) VALUES (?, ?, ?, ?) RETURNING id",
                 Long.class, email, "Ana", "Pérez", java.sql.Timestamp.from(Instant.now()));
+    }
+
+    /**
+     * Filas de auditoría de una acción.
+     *
+     * <p>{@code TRUNCATE} no dispara el trigger que hace append-only la tabla
+     * —los triggers {@code BEFORE DELETE} no se ejecutan en un truncate—, así
+     * que los tests pueden limpiarla entre corridas sin bajar la protección.
+     */
+    protected long countAudit(String action) {
+        Long count = jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM auditoria WHERE accion = ?", Long.class, action);
+        return count == null ? 0L : count;
     }
 
     protected long countRows(String table) {

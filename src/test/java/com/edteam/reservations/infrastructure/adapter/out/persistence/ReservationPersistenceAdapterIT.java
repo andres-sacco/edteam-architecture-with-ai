@@ -129,15 +129,48 @@ class ReservationPersistenceAdapterIT extends AbstractPostgresIT {
     }
 
     @Test
-    @DisplayName("busca por clave de idempotencia")
+    @DisplayName("busca por clave de idempotencia dentro del usuario")
     void findsByIdempotencyKey() {
         IdempotencyKey key = IdempotencyKey.newKey();
         Reservation saved = inTransaction(() -> adapter.save(newReservation(key)));
 
-        assertThat(inTransaction(() -> adapter.findByIdempotencyKey(key)))
+        assertThat(inTransaction(() -> adapter.findByIdempotencyKey(user.requireId(), key)))
                 .get()
                 .satisfies(found -> assertThat(found.requireId()).isEqualTo(saved.requireId()));
-        assertThat(inTransaction(() -> adapter.findByIdempotencyKey(IdempotencyKey.newKey()))).isEmpty();
+        assertThat(inTransaction(() -> adapter.findByIdempotencyKey(user.requireId(), IdempotencyKey.newKey())))
+                .isEmpty();
+    }
+
+    @Test
+    @DisplayName("la misma clave desde otro usuario no encuentra la reserva ajena")
+    void doesNotLeakAcrossUsers() {
+        // Mitigación de T-16. La clave viaja en un header, y un header queda en
+        // los logs de acceso de los proxies; con la búsqueda por clave a secas,
+        // reenviarla en un alta devolvía la reserva completa de su dueño, con
+        // los documentos de los pasajeros adentro.
+        IdempotencyKey key = IdempotencyKey.newKey();
+        inTransaction(() -> adapter.save(newReservation(key)));
+
+        UserId otro = UserId.of(insertUser(TestFixtures.OTHER_USER_EMAIL));
+
+        assertThat(inTransaction(() -> adapter.findByIdempotencyKey(otro, key)))
+                .as("la clave del otro usuario no resuelve nada acá")
+                .isEmpty();
+    }
+
+    @Test
+    @DisplayName("dos usuarios pueden usar la misma clave: la unicidad es del par")
+    void theSameKeyIsValidForTwoUsers() {
+        IdempotencyKey key = IdempotencyKey.newKey();
+        inTransaction(() -> adapter.save(newReservation(key)));
+
+        User otro = User.of(UserId.of(insertUser(TestFixtures.OTHER_USER_EMAIL)),
+                Email.of(TestFixtures.OTHER_USER_EMAIL), "Bruno", "Díaz", TestFixtures.NOW);
+
+        inTransaction(() -> adapter.save(Reservation.create(
+                otro, key, TestFixtures.connectingItinerary(), TestFixtures.newPassengers(), TestFixtures.NOW)));
+
+        assertThat(countRows("reserva")).isEqualTo(2L);
     }
 
     @Test
@@ -163,21 +196,55 @@ class ReservationPersistenceAdapterIT extends AbstractPostgresIT {
     }
 
     @Test
-    @DisplayName("reutiliza el pasajero cuando vuelve a viajar, por su documento")
-    void reusesPassengerByDocument() {
+    @DisplayName("el pasajero es de la reserva: ya no se reutiliza la fila por documento")
+    void doesNotReusePassengersAcrossReservations() {
+        // Este test decía lo contrario hasta la remediación de seguridad, y el
+        // cambio es deliberado (T-06). La reutilización cruzaba el borde de
+        // confianza: la respuesta del alta devolvía los datos ALMACENADOS, así
+        // que mandar el documento de otra persona respondía con su nombre, su
+        // apellido y su fecha de nacimiento reales. Y al revés: registrar
+        // primero un documento con datos falsos se los imponía a la reserva
+        // legítima que viniera después.
+        //
+        // El costo es una fila por pasajero repetido. La deduplicación entre
+        // reservas sigue siendo deseable, pero como proceso interno, no como
+        // un efecto observable del alta.
         inTransaction(() -> adapter.save(newReservation(IdempotencyKey.newKey())));
         Reservation segunda = inTransaction(() -> adapter.save(newReservation(
                 IdempotencyKey.newKey(), TestFixtures.connectingItinerary(), TestFixtures.newPassengers())));
 
-        assertThat(countRows("pasajero")).isEqualTo(1L);
+        assertThat(countRows("pasajero")).isEqualTo(2L);
         assertThat(countRows("reserva_pasajero")).isEqualTo(2L);
         assertThat(segunda.passengers()).singleElement()
                 .satisfies(passenger -> assertThat(passenger.id()).isPresent());
     }
 
     @Test
-    @DisplayName("un pasajero sin documento no se puede deduplicar: se inserta cada vez")
-    void insertsPassengerWithoutDocumentEveryTime() {
+    @DisplayName("el documento del pasajero no queda en claro en la base")
+    void encryptsTheDocumentAtRest() {
+        // Mitigación de T-21. Un pg_dump de 'pasajero' era un dump de PII en
+        // claro, y el backup heredaba el problema.
+        inTransaction(() -> adapter.save(newReservation(IdempotencyKey.newKey())));
+
+        String stored = jdbcTemplate.queryForObject("SELECT documento FROM pasajero", String.class);
+        assertThat(stored)
+                .as("lo que hay en la columna es ciphertext con prefijo de versión")
+                .isNotNull()
+                .startsWith("v1:")
+                .doesNotContain("30123456");
+
+        // Y sin embargo la aplicación lo lee: el cifrado es transparente para
+        // el mapeo, no para quien mira la tabla.
+        Reservation found = inTransaction(() -> adapter.findById(
+                ReservationId.of(jdbcTemplate.queryForObject("SELECT id FROM reserva", Long.class))))
+                .orElseThrow();
+        assertThat(found.passengers()).singleElement()
+                .satisfies(passenger -> assertThat(passenger.documentNumber()).contains("30123456"));
+    }
+
+    @Test
+    @DisplayName("un pasajero sin documento se inserta igual")
+    void insertsPassengerWithoutDocument() {
         Passenger sinDocumento = Passenger.newPassenger("Ana", "Pérez", LocalDate.of(1990, 5, 20), null);
 
         inTransaction(() -> adapter.save(newReservation(
@@ -203,7 +270,7 @@ class ReservationPersistenceAdapterIT extends AbstractPostgresIT {
     }
 
     @Test
-    @DisplayName("el UNIQUE de idempotency_key impide la reserva duplicada")
+    @DisplayName("el UNIQUE de (usuario, idempotency_key) impide la reserva duplicada")
     void rejectsDuplicateIdempotencyKey() {
         IdempotencyKey key = IdempotencyKey.newKey();
         inTransaction(() -> adapter.save(newReservation(key)));

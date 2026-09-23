@@ -73,6 +73,23 @@ public record ReservationSearchCriteria(Optional<Email> userEmail,
     }
 
     /** {@code true} si hay que restringir por estado. */
+    /**
+     * El mismo criterio, pero filtrando por el usuario indicado.
+     *
+     * <p>Lo usa {@code ListReservationsService} para reducir lo que pidió el
+     * cliente al alcance que le corresponde. Es una copia y no una mutación:
+     * el criterio pedido se conserva, así el test puede comparar uno contra
+     * otro y comprobar que la reducción efectivamente ocurrió.
+     *
+     * @param owner el filtro efectivo; {@code Optional.empty()} deja ver todo,
+     *              que es un privilegio y no un default
+     */
+    public ReservationSearchCriteria restrictedTo(Optional<Email> owner) {
+        Objects.requireNonNull(owner, "El filtro es obligatorio (usar Optional.empty() si no se filtra)");
+        return new ReservationSearchCriteria(owner, statuses, departureFrom, departureTo,
+                page, size, sortBy, direction);
+    }
+
     public boolean filtersByStatus() {
         return !statuses.isEmpty();
     }

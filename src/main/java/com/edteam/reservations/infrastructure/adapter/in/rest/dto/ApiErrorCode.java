@@ -26,7 +26,7 @@ import java.util.Locale;
                 `RESOURCE_NOT_FOUND`, `UNSUPPORTED_REQUEST`, `AIRPORT_CATALOG_UNAVAILABLE`
                 e `INTERNAL_ERROR` no corresponden a ninguna regla de negocio: aparecen
                 cuando el pedido no llega a ninguna operación o cuando algo falla del lado
-                del servidor. `AIRPORT_CATALOG_UNAVAILABLE` es el único que vale la pena
+                del servidor. `AIRPORT_CATALOG_UNAVAILABLE` y `RATE_LIMIT_EXCEEDED` son los que vale la pena
                 reintentar tal cual, respetando el header `Retry-After`.""",
         example = "RESERVATION_NOT_FOUND")
 public enum ApiErrorCode {
@@ -44,6 +44,24 @@ public enum ApiErrorCode {
     RESERVATION_NOT_MODIFIABLE("Reserva no modificable"),
     ITINERARY_ALREADY_DEPARTED("El itinerario ya salió"),
     RESOURCE_NOT_FOUND("Recurso inexistente"),
+
+    /**
+     * Falta el token Bearer, está vencido o no valida. El detalle nunca dice
+     * cuál de las tres: distinguirlas le indica a quien prueba tokens qué
+     * corregir.
+     */
+    UNAUTHENTICATED("No autenticado"),
+
+    /**
+     * El token vale pero no alcanza. Notar que <b>no</b> es lo que se devuelve
+     * al pedir una reserva ajena: eso responde 404, para que el par de códigos
+     * no sea un censo de las reservas del sistema.
+     */
+    FORBIDDEN("Sin permiso"),
+
+    /** Se superó la cuota de pedidos. Reintentable, respetando {@code Retry-After}. */
+    RATE_LIMIT_EXCEEDED("Demasiados pedidos"),
+
     AIRPORT_CATALOG_UNAVAILABLE("Maestro de aeropuertos no disponible"),
     UNSUPPORTED_REQUEST("Pedido no soportado"),
     INTERNAL_ERROR("Error interno");

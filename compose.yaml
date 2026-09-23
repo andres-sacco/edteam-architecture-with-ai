@@ -1,19 +1,26 @@
 # Infraestructura de desarrollo. No hace falta instalar nada a mano:
 #
+#   cp .env.example .env        credenciales locales (el .env no se versiona)
 #   docker compose up -d        levanta PostgreSQL, Redis y el catálogo
 #   docker compose down         los detiene (conserva los datos)
 #   docker compose down -v      los detiene y borra los datos
 #
-# Los valores coinciden con los de src/main/resources/application.yml, así que
-# 'mvn spring-boot:run' conecta sin configurar nada más.
+# Los valores por defecto coinciden con los de src/main/resources/application.yml,
+# así que 'mvn spring-boot:run' conecta sin configurar nada más.
+#
+# Ninguna credencial está escrita acá. Lo que hay son referencias al entorno
+# con un default de desarrollo (${VAR:-valor}), que es lo que permite rotarlas
+# sin un commit y no dejarlas en el historial de git ni dentro de la imagen.
+# El archivo .env está en .gitignore: es el único lugar donde viven los valores
+# locales, y en cualquier otro entorno los pone el gestor de secretos.
 services:
   postgres:
     image: postgres:17-alpine
     container_name: reservations-postgres
     environment:
-      POSTGRES_DB: reservations
-      POSTGRES_USER: reservations
-      POSTGRES_PASSWORD: reservations
+      POSTGRES_DB: ${DB_NAME:-reservations}
+      POSTGRES_USER: ${DB_USERNAME:-reservations}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-reservations}
       # Falla rápido si alguien intenta conectarse sin contraseña.
       POSTGRES_HOST_AUTH_METHOD: scram-sha-256
     ports:
@@ -23,7 +30,7 @@ services:
     healthcheck:
       # Permite que otros servicios esperen a que la base acepte conexiones,
       # en lugar de fallar en el arranque.
-      test: ["CMD-SHELL", "pg_isready -U reservations -d reservations"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-reservations} -d ${DB_NAME:-reservations}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -36,8 +43,15 @@ services:
   redis:
     image: redis:7-alpine
     container_name: reservations-redis
+    # Publicado sólo en la interfaz de loopback. Un Redis alcanzable desde la
+    # red es un Redis que alguien envenena: quien escriba 'rsv:ver:{id}' fuerza
+    # un 304 sobre datos viejos o un 409 evitable, y vaciando el cache del
+    # catálogo arrastra al sistema al escenario de agotamiento del pool.
+    #
+    # En cualquier entorno real esto no se publica: Redis va en la red privada
+    # y con TLS.
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     # Se replican acá las dos condiciones del free tier contra el que está
     # dimensionado el cache, para que el entorno local se parezca a producción
     # en lo único que importa: qué pasa cuando la memoria se llena.
@@ -51,9 +65,21 @@ services:
     # catálogo, cientos de KB los totales, ~90 B por reserva caliente— esto no
     # debería llegar a activarse; si se activa, la métrica de evictions lo
     # muestra antes de que se note como latencia.
-    command: ["redis-server", "--maxmemory", "30mb", "--maxmemory-policy", "allkeys-lru", "--save", ""]
+    #
+    # 'requirepass' además de la red: sin contraseña, cualquier proceso de la
+    # misma máquina —un contenedor vecino, un script— tiene acceso total.
+    command:
+      - redis-server
+      - --requirepass
+      - ${REDIS_PASSWORD:-reservations-local}
+      - --maxmemory
+      - 30mb
+      - --maxmemory-policy
+      - allkeys-lru
+      - --save
+      - ""
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-reservations-local}", "ping"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -73,14 +99,17 @@ services:
       - api-catalog-db
     restart: always
 
+  # Base del catálogo. Es interna del servicio simulado: no hace falta que
+  # nadie más la alcance, así que no publica puerto hacia la máquina. Antes
+  # exponía 3310 con la contraseña de root escrita acá.
   api-catalog-db:
     image: mysql:8.0
     container_name: api-catalog-db
     environment:
       MYSQL_DATABASE: flights_catalog
-      MYSQL_ROOT_PASSWORD: muppet
-    ports:
-      - "3310:3306"
+      MYSQL_ROOT_PASSWORD: ${CATALOG_DB_ROOT_PASSWORD:-muppet}
+    expose:
+      - "3306"
     restart: always
 
 volumes:

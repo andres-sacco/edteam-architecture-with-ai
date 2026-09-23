@@ -3,14 +3,21 @@
 Backend del sistema de reservas de vuelos. **Java 21 + Spring Boot 3.5 + Maven**, con
 arquitectura hexagonal (puertos y adaptadores).
 
-El dominio, los casos de uso, la persistencia sobre PostgreSQL y la API REST están
-implementados. El contrato OpenAPI se genera a partir del código con springdoc y se
-publica en `/v3/api-docs`, con **Swagger UI** en `/swagger-ui.html`. La seguridad queda
-fuera del alcance a propósito (ver [Fuera de alcance](#fuera-de-alcance)).
+El dominio, los casos de uso, la persistencia sobre PostgreSQL, la API REST y la capa
+de seguridad están implementados. El contrato OpenAPI se genera a partir del código con
+springdoc y se publica en `/v3/api-docs`, con **Swagger UI** en `/swagger-ui.html`
+(apagada por defecto).
+
+La API exige un **token Bearer** y una reserva sólo la ve su titular: ver
+[Seguridad](#seguridad) y el [ADR 0003](docs/adr/0003-autenticacion-autorizacion-y-datos-sensibles.md).
 
 ## Cómo ejecutarlo
 
 Requiere JDK 21 (hay un `.sdkmanrc`: `sdk env install && sdk env`) y Docker.
+
+```bash
+cp .env.example .env
+```
 
 ```bash
 docker compose up -d
@@ -20,6 +27,10 @@ docker compose up -d
 ./mvnw spring-boot:run
 ```
 
+`.env` lleva las credenciales locales y no se versiona; `.env.example` sí, con los
+nombres de las variables y valores de ejemplo. Sin `.env` todo funciona igual: el
+`compose.yaml` y el `application.yml` traen defaults de desarrollo.
+
 `docker compose up -d` levanta PostgreSQL, **Redis** (el cache distribuido) y el
 catálogo de ciudades. Los tres son opcionales en distinta medida: sin Redis la
 aplicación arranca igual y el cache cae al de memoria del proceso
@@ -28,26 +39,36 @@ aeropuertos en memoria (`reservations.airport-catalog.base-url=`). PostgreSQL s�
 hace falta.
 
 La aplicación queda escuchando en **http://localhost:8080** y Flyway crea el esquema en
-el arranque. Para verificar que levantó:
+el arranque. Actuator va aparte, en el **9090**, que es un puerto que el despliegue no
+publica hacia afuera:
 
 ```bash
-curl http://localhost:8080/actuator/health
+curl http://localhost:9090/actuator/health
 ```
 
-Y para explorar y probar la API desde el navegador:
-**http://localhost:8080/swagger-ui.html** — el botón *Try it out* ejecuta contra
-`localhost:8080`, el host desde el que estás mirando la UI, no contra un entorno fijo.
+Para explorar la API desde el navegador hay que encender el documento y la UI
+(`API_DOCS_ENABLED=true` y `SWAGGER_UI_ENABLED=true` en el `.env`, que ya vienen así en
+el `.env.example`). Los dos están apagados por defecto porque en producción no tienen
+que existir; encendidos, **http://localhost:8080/swagger-ui/index.html** abre sin
+credencial —si pidiera uno no habría forma de llegar a la pantalla donde cargarlo—.
 
-El contrato, en YAML o en JSON:
+Lo que la UI *ejecuta* sí la exige: el botón *Try it out* pega contra `/v1/**` como
+cualquier otro cliente, así que hay que pegar un token en **Authorize** o la respuesta
+es 401. El *Try it out* apunta a `localhost:8080`, el host desde el que estás mirando la
+UI, no a un entorno fijo.
+
+El contrato también está versionado en
+[`docs/api/openapi.yaml`](docs/api/openapi.yaml) y se regenera con un comando:
 
 ```bash
-curl http://localhost:8080/v3/api-docs.yaml
+./mvnw test -Dtest=OpenApiDocumentDumpTest -Dopenapi.dump=true
 ```
 
 ## La API
 
-Cinco operaciones sobre `/v1/reservations`. No hace falta preparar nada en la base: quien
-reserva viaja en el cuerpo del alta y se da de alta solo la primera vez.
+Cinco operaciones sobre `/v1/reservations`, **todas con token**. No hace falta preparar
+nada en la base: quien reserva es el dueño del token y se da de alta solo la primera
+vez que reserva.
 
 | Método | Ruta | Qué hace |
 |---|---|---|
@@ -57,23 +78,28 @@ reserva viaja en el cuerpo del alta y se da de alta solo la primera vez.
 | `PUT` | `/v1/reservations/{id}` | Cambia el itinerario. Requiere `If-Match` |
 | `DELETE` | `/v1/reservations/{id}` | Cancela (baja lógica). Requiere `If-Match` |
 
-Crear una reserva:
+Todas responden **401** sin `Authorization: Bearer`, **429** si se supera la cuota, y
+**404** cuando la reserva es de otro usuario —igual que cuando no existe—.
+
+Crear una reserva. El comprador no va en el cuerpo: sale del token.
 
 ```bash
-curl -i -X POST http://localhost:8080/v1/reservations -H 'Content-Type: application/json' -H "Idempotency-Key: $(uuidgen)" -d '{"user":{"email":"ana.perez@example.com","firstName":"Ana","lastName":"Pérez"},"itinerary":{"price":"1250.50","currency":"USD","segments":[{"originAirportCode":"BUE","destinationAirportCode":"SCL","airline":"AEROLINEAS ARGENTINAS","departureAt":"2027-03-15T22:40:00Z"}]},"passengers":[{"firstName":"Ana","lastName":"Pérez","birthDate":"1990-05-20","documentNumber":"30123456"}]}'
+curl -i -X POST http://localhost:8080/v1/reservations -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -H "Idempotency-Key: $(uuidgen)" -d '{"itinerary":{"price":"1250.50","currency":"USD","segments":[{"originAirportCode":"BUE","destinationAirportCode":"SCL","airline":"AEROLINEAS ARGENTINAS","departureAt":"2027-03-15T22:40:00Z"}]},"passengers":[{"firstName":"Ana","lastName":"Pérez","birthDate":"1990-05-20","documentNumber":"30123456"}]}'
 ```
 
 La respuesta trae `Location` y `ETag: "0"`. Ese `ETag` es lo que hay que mandar en
 `If-Match` para modificar o cancelar:
 
 ```bash
-curl -i -X DELETE http://localhost:8080/v1/reservations/1 -H 'If-Match: "0"'
+curl -i -X DELETE http://localhost:8080/v1/reservations/1 -H "Authorization: Bearer $TOKEN" -H 'If-Match: "0"'
 ```
 
-Listar con filtros. El usuario se identifica por email, el mismo que se mandó al crear:
+Listar. El alcance no se elige: son las reservas del dueño del token. El parámetro
+`userId` sólo lo puede usar un cliente con rol de backoffice; para cualquier otro,
+mandar el email de otra persona responde **403**.
 
 ```bash
-curl -G http://localhost:8080/v1/reservations --data-urlencode 'userId=ana.perez@example.com' -d 'status=PENDING' -d 'sort=firstDepartureAt,asc' -d 'page=0' -d 'size=20'
+curl -G http://localhost:8080/v1/reservations -H "Authorization: Bearer $TOKEN" -d 'status=PENDING' -d 'sort=firstDepartureAt,asc' -d 'page=0' -d 'size=20'
 ```
 
 Los tests, separados por lo que necesitan:
@@ -86,11 +112,11 @@ Los tests, separados por lo que necesitan:
 ./mvnw verify
 ```
 
-`test` corre los 352 unitarios: rápidos y sin Docker. `verify` agrega los 49 de
-integración, que levantan un PostgreSQL con Testcontainers. Ninguno de los dos
-necesita Redis: los de integración corren con el cache en memoria, que es
-también la forma de verificar en cada build que la aplicación arranca sin el
-cache distribuido.
+`test` corre los 438 unitarios: rápidos y sin Docker. `verify` agrega los 68 de
+integración, que levantan un PostgreSQL con Testcontainers. Ninguno de los dos necesita
+Redis ni un proveedor de identidad: los de integración corren con el cache en memoria y
+con tokens HMAC firmados con la clave de desarrollo, que es también la forma de
+verificar en cada build que la aplicación arranca sin esas dos dependencias.
 
 ## Estructura
 
@@ -99,25 +125,39 @@ com.edteam.reservations
 ├── domain                      # El centro. Sin Spring, sin JPA, sin HTTP.
 │   ├── model                   #   Reservation (agregado), Itinerary, Segment,
 │   │                           #   Passenger, User, value objects
+│   ├── access                  #   Actor y ReservationAccessPolicy: quién es
+│   │                           #   dueño de qué. Sin Spring Security
 │   ├── event                   #   Eventos de dominio (interfaz sellada)
 │   └── exception               #   Errores de negocio
 ├── application                 # Orquestación. Depende sólo del dominio.
-│   ├── port/in                 #   Casos de uso + comandos (lo que entra)
+│   ├── port/in                 #   Casos de uso + comandos (lo que entra,
+│   │                           #   incluido QUIÉN lo pide)
 │   ├── port/out                #   Contratos hacia afuera (lo que necesita)
 │   ├── service                 #   Implementación de los casos de uso
 │   ├── query                   #   Criterio de búsqueda y página de resultados
+│   ├── audit                   #   Modelo del registro de auditoría
 │   ├── outbox                  #   Modelo del outbox de eventos
 │   └── exception               #   Errores de orquestación
 └── infrastructure              # Detalles reemplazables.
     ├── adapter/in/rest         #   Controllers, DTOs, mappers y manejo de errores
     ├── adapter/in/scheduling   #   Disparador del despacho de notificaciones
     ├── adapter/out/persistence #   PostgreSQL: entidades JPA, mappers, adapter
+    ├── adapter/out/audit       #   Registro de auditoría append-only
     ├── adapter/out/airport     #   Maestro de aeropuertos (stub) + cache
     ├── adapter/out/notification#   Notificaciones (stub que loguea)
     ├── adapter/out/outbox      #   Outbox en memoria (stub)
     ├── cache                   #   Almacén del cache: Redis, memoria y métricas
+    ├── logging                 #   Enmascarado de PII y saneado de datos externos
+    ├── security                #   Cadena de filtros, token → Actor, cuota,
+    │   └── crypto              #   correlation id, y el cifrado de la PII
     └── config                  #   Cableado y properties
 ```
+
+Dos paquetes nuevos y la línea que los separa: `domain.access` decide **quién puede ver
+o tocar una reserva** —es una regla de negocio— y `infrastructure.security` decide
+**quién llega a un endpoint** —es un detalle del transporte—. El dominio y la
+aplicación no importan una sola clase de Spring Security, y eso está verificado por
+ArchUnit, no por disciplina.
 
 El modelo de datos está en `src/main/resources/db/migration`, versionado con Flyway.
 Las clases usan nombres en inglés (como el resto del código) y las tablas y columnas,
@@ -253,9 +293,11 @@ análisis de cuellos de botella sobre este código
 | La versión de una reserva, para responder `304` | `rsv:ver:{id}` | 60 s | `DEL` post-commit en `PUT` y `DELETE` |
 
 Lo que **no** se cachea es tan importante como lo que sí: los cuerpos de las respuestas
-llevan `documentNumber` y `birthDate` de personas físicas, y la API todavía no tiene
-autenticación, así que cualquier entrada sería legible por cualquiera que alcance el
-endpoint. Por eso las cinco operaciones responden además `Cache-Control: no-store, private`.
+llevan `documentNumber` y `birthDate` de personas físicas, y un cache compartido no
+distingue de quién es cada representación. Por eso las cinco operaciones responden
+además `Cache-Control: no-store, private` —y con autenticación hace todavía más falta:
+una respuesta autenticada guardada por un proxy compartido se le puede servir al pedido
+siguiente, que trae otro token—.
 
 Dos detalles que son el corazón del diseño:
 
@@ -312,29 +354,87 @@ contempla:
 **Reloj inyectado.** Los casos de uso no llaman a `Instant.now()`: reciben un `Clock`. Así
 las reglas temporales ("no se puede reservar un vuelo que ya partió") son verificables.
 
+## Seguridad
+
+Salió de una [auditoría STRIDE](docs/security/threat-model.md) sobre este código y está
+documentada en el [ADR 0003](docs/adr/0003-autenticacion-autorizacion-y-datos-sensibles.md).
+Lo que hay que saber para trabajar en el repositorio:
+
+**Autenticación.** Resource server OAuth2: la aplicación verifica firmas, no emite
+credenciales. En cualquier entorno real se configura `JWT_JWK_SET_URI` (obligatoriamente
+HTTPS) más emisor y audiencia; en local se aceptan tokens HMAC firmados con una clave
+placeholder, y la aplicación lo avisa con un banner en cada arranque. **No hay ninguna
+combinación de propiedades que produzca una API sin validar tokens**: si falta la
+configuración, el contexto no levanta.
+
+**Autorización.** La línea importante del diseño:
+
+| Dónde | Qué decide |
+|---|---|
+| `infrastructure.security.SecurityConfiguration` | Quién llega a un endpoint. `denyAll()` por defecto: un endpoint nuevo nace cerrado |
+| `domain.access.ReservationAccessPolicy` | Quién ve o toca **una reserva concreta**. Es una regla de negocio y se prueba sin levantar un contexto |
+
+Los comandos llevan el solicitante (`CreateReservationCommand(actor, …)`), así que la
+decisión es del caso de uso y no del controller: el día que entre un consumidor de
+mensajería o un cliente gRPC, la autorización ya está. Un `@PreAuthorize` en un servicio
+de aplicación rompe el build (`HexagonalArchitectureTest`).
+
+**Una reserva ajena responde 404, no 403.** Distinguirlas convertiría el par de códigos
+en un censo: recorriendo los ids se sabría cuántas reservas hay y cuáles están ocupadas.
+El 403 queda para el único caso en que el rechazo no revela nada: pedir el listado de
+otro usuario.
+
+**Datos sensibles.** El documento del pasajero se cifra con AES-256-GCM en la columna
+—un `pg_dump` deja de ser un dump de PII—, el email nunca sale en claro en un log, y la
+respuesta del alta refleja lo que el cliente envió en vez de lo almacenado. Esto último
+costó la deduplicación global de pasajeros por documento: era una optimización de
+almacenamiento que convertía el alta en un oráculo de datos ajenos.
+
+**Trazabilidad.** Tabla `auditoria`, append-only garantizado por un trigger de
+PostgreSQL. Se registran las escrituras y los intentos de acceder a una reserva ajena
+—esos últimos en su propia transacción, porque el rechazo termina en excepción y con
+propagación normal la evidencia se iría con el rollback—. Las lecturas exitosas no se
+auditan: sería una fila por `GET`.
+
+**Superficie.** El documento OpenAPI y Swagger UI están apagados por defecto: en
+producción no existen. Encendidos se sirven sin token —exigirlo dejaría la UI inusable
+sin proteger nada, porque una navegación del navegador no lleva header
+`Authorization`—; lo que la UI *ejecuta* sí lo exige. Actuator va en un puerto de
+gestión propio que el despliegue no publica.
+
+**Secretos.** Ninguno en el repositorio. Los valores de `application.yml` y de
+`.env.example` son de desarrollo, están marcados como tales y la aplicación avisa cuando
+los está usando. `.env` está en `.gitignore`.
+
 ## Fuera de alcance
 
 Cada punto tiene su lugar ya preparado:
 
 | Pendiente | Dónde va | Qué hay que hacer |
 |---|---|---|
-| Seguridad | `adapter/in/rest` + config | No hay autenticación ni autorización: hoy cualquiera puede leer y cancelar cualquier reserva. Va `spring-boot-starter-security` con un esquema Bearer (declarado con `@SecurityScheme`, para que aparezca en el documento generado), los `401`/`403` en las `@ApiResponse` y el filtro de reservas por usuario autenticado en el listado |
+| Precio del lado del servidor | `application/port/out` | **La amenaza crítica que queda abierta.** El cliente sigue fijando el precio de su reserva en el cuerpo del alta: un `POST` con `"price":"0.01"` crea una reserva válida por un centavo. Cerrarla necesita un `PricingPort` contra un proveedor que todavía no existe —el precio se cotiza del lado del servidor y el cliente manda la referencia de la cotización, con vencimiento corto—. Es el próximo paso, y bloquea la integración de pagos |
 | Outbox persistente | `infrastructure/adapter/out/outbox` | El outbox sigue en memoria porque el modelo de datos no tiene su tabla. Con una tabla `outbox_message` escrita en la misma transacción que la reserva, la notificación deja de perderse si se cae el proceso; el `pollPending` pasa a `SELECT ... FOR UPDATE SKIP LOCKED` |
 | Recurso de usuarios | `application` + `adapter/in/rest` | El alta de usuarios ocurre como efecto de reservar, que alcanza para que la API sea usable pero no es un ciclo de vida: no hay forma de consultar, corregir ni dar de baja a un usuario. Cuando haga falta, va como recurso propio (`/v1/users`) con sus casos de uso |
 | Cambio de email | `application` | Hoy el email identifica al usuario en la API, así que cambiarlo es cambiar de identificador de cara al cliente. Con un recurso de usuarios habrá que decidir si el `userId` de la API pasa a ser un identificador propio y estable, y el email queda como un atributo más |
 | Confirmar una reserva | `adapter/in/rest` | `ConfirmReservationUseCase` existe y está testeado, pero no está expuesto: no entra limpio en el contrato sin un verbo en la URL o un `PATCH` de estado, y la transición va a colgar del resultado del pago. Hay que decidir la forma antes de publicarla |
-| Contrato: el 500 | `ReservationController` | Las `@ApiResponse` declaran 200/201/400/404/409, que son las respuestas del diseño. La aplicación puede responder 500 ante un error no previsto (cuerpo `ProblemDetail`, código `INTERNAL_ERROR`) y eso todavía no está declarado |
+| Contrato: el 500 | `ReservationController` | Las `@ApiResponse` declaran 200/201/304/400/401/403/404/409/429, que son las respuestas del diseño. La aplicación puede responder 500 ante un error no previsto (cuerpo `ProblemDetail`, código `INTERNAL_ERROR`) y eso todavía no está declarado |
 | Índices del listado | `db/migration` | Faltan `reserva(fecha_creacion DESC, id DESC)` —el orden por defecto— y `segmento(fecha_vuelo)`. El cache del `count` tapa parte del costo, pero con `OFFSET` creciente el listado se degrada igual: cada página es una consulta distinta |
 | Presupuesto de tiempo del pedido | `AirportExistenceValidator` | Cada consulta al catálogo tiene su techo (timeout × reintentos), pero el itinerario completo no: son hasta 8 ciudades en serie. Las candidatas son resolverlas en paralelo —son independientes— y un circuit breaker que deje de intentar mientras el proveedor esté caído |
-| Swagger UI abierta | `application.yml` | La UI está expuesta sin autenticación y permite ejecutar pedidos contra la API. Junto con la seguridad hay que decidir si se publica y para quién (`springdoc.swagger-ui.enabled`) |
+| Circuit breaker del catálogo | `AirportExistenceValidator` | Un código IATA inexistente no tiene hit positivo en el cache, así que un atacante convierte cada pedido nuestro en varios intentos contra el proveedor y nos hace ganar un `429` (o la factura). La cuota del borde lo acota pero no lo cierra: falta el breaker y una cuota propia de llamadas salientes |
+| Retención y supresión de PII | `db/migration` + `application` | La cancelación es baja lógica: documento y fecha de nacimiento quedan indefinidamente. Falta la purga o anonimización vencido el plazo legal, y el caso de uso de supresión, que entra junto con el recurso de usuarios |
+| Cadena de suministro | `pom.xml` + CI | No hay análisis de dependencias ni SBOM. Va `dependency-check` (o equivalente) con un umbral que rompa el pipeline, SBOM por release y escaneo de secretos, que son tres cosas del pipeline y no de este código |
+| TLS y rate limiting del borde | Despliegue | La aplicación emite HSTS y trae una cuota por proceso, pero el TLS lo termina el ingress y el rate limiting real va en el gateway: con N instancias, la cuota efectiva de acá es N veces la configurada |
+| Alcance PCI-DSS | Cuando entren pagos | Todavía no hay datos de pago, y por eso es el momento de decidir: el PAN no puede tocar este servicio. Checkout hospedado o campos embebidos del proveedor, y acá sólo el token y los últimos cuatro dígitos |
 
 ## Tests
 
-401 tests. Los unitarios (`mvn test`) no necesitan infraestructura; los de integración
+506 tests. Los unitarios (`mvn test`) no necesitan infraestructura; los de integración
 (`mvn verify`) levantan PostgreSQL con Testcontainers. Cuatro quedan apagados por
-defecto: son los que pegan contra el catálogo real (`-Dcatalog.live=true`).
+defecto: son los que pegan contra el catálogo real (`-Dcatalog.live=true`), y uno más
+—el que regenera `docs/api/openapi.yaml`— corre sólo con `-Dopenapi.dump=true`, porque
+un test que escribe en el repositorio no puede correr en cada build.
 
-**Unitarios (352)**
+**Unitarios (438)**
 
 - **Dominio** — reglas del agregado y de los value objects, con tiempo fijo.
 - **Aplicación** — casos de uso con los puertos mockeados: qué se persiste, qué se
@@ -355,11 +455,32 @@ defecto: son los que pegan contra el catálogo real (`-Dcatalog.live=true`).
   no vaya al origen, que el TTL expire, que la invalidación borre la clave, que una
   escritura no deje servir datos viejos, que lo guardado sea un escalar y no una
   representación, y que con el almacén caído todo siga funcionando contra el origen.
+- **Autorización (dominio)** — `ReservationAccessPolicyTest` prueba «una reserva
+  pertenece a un único usuario» con cinco objetos y ningún framework: el titular la
+  alcanza, otro titular no, backoffice sí pero sin ser dueño, y el alcance del listado
+  se le impone al que no puede elegirlo. Que este test no necesite un contexto es el
+  punto de tener la política en el dominio.
+- **Seguridad del borde** — `ReservationSecurityTest` prueba lo que tiene que **fallar**:
+  las cinco operaciones sin token, el 401 con el mismo `problem+json` que el resto de la
+  API, el detalle que no explica por qué falló, el 404 —y no 403— sobre una reserva
+  ajena, el 403 al pedir el listado de otro, y los headers de seguridad.
+  `ReservationQuotaTest` verifica que la cuota corte **antes** del caso de uso.
+- **Token → dominio** — `JwtActorConverterTest`: qué claim significa qué, que un token
+  incompleto se rechace en lugar de producir un actor a medias, que un rol desconocido
+  no otorgue nada y que el error nunca refleje el valor del claim.
+  `JwtDecoderFactoryTest` verifica la invariante del arranque: ninguna combinación de
+  propiedades produce una aplicación que no valide tokens.
+- **Datos sensibles** — `PiiCipherTest` (ida y vuelta, que el ciphertext no sea
+  determinista, que una manipulación falle en vez de devolver basura creíble, que una
+  fila anterior al cifrado se siga leyendo), `LogSanitizerTest` (log forging con saltos
+  de línea) y `PiiMaskerTest`.
 - **Arquitectura** — ArchUnit sobre las reglas de dependencia entre capas, incluida la de
-  que el dominio no importe `jakarta.persistence` y la de que los adaptadores de entrada
-  hablen con los puertos y no con los servicios.
+  que el dominio no importe `jakarta.persistence`, la de que los adaptadores de entrada
+  hablen con los puertos y no con los servicios, y las dos nuevas: que ni el dominio ni
+  la aplicación importen Spring Security, y que `domain.access` no dependa de nada
+  fuera del dominio.
 
-**Integración (49)**
+**Integración (68)**
 
 - `ReservationPersistenceAdapterIT` — el adaptador contra PostgreSQL: reutilización de
   segmentos y pasajeros, orden de los tramos, `UNIQUE` de idempotencia, clave foránea de
@@ -374,6 +495,15 @@ defecto: son los que pegan contra el catálogo real (`-Dcatalog.live=true`).
   una lectura condicional responda `304` sin cuerpo, que después de un `PUT` el `ETag`
   viejo deje de dar `304` —y el `If-Match` siguiente no coma un `409` evitable—, y que en
   el cache no quede un solo dato de pasajero.
+- `ReservationSecurityIT` — la autorización de punta a punta, con tokens firmados de
+  verdad y datos reales en la base: que la reserva de otro responda 404 en las tres
+  operaciones y que no se escriba nada, que enumerar identificadores no devuelva un solo
+  dato de pasajero, que el listado sin filtro traiga sólo lo propio con dos usuarios
+  cargados, que una clave de idempotencia filtrada cree la reserva del atacante en lugar
+  de devolver la del dueño, que mandar el documento de otro no revele sus datos ni le
+  pise los suyos, que el documento esté cifrado en la columna, que un token vencido o
+  firmado con otra clave sea 401, y que la auditoría registre el intento rechazado
+  —aunque la respuesta sea 404— y rechace que la modifiquen.
 - `ReservationApiIT` — el mismo flujo pero **por HTTP** contra la base real: el `ETag` de
   una respuesta usado en el `If-Match` de la siguiente, el reintento que devuelve 200 sin
   duplicar filas, el `ETag` viejo que da 409 sin escribir, el listado con sus filtros, su

@@ -3,9 +3,8 @@ package com.edteam.reservations.application.service;
 import com.edteam.reservations.application.port.in.ItineraryData;
 import com.edteam.reservations.application.port.in.PassengerData;
 import com.edteam.reservations.application.port.in.SegmentData;
-import com.edteam.reservations.application.port.in.UserData;
+import com.edteam.reservations.domain.access.Actor;
 import com.edteam.reservations.domain.model.AirportCode;
-import com.edteam.reservations.domain.model.Email;
 import com.edteam.reservations.domain.model.Itinerary;
 import com.edteam.reservations.domain.model.Money;
 import com.edteam.reservations.domain.model.Passenger;
@@ -48,9 +47,16 @@ public class ItineraryAssembler {
      * inyectado, no el cliente: es un dato del sistema. Si el usuario ya
      * existe, el adaptador de salida conserva el que tenía.
      */
-    public User toUser(UserData data, Instant now) {
-        Objects.requireNonNull(data, "Los datos del usuario son obligatorios");
-        return User.newUser(Email.of(data.email()), data.firstName(), data.lastName(), now);
+    /**
+     * Arma el usuario a partir de la identidad del solicitante.
+     *
+     * <p>Antes tomaba un {@code UserData} del cuerpo del pedido. Ahora el
+     * único origen posible es el token: el email, el nombre y el apellido son
+     * los que afirmó el emisor, no los que escribió el cliente.
+     */
+    public User toUser(Actor actor, Instant now) {
+        Objects.requireNonNull(actor, "El solicitante es obligatorio");
+        return User.newUser(actor.email(), actor.firstName(), actor.lastName(), now);
     }
 
     public List<Passenger> toPassengers(List<PassengerData> data) {

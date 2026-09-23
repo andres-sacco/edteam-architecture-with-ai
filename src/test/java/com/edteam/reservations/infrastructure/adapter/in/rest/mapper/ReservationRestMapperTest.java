@@ -15,7 +15,6 @@ import com.edteam.reservations.infrastructure.adapter.in.rest.dto.ReservationPag
 import com.edteam.reservations.infrastructure.adapter.in.rest.dto.ReservationResponse;
 import com.edteam.reservations.infrastructure.adapter.in.rest.dto.ReservationStatusDto;
 import com.edteam.reservations.infrastructure.adapter.in.rest.dto.SegmentRequest;
-import com.edteam.reservations.infrastructure.adapter.in.rest.dto.UserRequest;
 import com.edteam.reservations.support.TestFixtures;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -38,16 +37,17 @@ class ReservationRestMapperTest {
     @DisplayName("arma el comando con la clave de idempotencia del header, no del cuerpo")
     void buildsCreateCommand() {
         CreateReservationRequest request = new CreateReservationRequest(
-                new UserRequest("ana.perez@example.com", "Ana", "Pérez"),
                 new ItineraryRequest("1250.50", "USD", List.of(
                         new SegmentRequest("EZE", "SCL", "AEROLINEAS ARGENTINAS", TestFixtures.DEPARTURE))),
                 List.of(new PassengerRequest("Ana", "Pérez", LocalDate.of(1990, 5, 20), "30123456")));
 
-        CreateReservationCommand command = mapper.toCommand(request, KEY);
+        CreateReservationCommand command = mapper.toCommand(request, KEY, TestFixtures.owner());
 
-        assertThat(command.user().email()).isEqualTo("ana.perez@example.com");
-        assertThat(command.user().firstName()).isEqualTo("Ana");
-        assertThat(command.user().lastName()).isEqualTo("Pérez");
+        // El comprador sale del actor y no del cuerpo: el pedido ya no tiene
+        // forma de nombrar a nadie.
+        assertThat(command.actor().email().value()).isEqualTo(TestFixtures.USER_EMAIL);
+        assertThat(command.actor().firstName()).isEqualTo("Ana");
+        assertThat(command.actor().lastName()).isEqualTo("Pérez");
         assertThat(command.idempotencyKey()).isEqualTo(KEY.toString());
         assertThat(command.itinerary().price()).isEqualByComparingTo(new BigDecimal("1250.50"));
         assertThat(command.itinerary().currency()).isEqualTo("USD");
@@ -66,12 +66,11 @@ class ReservationRestMapperTest {
     @DisplayName("el precio viaja como string y se convierte sin perder decimales")
     void keepsDecimalPrecision() {
         CreateReservationRequest request = new CreateReservationRequest(
-                new UserRequest("ana.perez@example.com", "Ana", "Pérez"),
                 new ItineraryRequest("0.10", "usd".toUpperCase(java.util.Locale.ROOT), List.of(
                         new SegmentRequest("EZE", "SCL", "AR", TestFixtures.DEPARTURE))),
                 List.of(new PassengerRequest("Ana", "Pérez", LocalDate.of(1990, 5, 20), null)));
 
-        assertThat(mapper.toCommand(request, KEY).itinerary().price())
+        assertThat(mapper.toCommand(request, KEY, TestFixtures.owner()).itinerary().price())
                 .isEqualByComparingTo(new BigDecimal("0.10"))
                 .hasToString("0.10");
     }

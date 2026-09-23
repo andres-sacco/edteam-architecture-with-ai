@@ -1,14 +1,17 @@
 package com.edteam.reservations.infrastructure.adapter.out.persistence;
 
 import com.edteam.reservations.application.port.out.UserRepositoryPort;
+import com.edteam.reservations.domain.model.Email;
 import com.edteam.reservations.domain.model.User;
 import com.edteam.reservations.infrastructure.adapter.out.persistence.mapper.UserMapper;
+import com.edteam.reservations.infrastructure.logging.PiiMasker;
 import com.edteam.reservations.infrastructure.adapter.out.persistence.repository.UserJpaRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Repository;
 
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Adaptador de salida que implementa {@link UserRepositoryPort} sobre
@@ -46,6 +49,12 @@ public class UserPersistenceAdapter implements UserRepositoryPort {
     }
 
     @Override
+    public Optional<User> findByEmail(Email email) {
+        Objects.requireNonNull(email, "El email es obligatorio");
+        return userRepository.findByEmail(email.value()).map(userMapper::toDomain);
+    }
+
+    @Override
     public User findOrRegister(User candidate) {
         Objects.requireNonNull(candidate, "El usuario es obligatorio");
 
@@ -59,10 +68,16 @@ public class UserPersistenceAdapter implements UserRepositoryPort {
         int inserted = userRepository.insertIfAbsent(
                 email, candidate.firstName(), candidate.lastName(), candidate.registeredAt());
 
+        // El email va enmascarado en los dos casos: estos logs salen del
+        // perímetro hacia el SaaS de observabilidad, que no tiene por qué
+        // heredar un dato personal regulado. Y el alta baja a DEBUG: en
+        // producción es ruido, y el dato que importa —cuántos usuarios se dan
+        // de alta— ya está en las métricas.
         if (inserted == 0) {
-            log.debug("Otra transacción dio de alta al usuario {} primero; se reutiliza su fila", email);
+            log.debug("Otra transacción dio de alta al usuario {} primero; se reutiliza su fila",
+                    PiiMasker.mask(email));
         } else {
-            log.info("Usuario dado de alta al reservar: {}", email);
+            log.debug("Usuario dado de alta al reservar: {}", PiiMasker.mask(email));
         }
 
         return userRepository.findByEmail(email)

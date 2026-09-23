@@ -12,24 +12,32 @@ import java.util.List;
 /**
  * Cuerpo del alta de una reserva.
  *
- * <p>La clave de idempotencia no está acá: viaja en el header
- * {@code Idempotency-Key}, porque describe el intento de ejecución y no el
- * recurso que se crea. Ponerla en el cuerpo obligaría a incluirla también en
- * las representaciones de salida, donde no significa nada para el cliente.
+ * <p>Dos cosas que no están acá, y por qué:
  *
- * <p>El usuario viaja con sus datos y no como id: ver {@link UserRequest}.
+ * <ul>
+ *   <li><b>El comprador.</b> Sale del token. Antes viajaba un objeto
+ *       {@code user} con su email, y con eso cualquiera creaba una reserva a
+ *       nombre de una víctima: la notificación de «tu reserva» le llegaba a
+ *       ella, desde nuestro canal y con nuestra reputación. La identidad del
+ *       comprador no es un dato del pedido, es una credencial.</li>
+ *   <li><b>La clave de idempotencia.</b> Viaja en el header
+ *       {@code Idempotency-Key}, porque describe el intento de ejecución y no
+ *       el recurso que se crea. Ponerla en el cuerpo obligaría a incluirla
+ *       también en las representaciones de salida, donde no significa nada
+ *       para el cliente.</li>
+ * </ul>
  */
 @Schema(name = "CreateReservationRequest",
         description = """
                 Datos para crear una reserva.
 
-                La clave de idempotencia **no** va acá: viaja en el header
-                `Idempotency-Key`, porque describe el intento de ejecución y no el recurso
-                que se está creando.""")
+                **El comprador no va en el cuerpo**: sale del token. La reserva se crea a
+                nombre de quien la pide, y no hay forma de reservar a nombre de otro.
+
+                La clave de idempotencia tampoco: viaja en el header `Idempotency-Key`,
+                porque describe el intento de ejecución y no el recurso que se está
+                creando.""")
 public record CreateReservationRequest(
-        @NotNull(message = "El usuario es obligatorio")
-        @Valid
-        UserRequest user,
 
         @NotNull(message = "El itinerario es obligatorio")
         @Valid

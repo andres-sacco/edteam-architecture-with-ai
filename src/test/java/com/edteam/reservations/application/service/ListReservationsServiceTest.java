@@ -1,10 +1,13 @@
 package com.edteam.reservations.application.service;
 
+import com.edteam.reservations.application.port.in.ListReservationsQuery;
 import com.edteam.reservations.application.port.out.ReservationRepositoryPort;
 import com.edteam.reservations.application.query.ReservationSearchCriteria;
 import com.edteam.reservations.application.query.ReservationSortBy;
 import com.edteam.reservations.application.query.ResultPage;
 import com.edteam.reservations.application.query.SortDirection;
+import com.edteam.reservations.domain.access.Actor;
+import com.edteam.reservations.domain.access.ReservationAccessDeniedException;
 import com.edteam.reservations.domain.model.Reservation;
 import com.edteam.reservations.domain.model.ReservationStatus;
 import com.edteam.reservations.domain.model.Email;
@@ -23,7 +26,10 @@ import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import org.mockito.ArgumentCaptor;
+
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -41,19 +47,77 @@ class ListReservationsServiceTest {
         service = new ListReservationsService(reservationRepository);
     }
 
+    private ResultPage<Reservation> list(ReservationSearchCriteria criteria, Actor actor) {
+        return service.list(new ListReservationsQuery(criteria, actor));
+    }
+
     @Test
-    @DisplayName("delega el criterio tal cual al repositorio y devuelve su página")
+    @DisplayName("delega el resto del criterio tal cual y devuelve la página del repositorio")
     void delegatesToRepository() {
         ReservationSearchCriteria criteria = new ReservationSearchCriteria(
-                Optional.of(Email.of("ana.perez@example.com")), Set.of(ReservationStatus.PENDING),
+                Optional.of(Email.of(TestFixtures.USER_EMAIL)), Set.of(ReservationStatus.PENDING),
                 Optional.empty(), Optional.empty(), 1, 10,
                 ReservationSortBy.FIRST_DEPARTURE_AT, SortDirection.ASC);
         ResultPage<Reservation> expected = new ResultPage<>(
                 List.of(TestFixtures.storedReservation(0L)), 1, 10, 25L);
         when(reservationRepository.search(criteria)).thenReturn(expected);
 
-        assertThat(service.list(criteria)).isSameAs(expected);
+        assertThat(list(criteria, TestFixtures.owner())).isSameAs(expected);
         verify(reservationRepository).search(criteria);
+    }
+
+    @Test
+    @DisplayName("sin filtro de usuario, se le impone el suyo: nunca devuelve las reservas de todos")
+    void narrowsTheUnfilteredListingToTheCaller() {
+        // Es la mitigación de T-03. Antes, un GET /v1/reservations sin
+        // parámetros devolvía las reservas de todo el sistema de a 100 por
+        // página: la base entera, con los documentos de los pasajeros, en
+        // minutos de scraping.
+        when(reservationRepository.search(any())).thenReturn(ResultPage.empty(0, 20));
+
+        list(ReservationSearchCriteria.unfiltered(), TestFixtures.owner());
+
+        ArgumentCaptor<ReservationSearchCriteria> effective = ArgumentCaptor.captor();
+        verify(reservationRepository).search(effective.capture());
+        assertThat(effective.getValue().userEmail()).contains(Email.of(TestFixtures.USER_EMAIL));
+    }
+
+    @Test
+    @DisplayName("pedir el listado de otro usuario es 403 y no llega al repositorio")
+    void rejectsListingSomeoneElse() {
+        ReservationSearchCriteria criteria = ReservationSearchCriteria.unfiltered()
+                .restrictedTo(Optional.of(Email.of(TestFixtures.USER_EMAIL)));
+
+        assertThatThrownBy(() -> list(criteria, TestFixtures.stranger()))
+                .isInstanceOf(ReservationAccessDeniedException.class);
+
+        verify(reservationRepository, never()).search(any());
+    }
+
+    @Test
+    @DisplayName("backoffice sí puede filtrar por otro usuario")
+    void backofficeCanListSomeoneElse() {
+        ReservationSearchCriteria criteria = ReservationSearchCriteria.unfiltered()
+                .restrictedTo(Optional.of(Email.of(TestFixtures.USER_EMAIL)));
+        when(reservationRepository.search(any())).thenReturn(ResultPage.empty(0, 20));
+
+        list(criteria, TestFixtures.backoffice());
+
+        ArgumentCaptor<ReservationSearchCriteria> effective = ArgumentCaptor.captor();
+        verify(reservationRepository).search(effective.capture());
+        assertThat(effective.getValue().userEmail()).contains(Email.of(TestFixtures.USER_EMAIL));
+    }
+
+    @Test
+    @DisplayName("backoffice sin filtro sí ve todo: es el privilegio, y es explícito")
+    void backofficeCanListEverything() {
+        when(reservationRepository.search(any())).thenReturn(ResultPage.empty(0, 20));
+
+        list(ReservationSearchCriteria.unfiltered(), TestFixtures.backoffice());
+
+        ArgumentCaptor<ReservationSearchCriteria> effective = ArgumentCaptor.captor();
+        verify(reservationRepository).search(effective.capture());
+        assertThat(effective.getValue().userEmail()).isEmpty();
     }
 
     @Test
@@ -61,7 +125,7 @@ class ListReservationsServiceTest {
     void emptyPageIsNotAnError() {
         when(reservationRepository.search(any())).thenReturn(ResultPage.empty(9, 20));
 
-        ResultPage<Reservation> page = service.list(ReservationSearchCriteria.unfiltered());
+        ResultPage<Reservation> page = list(ReservationSearchCriteria.unfiltered(), TestFixtures.owner());
 
         assertThat(page.items()).isEmpty();
         assertThat(page.totalElements()).isZero();
@@ -69,9 +133,13 @@ class ListReservationsServiceTest {
     }
 
     @Test
-    @DisplayName("sin criterio falla en el borde y no llega al repositorio")
-    void rejectsNullCriteria() {
+    @DisplayName("sin criterio o sin solicitante falla en el borde y no llega al repositorio")
+    void rejectsIncompleteQuery() {
         assertThatThrownBy(() -> service.list(null)).isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> new ListReservationsQuery(null, TestFixtures.owner()))
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> new ListReservationsQuery(ReservationSearchCriteria.unfiltered(), null))
+                .isInstanceOf(NullPointerException.class);
     }
 
     @Test

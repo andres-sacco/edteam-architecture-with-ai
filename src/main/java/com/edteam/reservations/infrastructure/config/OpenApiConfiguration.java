@@ -1,5 +1,7 @@
 package com.edteam.reservations.infrastructure.config;
 
+import io.swagger.v3.oas.annotations.enums.SecuritySchemeType;
+import io.swagger.v3.oas.annotations.security.SecurityScheme;
 import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.info.Contact;
 import io.swagger.v3.oas.models.info.Info;
@@ -51,10 +53,35 @@ import java.util.List;
  * la URL del servidor, a diferencia de cuando el documento se escribía a mano.
  */
 @Configuration
+@SecurityScheme(
+        name = OpenApiConfiguration.BEARER_SCHEME,
+        type = SecuritySchemeType.HTTP,
+        scheme = "bearer",
+        bearerFormat = "JWT",
+        description = """
+                Token JWT emitido por el proveedor de identidad, en el header
+                `Authorization: Bearer <token>`.
+
+                Claims que la API lee:
+
+                | Claim | Uso |
+                |---|---|
+                | `email` (o `sub`, si es un email) | Identidad del solicitante. Es el `userId` de la API |
+                | `given_name`, `family_name` | Alta del usuario en su primera reserva |
+                | `roles` o `scope` | `backoffice` / `partner` habilitan operar sobre reservas ajenas; cualquier otro valor es un titular |
+
+                Un token al que le falte alguno de los tres primeros es un token inválido:
+                la respuesta es 401, y no un alta con datos incompletos.
+
+                El esquema se declara acá y no a mano en el YAML, por la misma razón que
+                el resto del contrato: la fuente de verdad es el código.""")
 public class OpenApiConfiguration {
 
     /** Único tag del documento; los controllers lo referencian por nombre. */
     public static final String RESERVATIONS_TAG = "Reservas";
+
+    /** Nombre del esquema de seguridad; lo referencia el controller. */
+    public static final String BEARER_SCHEME = "bearerAuth";
 
     @Bean
     public OpenAPI reservationsOpenApi() {
@@ -112,5 +139,17 @@ public class OpenApiConfiguration {
             Las lecturas devuelven un `ETag`. Modificar o cancelar exige mandarlo en
             `If-Match`. Si la reserva cambió mientras tanto, la operación se rechaza con
             **409** y no escribe nada.
+
+            ## Autenticación y alcance
+
+            Las cinco operaciones requieren un token Bearer (ver el esquema `bearerAuth`).
+            Sin token la respuesta es **401**; superada la cuota de pedidos, **429** con
+            `Retry-After`.
+
+            **Una reserva pertenece a un único usuario y sólo él la ve.** Un `GET`, un
+            `PUT` o un `DELETE` sobre una reserva ajena responden **404**, igual que una
+            que no existe: distinguirlos con un 403 convertiría el par de códigos en un
+            censo de las reservas del sistema. El listado está acotado al titular y no
+            admite pedir el de otro, salvo con rol de backoffice.
             """;
 }

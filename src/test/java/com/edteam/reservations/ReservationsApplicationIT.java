@@ -10,6 +10,7 @@ import com.edteam.reservations.application.port.in.CreateReservationCommand;
 import com.edteam.reservations.application.port.in.CreateReservationResult;
 import com.edteam.reservations.application.port.in.CreateReservationUseCase;
 import com.edteam.reservations.application.port.in.DispatchPendingNotificationsUseCase;
+import com.edteam.reservations.application.port.in.GetReservationQuery;
 import com.edteam.reservations.application.port.in.GetReservationUseCase;
 import com.edteam.reservations.application.port.in.ModifyReservationCommand;
 import com.edteam.reservations.application.port.in.ModifyReservationUseCase;
@@ -85,7 +86,7 @@ class ReservationsApplicationIT extends AbstractPostgresIT {
 
     private CreateReservationCommand createCommand(Instant departure) {
         return new CreateReservationCommand(
-                TestFixtures.userData(),
+                TestFixtures.owner(),
                 UUID.randomUUID().toString(),
                 new com.edteam.reservations.application.port.in.ItineraryData(
                         new java.math.BigDecimal("1250.50"), "USD",
@@ -124,13 +125,13 @@ class ReservationsApplicationIT extends AbstractPostgresIT {
         assertThat(created.version()).isZero();
         assertThat(created.id()).isPresent();
 
-        Reservation found = getReservation.getById(created.requireId());
+        Reservation found = getReservation.get(new GetReservationQuery(created.requireId(), TestFixtures.owner()));
         assertThat(found.requireId()).isEqualTo(created.requireId());
         assertThat(found.itinerary().origin()).isEqualTo(TestFixtures.EZE);
         assertThat(found.passengers()).hasSize(1);
 
         Reservation confirmed = confirmReservation.confirm(
-                new ConfirmReservationCommand(created.requireId().value(), found.version()));
+                new ConfirmReservationCommand(created.requireId().value(), found.version(), TestFixtures.owner()));
         assertThat(confirmed.status()).isEqualTo(ReservationStatus.CONFIRMED);
         assertThat(confirmed.version()).isEqualTo(1L);
 
@@ -141,17 +142,18 @@ class ReservationsApplicationIT extends AbstractPostgresIT {
                         new java.math.BigDecimal("1980.00"), "USD",
                         List.of(TestFixtures.segmentData(TestFixtures.EZE, TestFixtures.SCL, newDeparture),
                                 TestFixtures.segmentData(TestFixtures.SCL, TestFixtures.MAD,
-                                        newDeparture.plus(Duration.ofHours(6)))))));
+                                        newDeparture.plus(Duration.ofHours(6))))),
+                TestFixtures.owner()));
         assertThat(modified.itinerary().destination()).isEqualTo(TestFixtures.MAD);
         assertThat(modified.itinerary().segments()).hasSize(2);
         assertThat(modified.version()).isEqualTo(2L);
 
         Reservation cancelled = cancelReservation.cancel(
-                new CancelReservationCommand(created.requireId().value(), modified.version()));
+                new CancelReservationCommand(created.requireId().value(), modified.version(), TestFixtures.owner()));
         assertThat(cancelled.status()).isEqualTo(ReservationStatus.CANCELLED);
         assertThat(cancelled.version()).isEqualTo(3L);
 
-        assertThat(getReservation.getById(created.requireId()).status()).isEqualTo(ReservationStatus.CANCELLED);
+        assertThat(getReservation.get(new GetReservationQuery(created.requireId(), TestFixtures.owner())).status()).isEqualTo(ReservationStatus.CANCELLED);
         assertThat(countRows("reserva")).isEqualTo(1L);
     }
 
@@ -184,7 +186,7 @@ class ReservationsApplicationIT extends AbstractPostgresIT {
         // Misma clave, otro contenido: sigue siendo el mismo intento para el cliente,
         // así que se devuelve la reserva ya creada en lugar de una nueva.
         CreateReservationCommand mismaClaveOtroVuelo = new CreateReservationCommand(
-                TestFixtures.userData(), command.idempotencyKey(),
+                TestFixtures.owner(), command.idempotencyKey(),
                 new com.edteam.reservations.application.port.in.ItineraryData(
                         new java.math.BigDecimal("999.00"), "USD",
                         List.of(TestFixtures.segmentData(TestFixtures.EZE, TestFixtures.GRU, departure))),
@@ -241,8 +243,8 @@ class ReservationsApplicationIT extends AbstractPostgresIT {
 
         Reservation created = createReservation.create(createCommand(departure)).reservation();
         Reservation confirmed = confirmReservation.confirm(
-                new ConfirmReservationCommand(created.requireId().value(), created.version()));
-        cancelReservation.cancel(new CancelReservationCommand(created.requireId().value(), confirmed.version()));
+                new ConfirmReservationCommand(created.requireId().value(), created.version(), TestFixtures.owner()));
+        cancelReservation.cancel(new CancelReservationCommand(created.requireId().value(), confirmed.version(), TestFixtures.owner()));
 
         assertThat(eventOutbox.findByStatus(OutboxStatus.PENDING))
                 .extracting(message -> message.event().eventType())
@@ -258,8 +260,8 @@ class ReservationsApplicationIT extends AbstractPostgresIT {
     @Test
     @DisplayName("si la reserva no existe, la consulta falla con el error de negocio")
     void failsForUnknownReservation() {
-        assertThatThrownBy(() -> getReservation.getById(
-                com.edteam.reservations.domain.model.ReservationId.of(999_999L)))
+        assertThatThrownBy(() -> getReservation.get(new GetReservationQuery(
+                com.edteam.reservations.domain.model.ReservationId.of(999_999L), TestFixtures.owner())))
                 .isInstanceOf(com.edteam.reservations.application.exception.ReservationNotFoundException.class);
     }
 
@@ -268,10 +270,10 @@ class ReservationsApplicationIT extends AbstractPostgresIT {
     void rejectsStaleVersion() {
         Reservation created = createReservation.create(
                 createCommand(clock.instant().plus(Duration.ofDays(60)))).reservation();
-        confirmReservation.confirm(new ConfirmReservationCommand(created.requireId().value(), 0L));
+        confirmReservation.confirm(new ConfirmReservationCommand(created.requireId().value(), 0L, TestFixtures.owner()));
 
         assertThatThrownBy(() -> cancelReservation.cancel(
-                new CancelReservationCommand(created.requireId().value(), 0L)))
+                new CancelReservationCommand(created.requireId().value(), 0L, TestFixtures.owner())))
                 .isInstanceOf(com.edteam.reservations.application.exception.ConcurrentUpdateException.class);
     }
 }

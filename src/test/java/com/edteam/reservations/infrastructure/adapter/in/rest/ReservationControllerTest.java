@@ -10,7 +10,9 @@ import com.edteam.reservations.application.port.in.CancelReservationUseCase;
 import com.edteam.reservations.application.port.in.CreateReservationCommand;
 import com.edteam.reservations.application.port.in.CreateReservationResult;
 import com.edteam.reservations.application.port.in.CreateReservationUseCase;
+import com.edteam.reservations.application.port.in.GetReservationQuery;
 import com.edteam.reservations.application.port.in.GetReservationUseCase;
+import com.edteam.reservations.application.port.in.ListReservationsQuery;
 import com.edteam.reservations.application.port.in.ListReservationsUseCase;
 import com.edteam.reservations.application.port.in.ModifyReservationCommand;
 import com.edteam.reservations.application.port.in.ModifyReservationUseCase;
@@ -26,7 +28,10 @@ import com.edteam.reservations.domain.model.Reservation;
 import com.edteam.reservations.domain.model.ReservationId;
 import com.edteam.reservations.domain.model.ReservationStatus;
 import com.edteam.reservations.infrastructure.adapter.in.rest.mapper.ReservationRestMapper;
+import com.edteam.reservations.infrastructure.security.SecurityConfiguration;
 import com.edteam.reservations.support.TestFixtures;
+import com.edteam.reservations.support.WebSliceConfiguration;
+import com.edteam.reservations.support.WithMockActor;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -70,20 +75,27 @@ import static org.hamcrest.Matchers.containsString;
  * uso. Que el caso de uso haga lo correcto ya lo prueban sus propios tests, y
  * que todo encaje contra una base real lo prueba {@code ReservationApiIT}.
  */
-@WebMvcTest(ReservationController.class)
-@Import({ReservationRestMapper.class, TestVersionCacheConfiguration.class})
+@WebMvcTest(value = ReservationController.class,
+        // La cuota de pedidos se apaga en este slice: acá se prueba el
+        // contrato HTTP, y un contador compartido entre ~40 tests haría que el
+        // resultado dependa del orden de ejecución. Tiene su propio test
+        // (RateLimitFilterTest) y su propio test de borde (ReservationSecurityTest).
+        properties = "reservations.security.rate-limit.enabled=false")
+@Import({ReservationRestMapper.class, TestVersionCacheConfiguration.class,
+        SecurityConfiguration.class, WebSliceConfiguration.class})
+// La cadena de seguridad real entra al slice: sin ella estos tests probarían
+// un controller que en producción no existe: ninguno de estos pedidos llegaría.
+// El actor es el titular de las reservas de TestFixtures; los tests que
+// necesitan otra identidad —o ninguna— lo declaran en el método.
+@WithMockActor
 @DisplayName("API de reservas")
 class ReservationControllerTest {
 
     private static final String IDEMPOTENCY_KEY = "3f1a9c7e-0f6e-4a39-9d2c-8b5f0c1e7a44";
 
+    /** Sin objeto {@code user}: el comprador sale del token. */
     private static final String CREATE_BODY = """
             {
-              "user": {
-                "email": "ana.perez@example.com",
-                "firstName": "Ana",
-                "lastName": "Pérez"
-              },
               "itinerary": {
                 "price": "1250.50",
                 "currency": "USD",
@@ -151,6 +163,11 @@ class ReservationControllerTest {
     @Autowired
     private ReservationVersionCache versionCache;
 
+    /** El pedido de lectura que arma el controller para el actor por defecto. */
+    private static GetReservationQuery queryFor(long reservationId) {
+        return new GetReservationQuery(ReservationId.of(reservationId), TestFixtures.owner());
+    }
+
     /** El contexto se comparte entre los tests de la clase; el cache, no debería. */
     @BeforeEach
     void resetVersionCache() {
@@ -188,8 +205,10 @@ class ReservationControllerTest {
 
             ArgumentCaptor<CreateReservationCommand> command = ArgumentCaptor.captor();
             verify(createReservation).create(command.capture());
-            assertThat(command.getValue().user().email()).isEqualTo("ana.perez@example.com");
-            assertThat(command.getValue().user().firstName()).isEqualTo("Ana");
+            // El comprador no salió del cuerpo —el cuerpo ya no lo lleva—: salió
+            // del actor autenticado.
+            assertThat(command.getValue().actor().email().value()).isEqualTo(TestFixtures.USER_EMAIL);
+            assertThat(command.getValue().actor().firstName()).isEqualTo("Ana");
             assertThat(command.getValue().idempotencyKey()).isEqualTo(IDEMPOTENCY_KEY);
             assertThat(command.getValue().itinerary().segments()).hasSize(1);
             assertThat(command.getValue().passengers()).hasSize(1);
@@ -274,7 +293,6 @@ class ReservationControllerTest {
         void rejectsInvalidBody() throws Exception {
             String invalid = """
                     {
-                      "user": {"email": "no-es-un-email", "firstName": "", "lastName": "Pérez"},
                       "itinerary": {
                         "price": "-5",
                         "currency": "dolares",
@@ -294,7 +312,6 @@ class ReservationControllerTest {
                     .andExpect(jsonPath("$.instance").value("/v1/reservations"))
                     .andExpect(jsonPath("$.errors[*].field")
                             .value(org.hamcrest.Matchers.hasItems(
-                                    "user.email", "user.firstName",
                                     "itinerary.price", "itinerary.currency", "itinerary.segments", "passengers")));
 
             verifyNoInteractions(createReservation);
@@ -350,7 +367,7 @@ class ReservationControllerTest {
         @Test
         @DisplayName("responde 200 con la reserva y su ETag")
         void returnsReservation() throws Exception {
-            when(getReservation.getById(ReservationId.of(10L))).thenReturn(TestFixtures.storedReservation(3L));
+            when(getReservation.get(queryFor(10L))).thenReturn(TestFixtures.storedReservation(3L));
 
             mockMvc.perform(get("/v1/reservations/10"))
                     .andExpect(status().isOk())
@@ -363,7 +380,7 @@ class ReservationControllerTest {
         @Test
         @DisplayName("una reserva cancelada informa la fecha de cancelación")
         void exposesCancellationInstant() throws Exception {
-            when(getReservation.getById(any()))
+            when(getReservation.get(any()))
                     .thenReturn(TestFixtures.storedReservation(4L, ReservationStatus.CANCELLED));
 
             mockMvc.perform(get("/v1/reservations/10"))
@@ -375,7 +392,7 @@ class ReservationControllerTest {
         @Test
         @DisplayName("si no existe responde 404")
         void returnsNotFound() throws Exception {
-            when(getReservation.getById(any()))
+            when(getReservation.get(any()))
                     .thenThrow(new ReservationNotFoundException(ReservationId.of(999L)));
 
             mockMvc.perform(get("/v1/reservations/999"))
@@ -397,7 +414,7 @@ class ReservationControllerTest {
         @Test
         @DisplayName("la respuesta es no-store: el cuerpo lleva documento y fecha de nacimiento")
         void forbidsIntermediateCaching() throws Exception {
-            when(getReservation.getById(any())).thenReturn(TestFixtures.storedReservation(3L));
+            when(getReservation.get(any())).thenReturn(TestFixtures.storedReservation(3L));
 
             mockMvc.perform(get("/v1/reservations/10"))
                     .andExpect(status().isOk())
@@ -423,20 +440,20 @@ class ReservationControllerTest {
         @Test
         @DisplayName("con el cache frío lee del origen y responde 304 igual: ahorra el payload, no la consulta")
         void servesNotModifiedAfterReadingTheOrigin() throws Exception {
-            when(getReservation.getById(ReservationId.of(10L))).thenReturn(TestFixtures.storedReservation(3L));
+            when(getReservation.get(queryFor(10L))).thenReturn(TestFixtures.storedReservation(3L));
 
             mockMvc.perform(get("/v1/reservations/10").header(HttpHeaders.IF_NONE_MATCH, "\"3\""))
                     .andExpect(status().isNotModified())
                     .andExpect(header().string("ETag", "\"3\""))
                     .andExpect(content().string(""));
 
-            verify(getReservation, times(1)).getById(ReservationId.of(10L));
+            verify(getReservation, times(1)).get(queryFor(10L));
         }
 
         @Test
         @DisplayName("la primera lectura deja la versión cacheada para la próxima")
         void populatesTheCacheOnRead() throws Exception {
-            when(getReservation.getById(ReservationId.of(10L))).thenReturn(TestFixtures.storedReservation(3L));
+            when(getReservation.get(queryFor(10L))).thenReturn(TestFixtures.storedReservation(3L));
 
             mockMvc.perform(get("/v1/reservations/10")).andExpect(status().isOk());
 
@@ -447,7 +464,7 @@ class ReservationControllerTest {
         @DisplayName("con un If-None-Match de otra versión devuelve la representación completa")
         void returnsFullBodyWhenTheVersionChanged() throws Exception {
             versionCache.remember(ReservationId.of(10L), 4L);
-            when(getReservation.getById(ReservationId.of(10L))).thenReturn(TestFixtures.storedReservation(4L));
+            when(getReservation.get(queryFor(10L))).thenReturn(TestFixtures.storedReservation(4L));
 
             mockMvc.perform(get("/v1/reservations/10").header(HttpHeaders.IF_NONE_MATCH, "\"3\""))
                     .andExpect(status().isOk())
@@ -458,7 +475,7 @@ class ReservationControllerTest {
         @Test
         @DisplayName("un If-None-Match malformado no es un 400: devuelve la representación completa")
         void tolerantWithMalformedIfNoneMatch() throws Exception {
-            when(getReservation.getById(any())).thenReturn(TestFixtures.storedReservation(3L));
+            when(getReservation.get(any())).thenReturn(TestFixtures.storedReservation(3L));
 
             mockMvc.perform(get("/v1/reservations/10").header(HttpHeaders.IF_NONE_MATCH, "basura"))
                     .andExpect(status().isOk())
@@ -469,13 +486,13 @@ class ReservationControllerTest {
         @DisplayName("sin If-None-Match la versión cacheada no se usa: nunca se responde 304 de más")
         void ignoresTheCacheWithoutTheHeader() throws Exception {
             versionCache.remember(ReservationId.of(10L), 3L);
-            when(getReservation.getById(ReservationId.of(10L))).thenReturn(TestFixtures.storedReservation(3L));
+            when(getReservation.get(queryFor(10L))).thenReturn(TestFixtures.storedReservation(3L));
 
             mockMvc.perform(get("/v1/reservations/10"))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.id").value("10"));
 
-            verify(getReservation, times(1)).getById(ReservationId.of(10L));
+            verify(getReservation, times(1)).get(queryFor(10L));
         }
     }
 
@@ -498,14 +515,15 @@ class ReservationControllerTest {
                     .andExpect(jsonPath("$.page.totalElements").value(1))
                     .andExpect(jsonPath("$.page.totalPages").value(1));
 
-            ArgumentCaptor<ReservationSearchCriteria> criteria = ArgumentCaptor.captor();
-            verify(listReservations).list(criteria.capture());
-            assertThat(criteria.getValue().page()).isZero();
-            assertThat(criteria.getValue().size()).isEqualTo(20);
-            assertThat(criteria.getValue().sortBy()).isEqualTo(ReservationSortBy.CREATED_AT);
-            assertThat(criteria.getValue().direction()).isEqualTo(SortDirection.DESC);
-            assertThat(criteria.getValue().userEmail()).isEmpty();
-            assertThat(criteria.getValue().statuses()).isEmpty();
+            ArgumentCaptor<ListReservationsQuery> query = ArgumentCaptor.captor();
+            verify(listReservations).list(query.capture());
+            ReservationSearchCriteria criteriaValue = query.getValue().criteria();
+            assertThat(criteriaValue.page()).isZero();
+            assertThat(criteriaValue.size()).isEqualTo(20);
+            assertThat(criteriaValue.sortBy()).isEqualTo(ReservationSortBy.CREATED_AT);
+            assertThat(criteriaValue.direction()).isEqualTo(SortDirection.DESC);
+            assertThat(criteriaValue.userEmail()).isEmpty();
+            assertThat(criteriaValue.statuses()).isEmpty();
         }
 
         @Test
@@ -535,9 +553,9 @@ class ReservationControllerTest {
                     .andExpect(jsonPath("$.items", org.hamcrest.Matchers.hasSize(0)))
                     .andExpect(jsonPath("$.page.totalElements").value(0));
 
-            ArgumentCaptor<ReservationSearchCriteria> criteria = ArgumentCaptor.captor();
-            verify(listReservations).list(criteria.capture());
-            ReservationSearchCriteria value = criteria.getValue();
+            ArgumentCaptor<ListReservationsQuery> query = ArgumentCaptor.captor();
+            verify(listReservations).list(query.capture());
+            ReservationSearchCriteria value = query.getValue().criteria();
             assertThat(value.userEmail()).map(com.edteam.reservations.domain.model.Email::value)
                     .contains("ana.perez@example.com");
             assertThat(value.statuses())
@@ -639,7 +657,7 @@ class ReservationControllerTest {
         void staleETagNoLongerMatchesAfterAWrite() throws Exception {
             versionCache.remember(ReservationId.of(10L), 3L);
             when(modifyReservation.modify(any())).thenReturn(TestFixtures.storedReservation(4L));
-            when(getReservation.getById(ReservationId.of(10L))).thenReturn(TestFixtures.storedReservation(4L));
+            when(getReservation.get(queryFor(10L))).thenReturn(TestFixtures.storedReservation(4L));
 
             mockMvc.perform(put("/v1/reservations/10")
                             .header("If-Match", "\"3\"")

@@ -1,6 +1,8 @@
 package com.edteam.reservations.infrastructure.adapter.out.persistence.entity;
 
+import com.edteam.reservations.infrastructure.security.crypto.EncryptedStringConverter;
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -33,7 +35,26 @@ public class PassengerJpaEntity {
     @Column(name = "fecha_nacimiento", nullable = false)
     private LocalDate birthDate;
 
-    @Column(name = "documento", unique = true, length = 50)
+    /**
+     * Documento del pasajero, cifrado en la columna.
+     *
+     * <p>Dos cambios respecto de la versión anterior, y los dos son de
+     * seguridad:
+     *
+     * <ul>
+     *   <li>Ya no es {@code unique}. El {@code UNIQUE} convertía el alta en un
+     *       oráculo: mandando un documento ajeno, la respuesta devolvía el
+     *       nombre y la fecha de nacimiento reales de su titular, porque el
+     *       adaptador reutilizaba la fila existente.</li>
+     *   <li>Va cifrado (AES-256-GCM). Un {@code pg_dump} de esta tabla era un
+     *       dump de PII en claro, y el backup heredaba el problema.</li>
+     * </ul>
+     *
+     * <p>El largo sube a 512 porque el valor guardado es
+     * {@code v1:} + Base64(IV ‖ ciphertext ‖ tag), no el documento.
+     */
+    @Column(name = "documento", length = 512)
+    @Convert(converter = EncryptedStringConverter.class)
     private String documentNumber;
 
     protected PassengerJpaEntity() {

@@ -3,6 +3,7 @@ package com.edteam.reservations.application.service;
 import com.edteam.reservations.application.exception.ConcurrentUpdateException;
 import com.edteam.reservations.application.exception.ReservationNotFoundException;
 import com.edteam.reservations.application.port.in.CancelReservationCommand;
+import com.edteam.reservations.application.port.out.AuditTrailPort;
 import com.edteam.reservations.application.port.out.EventOutboxPort;
 import com.edteam.reservations.application.port.out.ReservationRepositoryPort;
 import com.edteam.reservations.domain.event.DomainEvent;
@@ -42,17 +43,22 @@ class CancelReservationServiceTest {
     @Mock
     private EventOutboxPort eventOutbox;
 
+    @Mock
+    private AuditTrailPort auditTrail;
+
     private CancelReservationService service;
 
     @BeforeEach
     void setUp() {
-        service = new CancelReservationService(reservationRepository, eventOutbox, TestFixtures.fixedClock());
+        service = new CancelReservationService(reservationRepository, eventOutbox, auditTrail,
+                TestFixtures.fixedClock());
         lenient().when(reservationRepository.save(any(Reservation.class)))
                 .thenAnswer(invocation -> invocation.<Reservation>getArgument(0).withVersion(1L));
     }
 
     private CancelReservationCommand command(long expectedVersion) {
-        return new CancelReservationCommand(TestFixtures.RESERVATION_ID.value(), expectedVersion);
+        return new CancelReservationCommand(TestFixtures.RESERVATION_ID.value(), expectedVersion,
+                TestFixtures.owner());
     }
 
     @Test

@@ -31,8 +31,10 @@ import java.util.List;
  */
 public record ListReservationsParams(
 
-        @Schema(description = "Devuelve sólo las reservas del usuario indicado. "
-                + "El usuario se identifica por su email, igual que en el alta.",
+        @Schema(description = """
+                Devuelve sólo las reservas del usuario indicado, identificado por su email.
+
+                **Sólo lo puede usar un cliente con rol de backoffice.** Para todos los                 demás el listado ya está acotado a sus propias reservas, y enviar el email                 de otro usuario responde 403. Enviar el propio es válido, aunque                 redundante.""",
                 example = "ana.perez@example.com")
         @Email(message = "Debe ser una dirección de correo válida")
         @Size(max = 150, message = "El email no puede superar los 150 caracteres")

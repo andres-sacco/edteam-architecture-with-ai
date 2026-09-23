@@ -3,6 +3,8 @@ package com.edteam.reservations;
 import com.edteam.reservations.infrastructure.cache.CacheStore;
 import com.edteam.reservations.infrastructure.cache.MeteredCacheStore;
 import com.edteam.reservations.support.AbstractPostgresIT;
+import com.edteam.reservations.support.SecurityTestSupport;
+import com.edteam.reservations.support.TestFixtures;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tags;
@@ -16,6 +18,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.test.web.servlet.request.RequestPostProcessor;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -92,8 +95,8 @@ class CacheIT extends AbstractPostgresIT {
     void publishesCacheMetrics() throws Exception {
         String id = createReservation();
 
-        mockMvc.perform(get("/v1/reservations/{id}", id)).andExpect(status().isOk());
-        mockMvc.perform(get("/v1/reservations/{id}", id).header(HttpHeaders.IF_NONE_MATCH, "\"0\""))
+        mockMvc.perform(get("/v1/reservations/{id}", id).with(asUser())).andExpect(status().isOk());
+        mockMvc.perform(get("/v1/reservations/{id}", id).with(asUser()).header(HttpHeaders.IF_NONE_MATCH, "\"0\""))
                 .andExpect(status().isNotModified());
 
         assertThat(meterRegistry.get(MeteredCacheStore.GETS)
@@ -106,7 +109,7 @@ class CacheIT extends AbstractPostgresIT {
                 .as("entradas vivas")
                 .isPositive();
 
-        mockMvc.perform(get("/actuator/metrics/" + MeteredCacheStore.GETS))
+        mockMvc.perform(get("/actuator/metrics/" + MeteredCacheStore.GETS).with(asUser()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.availableTags[?(@.tag == 'cache')]").exists());
     }
@@ -116,13 +119,13 @@ class CacheIT extends AbstractPostgresIT {
     void servesNotModified() throws Exception {
         String id = createReservation();
 
-        mockMvc.perform(get("/v1/reservations/{id}", id))
+        mockMvc.perform(get("/v1/reservations/{id}", id).with(asUser()))
                 .andExpect(status().isOk())
                 .andExpect(header().string("ETag", "\"0\""))
                 .andExpect(header().string(HttpHeaders.CACHE_CONTROL,
                         org.hamcrest.Matchers.containsString("no-store")));
 
-        mockMvc.perform(get("/v1/reservations/{id}", id).header(HttpHeaders.IF_NONE_MATCH, "\"0\""))
+        mockMvc.perform(get("/v1/reservations/{id}", id).with(asUser()).header(HttpHeaders.IF_NONE_MATCH, "\"0\""))
                 .andExpect(status().isNotModified())
                 .andExpect(header().string("ETag", "\"0\""))
                 .andExpect(content().string(""));
@@ -134,10 +137,10 @@ class CacheIT extends AbstractPostgresIT {
         String id = createReservation();
 
         // El cliente lee y queda con la versión 0 cacheada del lado del servidor.
-        mockMvc.perform(get("/v1/reservations/{id}", id).header(HttpHeaders.IF_NONE_MATCH, "\"0\""))
+        mockMvc.perform(get("/v1/reservations/{id}", id).with(asUser()).header(HttpHeaders.IF_NONE_MATCH, "\"0\""))
                 .andExpect(status().isNotModified());
 
-        mockMvc.perform(put("/v1/reservations/{id}", id)
+        mockMvc.perform(put("/v1/reservations/{id}", id).with(asUser())
                         .header(HttpHeaders.IF_MATCH, "\"0\"")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(updateBody(departure)))
@@ -147,11 +150,11 @@ class CacheIT extends AbstractPostgresIT {
         // Si esto devolviera 304, el cliente seguiría creyendo que va por la
         // versión 0 y su próximo If-Match daría 409 sin que nada hubiera
         // cambiado de verdad. Ese es el 409 evitable que el diseño descarta.
-        mockMvc.perform(get("/v1/reservations/{id}", id).header(HttpHeaders.IF_NONE_MATCH, "\"0\""))
+        mockMvc.perform(get("/v1/reservations/{id}", id).with(asUser()).header(HttpHeaders.IF_NONE_MATCH, "\"0\""))
                 .andExpect(status().isOk())
                 .andExpect(header().string("ETag", "\"1\""));
 
-        mockMvc.perform(put("/v1/reservations/{id}", id)
+        mockMvc.perform(put("/v1/reservations/{id}", id).with(asUser())
                         .header(HttpHeaders.IF_MATCH, "\"1\"")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(updateBody(departure.plus(Duration.ofDays(1)))))
@@ -163,7 +166,7 @@ class CacheIT extends AbstractPostgresIT {
     void theCachedCountNeverHidesRows() throws Exception {
         createReservation();
 
-        mockMvc.perform(get("/v1/reservations"))
+        mockMvc.perform(get("/v1/reservations").with(asUser()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items", org.hamcrest.Matchers.hasSize(1)));
 
@@ -176,7 +179,7 @@ class CacheIT extends AbstractPostgresIT {
         // en el acto. Deliberadamente no se afirma nada sobre el total: este
         // contexto se comparte entre tests y la base se trunca por detrás del
         // cache, que es la versión extrema del mismo desfase.
-        mockMvc.perform(get("/v1/reservations"))
+        mockMvc.perform(get("/v1/reservations").with(asUser()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items", org.hamcrest.Matchers.hasSize(2)))
                 .andExpect(header().string(HttpHeaders.CACHE_CONTROL,
@@ -187,8 +190,8 @@ class CacheIT extends AbstractPostgresIT {
     @DisplayName("en el cache no hay un solo dato de pasajero")
     void nothingSensitiveEndsUpInTheCache() throws Exception {
         String id = createReservation();
-        mockMvc.perform(get("/v1/reservations/{id}", id)).andExpect(status().isOk());
-        mockMvc.perform(get("/v1/reservations")).andExpect(status().isOk());
+        mockMvc.perform(get("/v1/reservations/{id}", id).with(asUser())).andExpect(status().isOk());
+        mockMvc.perform(get("/v1/reservations").with(asUser())).andExpect(status().isOk());
 
         // Lo guardado es escalar por construcción: la versión es un entero y el
         // total, un long. Se verifica desde afuera igual, porque es la
@@ -199,7 +202,7 @@ class CacheIT extends AbstractPostgresIT {
     }
 
     private String createReservation() throws Exception {
-        MvcResult created = mockMvc.perform(post("/v1/reservations")
+        MvcResult created = mockMvc.perform(post("/v1/reservations").with(asUser())
                         .header(IDEMPOTENCY_KEY_HEADER, UUID.randomUUID().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(createBody(departure)))
@@ -208,10 +211,24 @@ class CacheIT extends AbstractPostgresIT {
         return objectMapper.readTree(created.getResponse().getContentAsString()).get("id").asText();
     }
 
+    /**
+     * Token del titular de las reservas de este test.
+     *
+     * <p>Los endpoints de este test —incluido Actuator— exigen autenticación:
+     * el contrato de cache que se verifica acá sólo existe del otro lado de la
+     * cadena de seguridad.
+     */
+    private static RequestPostProcessor asUser() {
+        return request -> {
+            request.addHeader(HttpHeaders.AUTHORIZATION,
+                    SecurityTestSupport.bearer(TestFixtures.owner()));
+            return request;
+        };
+    }
+
     private static String createBody(Instant departure) {
         return """
                 {
-                  "user": {"email": "ana.perez@example.com", "firstName": "Ana", "lastName": "Pérez"},
                   "itinerary": {
                     "price": "1250.50",
                     "currency": "USD",

@@ -1,13 +1,17 @@
 package com.edteam.reservations.application.port.in;
 
 import com.edteam.reservations.domain.model.Reservation;
-import com.edteam.reservations.domain.model.ReservationId;
 
-/** Puerto de entrada: consultar una reserva. */
+/** Lectura de una reserva por su identificador. */
 public interface GetReservationUseCase {
 
     /**
-     * @throws com.edteam.reservations.application.exception.ReservationNotFoundException si no existe
+     * Devuelve la reserva si el solicitante puede verla.
+     *
+     * @throws com.edteam.reservations.application.exception.ReservationNotFoundException
+     *         si no existe <b>o</b> si no es del solicitante. Es el mismo error a
+     *         propósito: distinguirlos convertiría el par de códigos en un
+     *         censo de las reservas del sistema.
      */
-    Reservation getById(ReservationId reservationId);
+    Reservation get(GetReservationQuery query);
 }

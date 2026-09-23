@@ -7,6 +7,7 @@ import com.edteam.reservations.application.exception.DuplicateReservationExcepti
 import com.edteam.reservations.application.exception.ReservationNotFoundException;
 import com.edteam.reservations.application.exception.UnknownAirportException;
 import com.edteam.reservations.application.exception.UnknownUserException;
+import com.edteam.reservations.domain.access.ReservationAccessDeniedException;
 import com.edteam.reservations.domain.exception.DomainException;
 import com.edteam.reservations.domain.exception.InvalidPassengerException;
 import com.edteam.reservations.domain.exception.InvalidReservationException;
@@ -124,6 +125,24 @@ public class ReservationExceptionHandler extends ResponseEntityExceptionHandler 
     public ProblemDetail handleDuplicateReservation(DuplicateReservationException e, WebRequest request) {
         log.warn("No se pudo resolver la carrera por la clave de idempotencia: {}", e.getMessage());
         return problem(HttpStatus.CONFLICT, ApiErrorCode.IDEMPOTENCY_KEY_REUSED, e.getMessage(), request);
+    }
+
+    // ------------------------------------------------------------------
+    // 403: el pedido es válido y el solicitante es quien dice ser, pero no le
+    // corresponde. Es el caso raro: un recurso ajeno responde 404, para que el
+    // código de estado no sea un oráculo. Acá el 403 es correcto porque el
+    // rechazo no revela nada —el cliente sabe cuál es su propio email—, y una
+    // lista vacía en silencio escondería un bug del cliente.
+    // ------------------------------------------------------------------
+
+    @ExceptionHandler(ReservationAccessDeniedException.class)
+    public ProblemDetail handleAccessDenied(ReservationAccessDeniedException e, WebRequest request) {
+        // El mensaje del dominio nombra al solicitante; el detalle que sale es
+        // fijo. Un cuerpo de error termina en consolas, capturas de pantalla y
+        // tickets de soporte, y no es el lugar donde reflejar un email.
+        log.info("Pedido rechazado por alcance en {}: {}", pathOf(request), e.getMessage());
+        return problem(HttpStatus.FORBIDDEN, ApiErrorCode.FORBIDDEN,
+                "El solicitante no puede consultar reservas de otro usuario.", request);
     }
 
     // ------------------------------------------------------------------

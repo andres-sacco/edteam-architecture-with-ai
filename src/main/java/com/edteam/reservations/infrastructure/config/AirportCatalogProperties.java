@@ -113,6 +113,26 @@ public record AirportCatalogProperties(Duration cacheTtl,
         return baseUrl != null && !baseUrl.isBlank();
     }
 
+    /**
+     * Si la integración sale por un canal cifrado.
+     *
+     * <p>La API key viaja en un header, así que por {@code http://} se lee y
+     * se roba con sólo estar en el camino —y con ella, se consulta el catálogo
+     * en nuestro nombre hasta que alguien note la factura—. El tráfico de
+     * respuesta tampoco es inocuo: es el maestro que decide qué reservas se
+     * aceptan.
+     *
+     * <p>{@code localhost} queda exento: es el contenedor de al lado en la
+     * máquina de desarrollo, y exigirle un certificado sólo lograría que
+     * alguien apague la verificación entera.
+     */
+    public boolean usesSecureTransport() {
+        return !hasRemoteCatalog()
+                || baseUrl.startsWith("https://")
+                || baseUrl.startsWith("http://localhost")
+                || baseUrl.startsWith("http://127.0.0.1");
+    }
+
     boolean hasApiKey() {
         return apiKey != null && !apiKey.isBlank();
     }

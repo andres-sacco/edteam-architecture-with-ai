@@ -25,9 +25,15 @@ spring:
 
   datasource:
     # Coincide con compose.yaml: 'docker compose up -d' y listo.
-    url: jdbc:postgresql://localhost:5432/reservations
-    username: reservations
-    password: reservations
+    #
+    # Ninguna credencial queda escrita acá. Lo que se ve son los valores del
+    # entorno local —el mismo docker compose de este repositorio— y en
+    # cualquier otro entorno los pisan las variables. Antes el usuario y la
+    # contraseña estaban literales, así que quedaban en el historial de git y
+    # dentro de la imagen, y rotarlas obligaba a un commit.
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/reservations}
+    username: ${DB_USERNAME:reservations}
+    password: ${DB_PASSWORD:reservations}
     hikari:
       # Con hasta 100k registros por entidad y consultas por índice, el cuello
       # de botella no es la base sino las conexiones. Un pool chico y sano rinde
@@ -117,7 +123,12 @@ reservations:
     #
     # Vaciar 'base-url' vuelve al stub en memoria: es lo que usan los tests,
     # para que el build no dependa de un servicio externo.
-    base-url: http://localhost:6070/api/flights/catalog
+    #
+    # El http:// de acá es el contenedor de al lado en la máquina de
+    # desarrollo. Fuera de localhost la URL tiene que ser https:// y la
+    # aplicación se niega a arrancar si no lo es: la API key viaja en un
+    # header, así que en texto plano se lee y se roba en el camino.
+    base-url: ${CATALOG_BASE_URL:http://localhost:6070/api/flights/catalog}
     # La credencial nunca va en el archivo: viene del entorno. Hoy el catálogo
     # no pide autenticación, así que sin la variable no se manda el header.
     api-key: ${CATALOG_API_KEY:}
@@ -150,6 +161,71 @@ reservations:
       # reintenten todas en el mismo instante contra un proveedor que ya está
       # devolviendo 429.
       max-backoff: 500ms
+  security:
+    jwt:
+      # ---------------------------------------------------------------------
+      # Modo de cualquier entorno real: el JWKS del proveedor de identidad.
+      # Las claves las publica el emisor, rotan sin que toquemos nada y este
+      # servicio nunca ve una clave privada. Tiene que ser HTTPS: la
+      # aplicación se niega a arrancar con un JWKS por http:// que no sea
+      # localhost, porque quien esté en el camino podría servir otras claves.
+      # ---------------------------------------------------------------------
+      jwk-set-uri: ${JWT_JWK_SET_URI:}
+      # Emisor y audiencia esperados. La audiencia es la que impide que un
+      # token que el mismo IdP emitió para OTRO servicio sirva acá: sin ella,
+      # cada aplicación del emisor es un camino de entrada a ésta.
+      issuer: ${JWT_ISSUER:}
+      audience: ${JWT_AUDIENCE:}
+
+      # ---------------------------------------------------------------------
+      # Modo local y de tests. Acepta tokens HMAC firmados con la clave de
+      # abajo, que es un placeholder publicado y NO un secreto: con ella
+      # cualquiera que lea el repositorio se emite un token.
+      #
+      # Existe para que 'mvn spring-boot:run' y 'mvn verify' no dependan de un
+      # IdP levantado, que es el mismo criterio que con Redis y con el catálogo.
+      # Apagarlo sin configurar 'jwk-set-uri' hace fallar el arranque a
+      # propósito: no hay ninguna combinación que produzca una API sin validar
+      # tokens.
+      # ---------------------------------------------------------------------
+      dev-tokens: ${SECURITY_DEV_TOKENS:true}
+      dev-secret: ${JWT_DEV_SECRET:dev-only-hmac-key-no-usar-fuera-de-local-0123456789}
+
+    pii:
+      # Clave AES-256 (Base64) con la que se cifra el documento del pasajero en
+      # la base. El valor de abajo es, otra vez, un placeholder de desarrollo
+      # reconocible: la aplicación avisa en cada arranque cuando lo está usando.
+      # En cualquier otro entorno viene del gestor de secretos.
+      #
+      # Rotarla no es cambiar esta línea: el formato de la columna lleva
+      # prefijo de versión justamente para poder convivir con dos claves
+      # durante una rotación.
+      key: ${PII_ENCRYPTION_KEY:ZGV2LW9ubHkta2V5LTMyLWJ5dGVzLWRlbW8tMDEyMzQ=}
+
+    cors:
+      # Allowlist explícita por entorno, nunca '*'. Vacía deja CORS apagado,
+      # que es lo correcto en local: los tests y curl no lo necesitan, y así el
+      # default no habilita a nadie.
+      #
+      #   CORS_ALLOWED_ORIGINS=https://app.edteam.example,https://m.edteam.example
+      allowed-origins: ${CORS_ALLOWED_ORIGINS:}
+      max-age: 30m
+
+    rate-limit:
+      # Última línea, no la primera: el lugar del rate limiting es el gateway,
+      # donde el pedido se rechaza antes de gastar un hilo y donde la cuenta es
+      # una sola para todas las instancias. Acá cada instancia lleva la suya,
+      # así que con N instancias la cuota efectiva es N veces ésta.
+      enabled: ${RATE_LIMIT_ENABLED:true}
+      window: 1m
+      # Una pantalla que refresca cada 5s consume 12 por minuto: 120 deja
+      # margen de sobra y corta a un scraper recorriendo identificadores.
+      reads: ${RATE_LIMIT_READS:120}
+      # Las escrituras van aparte porque son mucho más caras: un alta es una
+      # transacción, hasta 8 consultas al catálogo en serie y una fila nueva en
+      # el maestro de usuarios.
+      writes: ${RATE_LIMIT_WRITES:20}
+
   outbox:
     # Despacho de notificaciones hacia el sistema externo.
     dispatch-enabled: true
@@ -175,7 +251,23 @@ springdoc:
   api-docs:
     # El documento generado. Es la fuente de verdad del contrato: sale de los
     # controllers, los DTOs y sus anotaciones, así que no puede quedar viejo.
+    #
+    # Apagado por defecto, igual que Swagger UI y por el mismo motivo: el mapa
+    # completo de la API le ahorra la mitad del trabajo a quien la esté
+    # explorando. Encendido se sirve SIN token, porque exigirlo dejaría la UI
+    # inusable —una navegación del navegador no lleva header Authorization—
+    # sin proteger nada. El control es este interruptor: en producción el
+    # endpoint no existe, y el contrato que leen los partners sale del archivo
+    # versionado en docs/api/openapi.yaml, no del runtime.
+    enabled: ${API_DOCS_ENABLED:true}
     path: /v3/api-docs
+    # Fijada en 3.0. El default de springdoc 2.x es 3.1.0, y el archivo
+    # versionado en docs/api/openapi.yaml declaraba 3.0.3 porque se lo había
+    # convertido a mano: el runtime y la copia publicada decían cosas
+    # distintas. Fijarla acá elimina el paso manual —el archivo se regenera
+    # tal cual sale— y de paso mantiene la compatibilidad con las
+    # herramientas de partners que todavía no leen 3.1.
+    version: openapi_3_0
   # Claves ordenadas: dos generaciones del mismo código producen el mismo
   # archivo, así el documento se puede versionar y su diff se puede revisar.
   writer-with-order-by-keys: true
@@ -183,19 +275,33 @@ springdoc:
     path: /swagger-ui.html
     tags-sorter: alpha
     display-request-duration: true
-    # Swagger UI queda expuesta porque todavía no hay autenticación. En cuanto
-    # se sume seguridad hay que decidir si se publica y para quién: una UI que
-    # permite ejecutar pedidos contra la API productiva no va abierta.
-    enabled: true
+    # Apagada por defecto: una UI que ejecuta pedidos reales contra la API
+    # productiva no va abierta. Se enciende en los entornos donde sirve
+    # (SWAGGER_UI_ENABLED=true en local y en sandbox), y ahí se sirve sin token
+    # —si no, no habría forma de llegar a la pantalla donde autorizarse—.
+    #
+    # Lo que la UI ejecuta sí exige token: 'Try it out' pega contra /v1/**
+    # como cualquier otro cliente, así que hay que pegar un Bearer en el botón
+    # 'Authorize' para que devuelva algo que no sea un 401.
+    enabled: ${SWAGGER_UI_ENABLED:true}
 
 management:
+  server:
+    # Actuator en un puerto propio, que no se publica hacia afuera: el
+    # balanceador y el ingress exponen 8080 y nada más. 'metrics' revela
+    # volumetría de negocio —cuántas reservas por minuto, cuántas fallan— y
+    # 'http.server.requests' revela la superficie real de la API, incluidos los
+    # endpoints que el contrato no documenta.
+    #
+    # Es la mitigación estructural: no hace falta acertar con las reglas de
+    # autorización de cada endpoint de gestión si el puerto no es alcanzable.
+    port: ${MANAGEMENT_PORT:9090}
   endpoints:
     web:
       exposure:
         # Sondas de readiness/liveness para el orquestador, más las métricas:
         # sin ellas no hay forma de saber si el cache acierta ni de enterarse el
-        # día que deja de hacerlo. La seguridad de estos endpoints queda fuera
-        # del alcance de este esqueleto.
+        # día que deja de hacerlo.
         include: health,info,metrics
   endpoint:
     health:

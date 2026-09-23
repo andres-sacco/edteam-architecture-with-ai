@@ -43,8 +43,15 @@ public class LoggingNotificationAdapter implements NotificationPort {
                     .formatted(e.reservationId(), describe(e.itinerary()));
         };
 
-        log.info("[notificaciones] tipo={} usuario={} mensaje=\"{}\"",
-                event.eventType(), event.userId(), message);
+        // Dos niveles a propósito. En INFO queda la traza operativa —qué se
+        // notificó, a qué usuario y sobre qué reserva—, identificando al
+        // usuario por su id interno, que fuera de nuestra base no es un dato
+        // personal. El texto del mensaje lleva ruta y fechas de viaje, que sí
+        // lo son: queda en DEBUG, apagado en producción, donde el destino de
+        // estos logs es un SaaS de observabilidad.
+        log.info("[notificaciones] tipo={} usuario={} reserva={}",
+                event.eventType(), event.userId(), event.reservationId());
+        log.debug("[notificaciones] reserva={} mensaje=\"{}\"", event.reservationId(), message);
     }
 
     private static String describe(ItinerarySummary itinerary) {

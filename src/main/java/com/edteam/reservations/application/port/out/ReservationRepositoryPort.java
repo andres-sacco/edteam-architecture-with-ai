@@ -8,62 +8,39 @@ import com.edteam.reservations.application.query.ResultPage;
 import com.edteam.reservations.domain.model.IdempotencyKey;
 import com.edteam.reservations.domain.model.Reservation;
 import com.edteam.reservations.domain.model.ReservationId;
+import com.edteam.reservations.domain.model.UserId;
 
 import java.util.Optional;
 
-/**
- * Puerto de salida hacia el almacenamiento de reservas.
- *
- * <p>La interfaz vive en la capa de aplicación (la define quien la necesita) y
- * habla sólo en términos del dominio: no expone entidades JPA, {@code Page},
- * {@code Specification} ni nada del proveedor. Eso es lo que permite cambiar la
- * implementación sin tocar los casos de uso.
- */
+/** Persistencia del agregado {@code Reservation}. */
 public interface ReservationRepositoryPort {
 
-    /** Trae la reserva con su itinerario y sus pasajeros ya resueltos. */
     Optional<Reservation> findById(ReservationId reservationId);
 
     /**
-     * Busca por la clave de idempotencia del cliente.
+     * Busca la reserva creada por <b>ese usuario</b> con esa clave de
+     * idempotencia.
      *
-     * <p>Es la consulta que permite responder un reintento con la reserva ya
-     * creada en lugar de generar un duplicado.
+     * <p>La clave sola no alcanza como criterio. Es un UUID que viaja en un
+     * header, y un header queda en los logs de acceso de cualquier proxy del
+     * camino, en las trazas de los SDK móviles y en el historial de las
+     * herramientas de soporte. Con la búsqueda por clave a secas, cualquiera
+     * que consiguiera una clave usada obtenía la reserva completa de su dueño
+     * —con los documentos de los pasajeros— reenviándola en un alta. Alcanzando
+     * la clave al usuario, una clave filtrada deja de servir desde otra
+     * identidad: para el atacante es una clave nueva, y el alta que dispara es
+     * la suya.
+     *
+     * @throws DuplicateReservationException nunca desde acá; ver {@link #save(Reservation)}
      */
-    Optional<Reservation> findByIdempotencyKey(IdempotencyKey idempotencyKey);
+    Optional<Reservation> findByIdempotencyKey(UserId owner, IdempotencyKey idempotencyKey);
 
-    /**
-     * Devuelve la página de reservas que cumple el criterio, con el itinerario
-     * y los pasajeros ya resueltos.
-     *
-     * <p>El criterio y la página son tipos de la aplicación a propósito: los
-     * equivalentes del proveedor ({@code Pageable}, {@code Page},
-     * {@code Specification}) no cruzan el puerto. Traducirlos es parte del
-     * trabajo del adaptador, igual que traducir las excepciones.
-     *
-     * <p>Pedir una página más allá del final devuelve una página vacía con el
-     * total real, no un error.
-     */
     ResultPage<Reservation> search(ReservationSearchCriteria criteria);
 
     /**
-     * Persiste la reserva.
-     *
-     * <p>Contrato que debe cumplir toda implementación:
-     * <ul>
-     *   <li>Si la reserva no tiene id, la inserta: resuelve el itinerario y los
-     *       pasajeros (reutilizando los que ya existan según su clave natural) y
-     *       devuelve la reserva con el id, la versión y los ids asignados.</li>
-     *   <li>Si tiene id, la actualiza validando que la versión almacenada
-     *       coincida con {@link Reservation#version()}, e incrementándola.</li>
-     *   <li>Si las versiones no coinciden, lanza {@link ConcurrentUpdateException}
-     *       sin escribir nada.</li>
-     *   <li>Si ya existe una reserva con la misma clave de idempotencia, lanza
-     *       {@link DuplicateReservationException}.</li>
-     *   <li>Si el usuario referenciado no existe, lanza {@link UnknownUserException}.</li>
-     * </ul>
-     *
-     * @return la reserva tal como quedó almacenada
+     * @throws DuplicateReservationException si el par (usuario, clave de idempotencia) ya existe
+     * @throws UnknownUserException          si el usuario de la reserva no está dado de alta
+     * @throws ConcurrentUpdateException     si la versión almacenada cambió
      */
     Reservation save(Reservation reservation);
 }

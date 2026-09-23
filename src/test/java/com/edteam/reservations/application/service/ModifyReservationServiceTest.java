@@ -5,6 +5,7 @@ import com.edteam.reservations.application.exception.ReservationNotFoundExceptio
 import com.edteam.reservations.application.exception.UnknownAirportException;
 import com.edteam.reservations.application.port.in.ModifyReservationCommand;
 import com.edteam.reservations.application.port.out.AirportCatalogPort;
+import com.edteam.reservations.application.port.out.AuditTrailPort;
 import com.edteam.reservations.application.port.out.EventOutboxPort;
 import com.edteam.reservations.application.port.out.ReservationRepositoryPort;
 import com.edteam.reservations.domain.event.DomainEvent;
@@ -48,6 +49,9 @@ class ModifyReservationServiceTest {
     @Mock
     private EventOutboxPort eventOutbox;
 
+    @Mock
+    private AuditTrailPort auditTrail;
+
     private ModifyReservationService service;
 
     @BeforeEach
@@ -57,6 +61,7 @@ class ModifyReservationServiceTest {
                 new ItineraryAssembler(),
                 new AirportExistenceValidator(airportCatalog),
                 eventOutbox,
+                auditTrail,
                 TestFixtures.fixedClock());
         lenient().when(airportCatalog.exists(any(AirportCode.class))).thenReturn(true);
         lenient().when(reservationRepository.save(any(Reservation.class)))
@@ -65,7 +70,8 @@ class ModifyReservationServiceTest {
 
     private ModifyReservationCommand command(long expectedVersion) {
         return new ModifyReservationCommand(
-                TestFixtures.RESERVATION_ID.value(), expectedVersion, TestFixtures.connectingItineraryData());
+                TestFixtures.RESERVATION_ID.value(), expectedVersion,
+                TestFixtures.connectingItineraryData(), TestFixtures.owner());
     }
 
     @Test

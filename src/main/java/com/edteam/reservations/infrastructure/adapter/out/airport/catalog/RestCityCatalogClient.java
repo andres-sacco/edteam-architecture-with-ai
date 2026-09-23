@@ -2,6 +2,7 @@ package com.edteam.reservations.infrastructure.adapter.out.airport.catalog;
 
 import com.edteam.reservations.application.exception.AirportCatalogIntegrationException;
 import com.edteam.reservations.application.exception.AirportCatalogUnavailableException;
+import com.edteam.reservations.infrastructure.logging.LogSanitizer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -224,13 +225,20 @@ public class RestCityCatalogClient implements CityCatalogClient {
      * así que cualquier mapeo sería una suposición. Nunca sale hacia el cliente
      * de nuestra API: puede traer detalles internos del proveedor.
      */
+    /**
+     * Cuerpo de error del proveedor, listo para loguear.
+     *
+     * <p>Truncar no alcanzaba. En un log de texto el separador de registros es
+     * el salto de línea, así que un cuerpo con {@code \n} no agrega una línea
+     * a nuestro registro: agrega registros enteros. Un proveedor comprometido
+     * —o simplemente uno que devuelve un HTML de error— puede fabricar
+     * entradas que parezcan nuestras, justo en el lugar donde después se busca
+     * evidencia. {@link LogSanitizer} neutraliza los caracteres de control
+     * además de acotar el largo.
+     */
     private static String errorBody(RestClient.RequestHeadersSpec.ConvertibleClientHttpResponse response) {
         try {
-            String body = response.bodyTo(String.class);
-            if (body == null || body.isBlank()) {
-                return "<sin cuerpo>";
-            }
-            return body.length() > MAX_ERROR_BODY ? body.substring(0, MAX_ERROR_BODY) + "…" : body;
+            return LogSanitizer.sanitize(response.bodyTo(String.class), MAX_ERROR_BODY);
         } catch (RestClientException e) {
             return "<cuerpo ilegible>";
         }

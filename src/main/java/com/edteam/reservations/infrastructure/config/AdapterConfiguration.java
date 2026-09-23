@@ -70,6 +70,7 @@ public class AdapterConfiguration {
                                                  Clock clock) {
         AirportCatalogPort origin;
         if (properties.hasRemoteCatalog()) {
+            requireSecureTransport(properties);
             origin = new CatalogAirportCatalog(catalogClient(restClientBuilder, properties));
             log.info("Maestro de aeropuertos: API de catálogo en {} (connect {} ms, read {} ms, {} intentos)",
                     properties.baseUrl(),
@@ -94,6 +95,23 @@ public class AdapterConfiguration {
      * {@code CachingAirportCatalog} hace que la mayoría de las consultas ni
      * lleguen hasta acá.
      */
+    /**
+     * Corta el arranque si la integración saliente no va cifrada.
+     *
+     * <p>Es una verificación en el arranque y no una advertencia a propósito:
+     * una advertencia en el log de una aplicación que igual levantó es una
+     * advertencia que nadie lee. Acá el despliegue falla, que es lo único que
+     * garantiza que la API key no salga en claro por la red.
+     */
+    private static void requireSecureTransport(AirportCatalogProperties properties) {
+        if (!properties.usesSecureTransport()) {
+            throw new IllegalStateException(
+                    ("El catálogo de ciudades está configurado en '%s': la API key viaja en un "
+                            + "header y sin TLS se lee en el camino. Usar https:// (o vaciar "
+                            + "'base-url' para volver al stub en memoria).").formatted(properties.baseUrl()));
+        }
+    }
+
     private static CityCatalogClient catalogClient(RestClient.Builder builder, AirportCatalogProperties properties) {
         return new RetryingCityCatalogClient(
                 new RestCityCatalogClient(catalogRestClient(builder, properties)),

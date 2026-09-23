@@ -13,6 +13,7 @@ import com.edteam.reservations.domain.model.Passenger;
 import com.edteam.reservations.domain.model.Reservation;
 import com.edteam.reservations.domain.model.ReservationId;
 import com.edteam.reservations.domain.model.Segment;
+import com.edteam.reservations.domain.model.UserId;
 import com.edteam.reservations.infrastructure.adapter.out.persistence.entity.ItineraryJpaEntity;
 import com.edteam.reservations.infrastructure.adapter.out.persistence.entity.PassengerJpaEntity;
 import com.edteam.reservations.infrastructure.adapter.out.persistence.entity.ReservationJpaEntity;
@@ -82,7 +83,7 @@ public class ReservationPersistenceAdapter implements ReservationRepositoryPort 
     private static final Logger log = LoggerFactory.getLogger(ReservationPersistenceAdapter.class);
 
     /** Nombres de constraints del modelo de datos, usados para traducir errores. */
-    private static final String UQ_IDEMPOTENCY_KEY = "uq_reserva_idempotency_key";
+    private static final String UQ_IDEMPOTENCY_KEY = "uq_reserva_usuario_idempotency_key";
     private static final String FK_RESERVA_USUARIO = "fk_reserva_usuario";
 
     private final ReservationJpaRepository reservationRepository;
@@ -125,9 +126,12 @@ public class ReservationPersistenceAdapter implements ReservationRepositoryPort 
     }
 
     @Override
-    public Optional<Reservation> findByIdempotencyKey(IdempotencyKey idempotencyKey) {
+    public Optional<Reservation> findByIdempotencyKey(UserId owner, IdempotencyKey idempotencyKey) {
+        Objects.requireNonNull(owner, "El usuario es obligatorio");
         Objects.requireNonNull(idempotencyKey, "La clave de idempotencia es obligatoria");
-        return reservationRepository.findByIdempotencyKey(idempotencyKey.value()).map(reservationMapper::toDomain);
+        return reservationRepository
+                .findByUserIdAndIdempotencyKey(owner.value(), idempotencyKey.value())
+                .map(reservationMapper::toDomain);
     }
 
     @Override
@@ -266,28 +270,27 @@ public class ReservationPersistenceAdapter implements ReservationRepositoryPort 
     }
 
     /**
-     * Devuelve la fila del pasajero.
+     * Escribe el pasajero tal como vino en el pedido.
      *
-     * <p>Con documento se reutiliza la persona ya cargada (es la clave natural
-     * del modelo de datos). Sin documento no hay forma de reconocerla, así que
-     * se inserta una fila nueva: es la consecuencia de que la columna admita
-     * nulos, y queda explícito acá en lugar de esconderse.
+     * <p>Antes reutilizaba la fila existente con el mismo documento, y esa
+     * reutilización cruzaba el borde de confianza: la respuesta del alta
+     * devolvía los datos <em>almacenados</em>, así que mandar el documento de
+     * otra persona respondía con su nombre, su apellido y su fecha de
+     * nacimiento reales. A la inversa, registrar primero un documento con
+     * datos falsos se los imponía a la reserva legítima que viniera después.
+     *
+     * <p>Lo que se pierde es una fila por pasajero repetido. Lo que se gana es
+     * que la representación que sale sea exactamente la que entró, y que el
+     * documento pueda guardarse cifrado: una columna cifrada con IV aleatorio
+     * no es buscable, así que la deduplicación por documento dejó de ser
+     * posible de todas formas.
+     *
+     * <p>Reconciliar la identidad de un pasajero entre reservas sigue siendo
+     * deseable, pero como proceso interno del lado del servidor y no como un
+     * efecto observable del alta.
      */
     private PassengerJpaEntity resolvePassenger(Passenger passenger) {
-        Optional<String> document = passenger.documentNumber();
-        if (document.isEmpty()) {
-            return passengerRepository.save(passengerMapper.toNewEntity(passenger));
-        }
-
-        String documentNumber = document.get();
-        return passengerRepository.findByDocumentNumber(documentNumber).orElseGet(() -> {
-            passengerRepository.insertIfAbsent(
-                    passenger.firstName(), passenger.lastName(), passenger.birthDate(), documentNumber);
-            return passengerRepository.findByDocumentNumber(documentNumber)
-                    .orElseThrow(() -> new IllegalStateException(
-                            "El pasajero con documento %s no quedó disponible después del insert"
-                                    .formatted(documentNumber)));
-        });
+        return passengerRepository.save(passengerMapper.toNewEntity(passenger));
     }
 
     /**

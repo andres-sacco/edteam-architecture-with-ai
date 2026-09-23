@@ -5,10 +5,13 @@ import com.edteam.reservations.application.port.in.CancelReservationUseCase;
 import com.edteam.reservations.application.port.in.CreateReservationCommand;
 import com.edteam.reservations.application.port.in.CreateReservationResult;
 import com.edteam.reservations.application.port.in.CreateReservationUseCase;
+import com.edteam.reservations.application.port.in.GetReservationQuery;
 import com.edteam.reservations.application.port.in.GetReservationUseCase;
+import com.edteam.reservations.application.port.in.ListReservationsQuery;
 import com.edteam.reservations.application.port.in.ListReservationsUseCase;
 import com.edteam.reservations.application.port.in.ModifyReservationUseCase;
 import com.edteam.reservations.application.query.ResultPage;
+import com.edteam.reservations.domain.access.Actor;
 import com.edteam.reservations.domain.model.Reservation;
 import com.edteam.reservations.domain.model.ReservationId;
 import com.edteam.reservations.infrastructure.adapter.in.rest.dto.CreateReservationRequest;
@@ -29,6 +32,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import org.springdoc.core.annotations.ParameterObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -37,6 +41,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
@@ -110,6 +115,10 @@ import java.util.UUID;
 @RestController
 @RequestMapping(path = "/v1/reservations", produces = MediaType.APPLICATION_JSON_VALUE)
 @Tag(name = OpenApiConfiguration.RESERVATIONS_TAG)
+// Las cinco operaciones requieren token. Se declara en el controller y no
+// operación por operación para que un endpoint nuevo lo herede sin que nadie
+// se acuerde de agregarlo: el esquema está definido en OpenApiConfiguration.
+@SecurityRequirement(name = OpenApiConfiguration.BEARER_SCHEME)
 public class ReservationController {
 
     private static final Logger log = LoggerFactory.getLogger(ReservationController.class);
@@ -132,7 +141,23 @@ public class ReservationController {
             (`W/"7"`), porque algunos proxies reescriben así el `ETag` que ellos mismos
             comprimieron.""";
 
-    private static final String NOT_FOUND_DESCRIPTION = "No existe una reserva con ese identificador.";
+    private static final String NOT_FOUND_DESCRIPTION = """
+            No existe una reserva con ese identificador **para quien la pide**.
+
+            Una reserva de otro usuario responde exactamente esto y no un 403: si los dos
+            casos se distinguieran, recorrer los identificadores diría cuántas reservas
+            hay en el sistema y cuáles están ocupadas.""";
+
+    private static final String UNAUTHORIZED_DESCRIPTION = """
+            Falta el token Bearer, está vencido o no valida. La respuesta no dice cuál de
+            los tres: el detalle le indicaría a quien está probando tokens qué corregir.""";
+
+    private static final String FORBIDDEN_DESCRIPTION = """
+            El token es válido pero no alcanza para esta operación.""";
+
+    private static final String TOO_MANY_REQUESTS_DESCRIPTION = """
+            Se superó la cuota de pedidos de la identidad (o de la IP, si el pedido no está
+            autenticado). Reintentable respetando el header `Retry-After`.""";
 
     private static final String IF_NONE_MATCH_DESCRIPTION = """
             `ETag` de la representación que el cliente ya tiene. Si coincide con la
@@ -145,8 +170,11 @@ public class ReservationController {
 
     /**
      * Ninguna representación de reserva puede quedar guardada fuera del
-     * cliente: llevan documento y fecha de nacimiento de los pasajeros, y la
-     * API no tiene todavía capa de seguridad.
+     * cliente: llevan documento y fecha de nacimiento de los pasajeros.
+     *
+     * <p>Sigue siendo {@code no-store} ahora que hay autenticación, y con más
+     * razón: una respuesta autenticada guardada por un proxy compartido se le
+     * puede servir al pedido siguiente, que trae otro token.
      */
     private static final CacheControl NO_STORE = CacheControl.noStore().cachePrivate();
 
@@ -190,19 +218,24 @@ public class ReservationController {
     @Operation(operationId = "createReservation",
             summary = "Crear una reserva",
             description = """
-                    Crea una reserva en estado `PENDING` para el usuario indicado.
+                    Crea una reserva en estado `PENDING` a nombre de quien la pide.
 
                     ## El usuario
 
-                    Se lo identifica por su email, que viaja en el cuerpo junto con su
-                    nombre. Si ya reservó antes se reutiliza su registro; si es la
-                    primera vez, se lo da de alta como parte de la reserva. No hace
-                    falta —ni es posible— darlo de alta por separado: la API no expone
-                    un recurso de usuarios.
+                    Sale del token, no del cuerpo. El email del claim `email` (o del `sub`,
+                    si es un email) identifica al comprador; `given_name` y `family_name`
+                    completan su alta la primera vez que reserva. Si ya reservó antes se
+                    reutiliza su registro y su nombre almacenado no se modifica. No hace
+                    falta —ni es posible— darlo de alta por separado: la API no expone un
+                    recurso de usuarios.
 
-                    El email es también su identificador en el resto de la API: vuelve
-                    en `userId` de la respuesta y es lo que se pasa como `userId` para
-                    filtrar el listado.
+                    **No hay forma de reservar a nombre de otro.** Ese era el problema del
+                    esquema anterior, donde el email viajaba en el cuerpo: cualquiera creaba
+                    una reserva a nombre de una víctima y la notificación de "tu reserva" le
+                    llegaba a ella desde nuestro canal.
+
+                    El email es también su identificador en el resto de la API: vuelve en
+                    `userId` de la respuesta.
 
                     ## Idempotencia
 
@@ -255,6 +288,12 @@ public class ReservationController {
                             + "Es una situación excepcional: el caso normal de clave "
                             + "repetida responde 200.",
                     content = @Content(mediaType = PROBLEM_JSON,
+                            schema = @Schema(implementation = ApiProblem.class))),
+            @ApiResponse(responseCode = "401", description = UNAUTHORIZED_DESCRIPTION,
+                    content = @Content(mediaType = PROBLEM_JSON,
+                            schema = @Schema(implementation = ApiProblem.class))),
+            @ApiResponse(responseCode = "429", description = TOO_MANY_REQUESTS_DESCRIPTION,
+                    content = @Content(mediaType = PROBLEM_JSON,
                             schema = @Schema(implementation = ApiProblem.class)))
     })
     public ResponseEntity<ReservationResponse> create(
@@ -265,9 +304,10 @@ public class ReservationController {
                             pedido y ser distinto entre pedidos distintos.""",
                     example = "3f1a9c7e-0f6e-4a39-9d2c-8b5f0c1e7a44")
             @RequestHeader(IDEMPOTENCY_KEY_HEADER) UUID idempotencyKey,
-            @Valid @RequestBody CreateReservationRequest request) {
+            @Valid @RequestBody CreateReservationRequest request,
+            @Parameter(hidden = true) @AuthenticationPrincipal Actor actor) {
 
-        CreateReservationCommand command = mapper.toCommand(request, idempotencyKey);
+        CreateReservationCommand command = mapper.toCommand(request, idempotencyKey, actor);
         CreateReservationResult result = createOnce(command);
         Reservation reservation = result.reservation();
 
@@ -370,6 +410,12 @@ public class ReservationController {
                             schema = @Schema(implementation = ApiProblem.class))),
             @ApiResponse(responseCode = "404", description = NOT_FOUND_DESCRIPTION,
                     content = @Content(mediaType = PROBLEM_JSON,
+                            schema = @Schema(implementation = ApiProblem.class))),
+            @ApiResponse(responseCode = "401", description = UNAUTHORIZED_DESCRIPTION,
+                    content = @Content(mediaType = PROBLEM_JSON,
+                            schema = @Schema(implementation = ApiProblem.class))),
+            @ApiResponse(responseCode = "429", description = TOO_MANY_REQUESTS_DESCRIPTION,
+                    content = @Content(mediaType = PROBLEM_JSON,
                             schema = @Schema(implementation = ApiProblem.class)))
     })
     public ResponseEntity<ReservationResponse> getById(
@@ -377,16 +423,21 @@ public class ReservationController {
             @PathVariable long reservationId,
             @Parameter(name = "If-None-Match", in = ParameterIn.HEADER,
                     description = IF_NONE_MATCH_DESCRIPTION, example = "\"7\"")
-            @RequestHeader(value = HttpHeaders.IF_NONE_MATCH, required = false) String ifNoneMatch) {
+            @RequestHeader(value = HttpHeaders.IF_NONE_MATCH, required = false) String ifNoneMatch,
+            @Parameter(hidden = true) @AuthenticationPrincipal Actor actor) {
 
         ReservationId id = ReservationId.of(reservationId);
 
+        // El atajo del 304 sigue exigiendo que el cliente traiga el ETag de
+        // ESA versión, que sólo pudo obtener de una lectura autorizada previa.
+        // No es un bypass de la autorización: es una respuesta vacía a alguien
+        // que ya tenía el contenido.
         OptionalLong knownVersion = ifNoneMatch == null ? OptionalLong.empty() : versionCache.find(id);
         if (knownVersion.isPresent() && EntityVersion.matchesIfNoneMatch(ifNoneMatch, knownVersion.getAsLong())) {
             return notModified(knownVersion.getAsLong());
         }
 
-        Reservation reservation = getReservation.getById(id);
+        Reservation reservation = getReservation.get(new GetReservationQuery(id, actor));
         versionCache.remember(id, reservation.version());
 
         if (EntityVersion.matchesIfNoneMatch(ifNoneMatch, reservation.version())) {
@@ -418,9 +469,15 @@ public class ReservationController {
     @Operation(operationId = "listReservations",
             summary = "Listar reservas",
             description = """
-                    Devuelve una página de reservas, de la más reciente a la más antigua.
+                    Devuelve una página de **tus** reservas, de la más reciente a la más
+                    antigua.
 
-                    Todos los filtros son opcionales y se combinan con AND. La paginación
+                    El alcance no se elige: se deriva del token. Un cliente sin rol de
+                    backoffice ve sus reservas y sólo las suyas, mande lo que mande en
+                    `userId`; con el email de otro, la respuesta es 403. Un cliente de
+                    backoffice puede filtrar por cualquier usuario, o por ninguno.
+
+                    Los demás filtros son opcionales y se combinan con AND. La paginación
                     es obligatoria e incondicional: si el cliente no envía `page` y `size`
                     se aplican los valores por defecto, nunca se devuelve la colección
                     completa.""")
@@ -429,14 +486,26 @@ public class ReservationController {
                     description = "Página de reservas. Puede venir vacía; eso no es un error."),
             @ApiResponse(responseCode = "400", description = "Algún parámetro de consulta es inválido.",
                     content = @Content(mediaType = PROBLEM_JSON,
+                            schema = @Schema(implementation = ApiProblem.class))),
+            @ApiResponse(responseCode = "403",
+                    description = "Se pidió el listado de otro usuario sin el rol que lo permite.",
+                    content = @Content(mediaType = PROBLEM_JSON,
+                            schema = @Schema(implementation = ApiProblem.class))),
+            @ApiResponse(responseCode = "401", description = UNAUTHORIZED_DESCRIPTION,
+                    content = @Content(mediaType = PROBLEM_JSON,
+                            schema = @Schema(implementation = ApiProblem.class))),
+            @ApiResponse(responseCode = "429", description = TOO_MANY_REQUESTS_DESCRIPTION,
+                    content = @Content(mediaType = PROBLEM_JSON,
                             schema = @Schema(implementation = ApiProblem.class)))
     })
     public ResponseEntity<ReservationPageResponse> list(
             // @ParameterObject expande el record en sus parámetros de consulta.
             // Sin esto el documento declara un único parámetro 'params' de tipo
             // objeto, que no le dice a nadie cómo se llama la API.
-            @ParameterObject @Valid @ModelAttribute ListReservationsParams params) {
-        ResultPage<Reservation> page = listReservations.list(mapper.toCriteria(params));
+            @ParameterObject @Valid @ModelAttribute ListReservationsParams params,
+            @Parameter(hidden = true) @AuthenticationPrincipal Actor actor) {
+        ResultPage<Reservation> page = listReservations.list(
+                new ListReservationsQuery(mapper.toCriteria(params), actor));
         return ResponseEntity.ok().cacheControl(NO_STORE).body(mapper.toResponse(page));
     }
 
@@ -484,6 +553,12 @@ public class ReservationController {
                               almacenada.
                             - `RESERVATION_NOT_MODIFIABLE`: la reserva está cancelada.""",
                     content = @Content(mediaType = PROBLEM_JSON,
+                            schema = @Schema(implementation = ApiProblem.class))),
+            @ApiResponse(responseCode = "401", description = UNAUTHORIZED_DESCRIPTION,
+                    content = @Content(mediaType = PROBLEM_JSON,
+                            schema = @Schema(implementation = ApiProblem.class))),
+            @ApiResponse(responseCode = "429", description = TOO_MANY_REQUESTS_DESCRIPTION,
+                    content = @Content(mediaType = PROBLEM_JSON,
                             schema = @Schema(implementation = ApiProblem.class)))
     })
     public ResponseEntity<ReservationResponse> update(
@@ -492,11 +567,12 @@ public class ReservationController {
             @Parameter(name = "If-Match", in = ParameterIn.HEADER, required = true,
                     description = IF_MATCH_DESCRIPTION, example = "\"7\"")
             @RequestHeader(HttpHeaders.IF_MATCH) String ifMatch,
-            @Valid @RequestBody UpdateReservationRequest request) {
+            @Valid @RequestBody UpdateReservationRequest request,
+            @Parameter(hidden = true) @AuthenticationPrincipal Actor actor) {
 
         long expectedVersion = EntityVersion.parseIfMatch(ifMatch);
         Reservation modified = modifyReservation.modify(
-                mapper.toCommand(reservationId, expectedVersion, request.itinerary()));
+                mapper.toCommand(reservationId, expectedVersion, request.itinerary(), actor));
 
         // Después del caso de uso, o sea con la transacción ya confirmada: si
         // se borrara antes, una lectura concurrente podría repoblar el cache
@@ -551,6 +627,12 @@ public class ReservationController {
                             - `RESERVATION_ALREADY_CANCELLED`: la reserva ya estaba
                               cancelada.""",
                     content = @Content(mediaType = PROBLEM_JSON,
+                            schema = @Schema(implementation = ApiProblem.class))),
+            @ApiResponse(responseCode = "401", description = UNAUTHORIZED_DESCRIPTION,
+                    content = @Content(mediaType = PROBLEM_JSON,
+                            schema = @Schema(implementation = ApiProblem.class))),
+            @ApiResponse(responseCode = "429", description = TOO_MANY_REQUESTS_DESCRIPTION,
+                    content = @Content(mediaType = PROBLEM_JSON,
                             schema = @Schema(implementation = ApiProblem.class)))
     })
     public ResponseEntity<ReservationResponse> cancel(
@@ -558,11 +640,12 @@ public class ReservationController {
             @PathVariable long reservationId,
             @Parameter(name = "If-Match", in = ParameterIn.HEADER, required = true,
                     description = IF_MATCH_DESCRIPTION, example = "\"7\"")
-            @RequestHeader(HttpHeaders.IF_MATCH) String ifMatch) {
+            @RequestHeader(HttpHeaders.IF_MATCH) String ifMatch,
+            @Parameter(hidden = true) @AuthenticationPrincipal Actor actor) {
 
         long expectedVersion = EntityVersion.parseIfMatch(ifMatch);
         Reservation cancelled = cancelReservation.cancel(
-                mapper.toCancelCommand(reservationId, expectedVersion));
+                mapper.toCancelCommand(reservationId, expectedVersion, actor));
 
         versionCache.forget(ReservationId.of(reservationId));
 

@@ -98,6 +98,44 @@ class HexagonalArchitectureTest {
     }
 
     @Test
+    @DisplayName("la seguridad es un detalle de infraestructura y no se filtra hacia adentro")
+    void securityStaysInInfrastructure() {
+        // La regla que más fácil se rompe de las que hay acá. Poner un
+        // @PreAuthorize en un servicio de aplicación o leer el
+        // SecurityContextHolder desde un caso de uso resuelve el problema del
+        // día y ata la lógica de negocio al framework: a partir de ahí, la
+        // autorización sólo funciona si el pedido entró por HTTP, y el próximo
+        // adaptador de entrada —un consumidor de mensajería, un job— queda sin
+        // ninguna.
+        //
+        // El dominio SÍ decide quién puede ver qué: eso es ReservationAccessPolicy,
+        // que trabaja sobre un Actor propio y no conoce JWT ni Authentication.
+        noClasses().that().resideInAnyPackage(BASE + ".domain..", BASE + ".application..")
+                .should().dependOnClassesThat().resideInAnyPackage(
+                        "org.springframework.security..",
+                        "com.nimbusds..",
+                        "jakarta.servlet..",
+                        BASE + ".infrastructure.security..")
+                .because("la autenticación es del adaptador; la autorización de negocio, del dominio")
+                .check(productionClasses);
+    }
+
+    @Test
+    @DisplayName("el actor de dominio no depende de cómo se lo autenticó")
+    void domainActorIsFrameworkAgnostic() {
+        // Complementa la regla anterior por el otro lado: si el Actor llegara a
+        // envolver un Jwt o una Authentication, la política de acceso dejaría de
+        // poder probarse sin levantar un contexto y la regla de negocio pasaría
+        // a depender del emisor de turno.
+        noClasses().that().resideInAPackage(BASE + ".domain.access..")
+                .should().dependOnClassesThat().resideOutsideOfPackages(
+                        BASE + ".domain..",
+                        "java..")
+                .because("el actor y la política de acceso son modelo de negocio, no del borde")
+                .check(productionClasses);
+    }
+
+    @Test
     @DisplayName("los puertos son interfaces")
     void portsAreInterfaces() {
         classes().that().resideInAPackage(BASE + ".application.port.out..")

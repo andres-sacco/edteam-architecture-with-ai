@@ -5,15 +5,58 @@ mantener: lo arma springdoc con los mappings de los controllers, los tipos de
 los DTOs, sus anotaciones de Bean Validation y las `@Operation` / `@Schema` que
 los describen.
 
-| Recurso | URL |
-|---|---|
-| Documento (JSON) | `GET /v3/api-docs` |
-| Documento (YAML) | `GET /v3/api-docs.yaml` |
-| Swagger UI | `GET /swagger-ui.html` |
+| Recurso | URL | Estado |
+|---|---|---|
+| Documento (JSON) | `GET /v3/api-docs` | Apagado por defecto (`API_DOCS_ENABLED`) |
+| Documento (YAML) | `GET /v3/api-docs.yaml` | Ídem |
+| Swagger UI | `GET /swagger-ui/index.html` | Apagada por defecto (`SWAGGER_UI_ENABLED`) |
 
 ```bash
 curl http://localhost:8080/v3/api-docs.yaml
 ```
+
+## Por qué se apagan en lugar de pedirles un token
+
+El documento es el mapa completo de la API: qué rutas existen, qué campos acepta cada
+una y qué cotas tiene cada campo. Publicarlo abierto le ahorra la mitad del trabajo a
+quien la esté explorando. Swagger UI es peor todavía, porque además **ejecuta pedidos
+reales** desde el navegador. Así que hay que cerrarlos — la cuestión es cómo.
+
+**Pedirles un token no sirve: los rompe.** Un pedido de navegación del navegador no
+puede llevar un header `Authorization`, así que el 401 llegaría *antes* de que exista la
+pantalla donde apretar *Authorize*; y la UI busca el documento por XHR sin credencial,
+con lo que quedaría en «Failed to load API definition». El resultado es una UI que no se
+puede usar, con la falsa sensación de estar protegida.
+
+**El control es el interruptor.** `springdoc.api-docs.enabled` y
+`springdoc.swagger-ui.enabled` están en `false` por defecto: en producción estos
+endpoints no existen —responden 404— y no hay regla de autorización que acertar. Se
+encienden en local y en sandbox (`API_DOCS_ENABLED=true`, `SWAGGER_UI_ENABLED=true`), y
+ahí se sirven sin credencial, que es la única forma de que se puedan usar.
+
+**Lo que la UI ejecuta sigue cerrado.** El botón *Try it out* pega contra `/v1/**` como
+cualquier otro cliente: sin un Bearer cargado en *Authorize*, la respuesta es 401. Que la
+UI sea alcanzable no abre la API, y eso lo verifica `ReservationApiIT`.
+
+El documento que leen los partners tampoco sale del runtime: sale del archivo versionado
+en [`openapi.yaml`](openapi.yaml), que se regenera desde el código con un comando.
+
+## Regenerar el archivo versionado
+
+```bash
+./mvnw test -Dtest=OpenApiDocumentDumpTest -Dopenapi.dump=true
+```
+
+Antes había que levantar la aplicación, apuntarle un `curl` y convertir el resultado de
+OpenAPI 3.1 a 3.0 a mano. La conversión ya no hace falta:
+`springdoc.api-docs.version` está fijada en `openapi_3_0`, así que el archivo se
+escribe tal cual sale y el runtime y la copia publicada dejan de poder decir cosas
+distintas.
+
+Que el documento generado y el código no se separen lo verifica
+`OpenApiContractTest`, que sí corre en cada build: compara las operaciones contra las
+rutas registradas en los dos sentidos y los códigos de estado contra los que el
+adaptador realmente devuelve.
 
 Los metadatos que el código no puede deducir —título, versión, licencia, la
 explicación de la idempotencia y de la concurrencia— están en

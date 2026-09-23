@@ -53,6 +53,33 @@
         </dependency>
 
         <!--
+          Seguridad: la cadena de filtros del borde. Trae el 'denyAll' por
+          defecto, los headers de seguridad y el punto donde se decide quién
+          llega a cada endpoint.
+
+          La autorización por recurso —quién puede ver o tocar QUÉ reserva— no
+          está acá: es una regla de negocio y vive en el dominio
+          (ReservationAccessPolicy). HexagonalArchitectureTest verifica que
+          ninguna clase de Spring Security se filtre hacia adentro.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+
+        <!--
+          Resource server OAuth2: valida el token Bearer contra el JWKS del
+          emisor. Se eligió resource server y no un esquema propio porque la
+          API la consumen varios frontends y partners: la emisión de
+          credenciales es problema del proveedor de identidad, y este servicio
+          sólo verifica firmas que no puede falsificar.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
+        </dependency>
+
+        <!--
           springdoc: genera el documento OpenAPI a partir de los controllers,
           los DTOs y sus anotaciones de validación, y publica Swagger UI para
           explorarlo y probarlo desde el navegador.
@@ -107,6 +134,18 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!--
+          Utilidades de test de Spring Security: los post-processors que
+          inyectan una autenticación en un pedido de MockMvc. Es lo que permite
+          probar el 401, el 403 y —sobre todo— que el 404 de una reserva ajena
+          sea indistinguible del de una inexistente.
+        -->
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-test</artifactId>
             <scope>test</scope>
         </dependency>
 

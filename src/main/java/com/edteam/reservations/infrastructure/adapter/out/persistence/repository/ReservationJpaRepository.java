@@ -26,8 +26,13 @@ public interface ReservationJpaRepository extends JpaRepository<ReservationJpaEn
     @EntityGraph(attributePaths = {"user", "itinerary", "itinerary.segments", "passengers"})
     Optional<ReservationJpaEntity> findById(Long id);
 
+    /**
+     * La búsqueda por clave de idempotencia va siempre alcanzada al usuario: la
+     * clave sola identificaba la reserva de cualquiera que la hubiera usado, y
+     * la clave viaja en un header que queda en los logs de los proxies.
+     */
     @EntityGraph(attributePaths = {"user", "itinerary", "itinerary.segments", "passengers"})
-    Optional<ReservationJpaEntity> findByIdempotencyKey(UUID idempotencyKey);
+    Optional<ReservationJpaEntity> findByUserIdAndIdempotencyKey(Long userId, UUID idempotencyKey);
 
     /**
      * Lee los agregados completos de una página ya paginada.

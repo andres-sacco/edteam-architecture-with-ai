@@ -9,6 +9,9 @@ import com.edteam.reservations.application.port.in.ModifyReservationUseCase;
 import com.edteam.reservations.domain.model.ReservationId;
 import com.edteam.reservations.infrastructure.adapter.in.rest.mapper.ReservationRestMapper;
 import com.edteam.reservations.infrastructure.config.OpenApiConfiguration;
+import com.edteam.reservations.infrastructure.security.SecurityConfiguration;
+import com.edteam.reservations.support.WebSliceConfiguration;
+import com.edteam.reservations.support.WithMockActor;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeAll;
@@ -62,13 +65,23 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  *   <li>el cuerpo de una respuesta de error real, propiedad por propiedad.</li>
  * </ol>
  */
-@WebMvcTest
-@Import({ReservationRestMapper.class, OpenApiConfiguration.class})
+@WebMvcTest(properties = {
+        "reservations.security.rate-limit.enabled=false",
+        // Apagado por defecto en application.yml; acá se lo enciende para
+        // poder leer el documento que este test verifica.
+        "springdoc.api-docs.enabled=true"
+})
+@Import({ReservationRestMapper.class, OpenApiConfiguration.class,
+        SecurityConfiguration.class, WebSliceConfiguration.class})
 @ImportAutoConfiguration({
         SpringDocConfiguration.class,
         SpringDocConfigProperties.class,
         SpringDocWebMvcConfiguration.class
 })
+// El documento se sirve sin token (ver SecurityConfiguration#API_DOCS); el
+// actor hace falta para el único test que ejercita un endpoint real, el que
+// compara el esquema de error contra un 404 de verdad.
+@WithMockActor
 @DisplayName("Contrato OpenAPI generado")
 class OpenApiContractTest {
 
@@ -84,11 +97,11 @@ class OpenApiContractTest {
      * {@code ReservationControllerTest} ejercita contra el controller real.
      */
     private static final Map<String, Set<String>> EXPECTED_STATUS_CODES = Map.of(
-            "post " + RESERVATIONS, Set.of("200", "201", "400", "409"),
-            "get " + RESERVATIONS, Set.of("200", "400"),
-            "get " + RESERVATION, Set.of("200", "304", "400", "404"),
-            "put " + RESERVATION, Set.of("200", "400", "404", "409"),
-            "delete " + RESERVATION, Set.of("200", "400", "404", "409"));
+            "post " + RESERVATIONS, Set.of("200", "201", "400", "401", "409", "429"),
+            "get " + RESERVATIONS, Set.of("200", "400", "401", "403", "429"),
+            "get " + RESERVATION, Set.of("200", "304", "400", "401", "404", "429"),
+            "put " + RESERVATION, Set.of("200", "400", "401", "404", "409", "429"),
+            "delete " + RESERVATION, Set.of("200", "400", "401", "404", "409", "429"));
 
     private static JsonNode document;
 
@@ -312,7 +325,7 @@ class OpenApiContractTest {
     @Test
     @DisplayName("el esquema de error describe el cuerpo que la aplicación realmente devuelve")
     void errorSchemaMatchesARealErrorBody() throws Exception {
-        when(getReservation.getById(any()))
+        when(getReservation.get(any()))
                 .thenThrow(new ReservationNotFoundException(ReservationId.of(999L)));
 
         JsonNode realBody = objectMapper.readTree(mockMvc.perform(get("/v1/reservations/999"))
@@ -354,7 +367,13 @@ class OpenApiContractTest {
 
         assertThat(info.get("title").asText()).isEqualTo("API de Reservas de Vuelos");
         assertThat(info.get("version").asText()).isEqualTo("1.0.0");
-        assertThat(document().get("openapi").asText()).startsWith("3.1");
+
+        // 3.0 y no 3.1, que es el default de springdoc 2.x. La versión está
+        // fijada en application.yml: el archivo versionado en
+        // docs/api/openapi.yaml declaraba 3.0.3 porque se lo convertía a mano,
+        // así que el runtime y la copia publicada decían cosas distintas.
+        // Fijarla elimina el paso manual y la posibilidad de que se separen.
+        assertThat(document().get("openapi").asText()).startsWith("3.0");
     }
 
     @Test

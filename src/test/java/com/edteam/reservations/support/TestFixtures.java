@@ -4,7 +4,7 @@ import com.edteam.reservations.application.port.in.CreateReservationCommand;
 import com.edteam.reservations.application.port.in.ItineraryData;
 import com.edteam.reservations.application.port.in.PassengerData;
 import com.edteam.reservations.application.port.in.SegmentData;
-import com.edteam.reservations.application.port.in.UserData;
+import com.edteam.reservations.domain.access.Actor;
 import com.edteam.reservations.domain.model.AirportCode;
 import com.edteam.reservations.domain.model.IdempotencyKey;
 import com.edteam.reservations.domain.model.Itinerary;
@@ -52,6 +52,9 @@ public final class TestFixtures {
 
     public static final UserId USER_ID = UserId.of(1L);
     public static final String USER_EMAIL = "ana.perez@example.com";
+
+    /** Otro titular, para probar que no alcanza las reservas de la primera. */
+    public static final String OTHER_USER_EMAIL = "bruno.diaz@example.com";
     public static final ReservationId RESERVATION_ID = ReservationId.of(10L);
     public static final IdempotencyKey IDEMPOTENCY_KEY =
             IdempotencyKey.of(UUID.fromString("11111111-1111-1111-1111-111111111111"));
@@ -140,8 +143,23 @@ public final class TestFixtures {
     }
 
     /** Datos de entrada del usuario que reserva. */
-    public static UserData userData() {
-        return new UserData(USER_EMAIL, "Ana", "Pérez");
+    // ---------------------------------------------------------------------
+    // Identidades
+    // ---------------------------------------------------------------------
+
+    /** La titular de {@link #storedReservation(long)}. */
+    public static Actor owner() {
+        return Actor.customer(Email.of(USER_EMAIL), "Ana", "Pérez");
+    }
+
+    /** Otro titular: todo lo que pida sobre la reserva de arriba tiene que fallar. */
+    public static Actor stranger() {
+        return Actor.customer(Email.of(OTHER_USER_EMAIL), "Bruno", "Díaz");
+    }
+
+    /** Operación interna: alcanza reservas ajenas. */
+    public static Actor backoffice() {
+        return Actor.backoffice(Email.of("soporte@edteam.example"), "Soporte", "Reservas");
     }
 
     /** Usuario ya persistido, con el id de referencia. */
@@ -154,8 +172,12 @@ public final class TestFixtures {
     }
 
     public static CreateReservationCommand createCommand() {
+        return createCommand(owner());
+    }
+
+    public static CreateReservationCommand createCommand(Actor actor) {
         return new CreateReservationCommand(
-                userData(), IDEMPOTENCY_KEY.value().toString(), itineraryData(), passengerData());
+                actor, IDEMPOTENCY_KEY.value().toString(), itineraryData(), passengerData());
     }
 
     /** Reserva nueva, sin id ni versión, en estado PENDING. */

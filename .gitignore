@@ -1,3 +1,12 @@
+# Secretos del entorno local. El .env.example sí se versiona: lleva los
+# nombres de las variables y valores de ejemplo, nunca credenciales reales.
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.jks
+
 # Maven
 target/
 !.mvn/wrapper/maven-wrapper.jar
