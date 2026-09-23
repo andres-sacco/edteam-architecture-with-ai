@@ -28,3 +28,5 @@ Cada ADR documenta una decisión significativa, su contexto y sus consecuencias.
 | # | Decisión | Estado | Prompt origen |
 |---|----------|--------|---------------|
 | [0003](0003-autenticacion-autorizacion-y-datos-sensibles.md) | Autenticación, autorización por recurso y datos sensibles | Aceptado | [12 — Remediación de seguridad](../prompts/12-remediacion-de-seguridad.md) |
+| [0004](0004-mensajeria-asincronica-y-broker.md) | Mensajería asincrónica: eventos sobre RabbitMQ con outbox en PostgreSQL | Aceptado | [13 — Topología de eventos y colas](../prompts/13-topologia-de-eventos-y-colas.md) |
+| [0005](0005-garantias-de-entrega-y-remediacion-de-la-mensajeria.md) | Garantías de entrega de la mensajería: idempotencia, dos dead letters y reintentos clasificados | Aceptado | [15 — Implementación de mensajería](../prompts/15-implementacion-de-mensajeria.md) |

@@ -22,7 +22,9 @@ public class SchedulingConfiguration {
     @Bean
     public TaskScheduler taskScheduler() {
         ThreadPoolTaskScheduler scheduler = new ThreadPoolTaskScheduler();
-        scheduler.setPoolSize(2);
+        // Tres tareas: el relay del outbox, la purga y margen para que una
+        // corrida lenta del relay no retrase a la siguiente.
+        scheduler.setPoolSize(3);
         scheduler.setThreadNamePrefix("reservations-sched-");
         scheduler.setWaitForTasksToCompleteOnShutdown(true);
         scheduler.setAwaitTerminationSeconds(20);

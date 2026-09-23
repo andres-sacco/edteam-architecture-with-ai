@@ -56,11 +56,15 @@ class ModifyReservationServiceTest {
 
     @BeforeEach
     void setUp() {
+        // Igual que en el alta: el caso de uso verifica precondiciones y llama
+        // al catálogo fuera de la transacción; el colaborador transaccional
+        // vuelve a leer, vuelve a verificar la versión —que es la verificación
+        // que cuenta— y escribe.
         service = new ModifyReservationService(
                 reservationRepository,
                 new ItineraryAssembler(),
                 new AirportExistenceValidator(airportCatalog),
-                eventOutbox,
+                new ModifyReservationTransaction(reservationRepository, eventOutbox, auditTrail),
                 auditTrail,
                 TestFixtures.fixedClock());
         lenient().when(airportCatalog.exists(any(AirportCode.class))).thenReturn(true);

@@ -34,6 +34,23 @@ import java.util.function.Supplier;
 @SpringBootTest(properties = {
         // El despacho se dispara a mano en los tests, para que no compita con las aserciones.
         "reservations.outbox.dispatch-enabled=false",
+        // Y la purga también: un cron que corra en medio de un test le borraría
+        // las filas que está asertando.
+        "reservations.outbox.purge-enabled=false",
+        // Los gauges del outbox cachean su foto unos segundos para no
+        // convertir el monitoreo en carga sobre la base. Acá el test escribe y
+        // lee en la misma milésima, así que la ventana tiene que ser cero: es
+        // el mismo motivo por el que el total paginado se cachea 1ms.
+        "reservations.outbox.metrics-cache=0",
+        // Mensajería apagada: el publicador es el que sólo loguea. El build no
+        // puede depender de que haya un broker levantado, y con esto se
+        // verifica en cada corrida que la aplicación arranca y funciona sin él
+        // —que es una restricción explícita del diseño—. Los tests que sí
+        // necesitan un broker real lo levantan con Testcontainers y lo
+        // encienden ellos.
+        "reservations.messaging.enabled=false",
+        "reservations.messaging.declare-consumer-topology=false",
+        "reservations.messaging.consumer-enabled=false",
         // El esquema lo crea Flyway; que Hibernate valide que el mapeo coincide.
         "spring.jpa.hibernate.ddl-auto=validate",
         // Maestro de ciudades: el stub en memoria. El build no puede depender de
@@ -90,7 +107,8 @@ public abstract class AbstractPostgresIT {
     /** Orden de borrado: primero las tablas que referencian a otras. */
     private static final String TRUNCATE_ALL = """
             TRUNCATE TABLE auditoria, reserva_pasajero, reserva, itinerario_segmento, itinerario,
-                           segmento, pasajero, usuario
+                           segmento, pasajero, usuario,
+                           outbox_message, processed_message, notificacion_entrega
             RESTART IDENTITY CASCADE
             """;
 
@@ -152,6 +170,29 @@ public abstract class AbstractPostgresIT {
         Long count = jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM auditoria WHERE accion = ?", Long.class, action);
         return count == null ? 0L : count;
+    }
+
+    /**
+     * {@code now()} en UTC, para el SQL crudo de los tests.
+     *
+     * <p>Las columnas {@code TIMESTAMP} sin zona guardan UTC, y el driver pone
+     * la zona de la JVM en la sesión: un {@code now()} pelado escribiría la
+     * hora de pared local y quedaría desfasada respecto de lo que escribió la
+     * aplicación. Es el mismo desfase que {@code Utc} evita en los adaptadores.
+     */
+    protected static final String NOW_UTC = "(now() AT TIME ZONE 'UTC')";
+
+    /** Mensajes del outbox en el estado indicado. */
+    protected long countOutbox(String status) {
+        Long count = jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM outbox_message WHERE status = ?", Long.class, status);
+        return count == null ? 0L : count;
+    }
+
+    /** Tipos de los mensajes del outbox en ese estado, en orden de secuencia. */
+    protected java.util.List<String> outboxTypes(String status) {
+        return jdbcTemplate.queryForList(
+                "SELECT type FROM outbox_message WHERE status = ? ORDER BY sequence", String.class, status);
     }
 
     protected long countRows(String table) {

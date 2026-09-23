@@ -1,5 +1,6 @@
 package com.edteam.reservations.application.port.out;
 
+import com.edteam.reservations.application.outbox.OutboxFailure;
 import com.edteam.reservations.application.outbox.OutboxMessage;
 import com.edteam.reservations.domain.event.DomainEvent;
 
@@ -9,38 +10,70 @@ import java.util.List;
 /**
  * Puerto de salida hacia el almacenamiento del outbox de eventos.
  *
- * <p>Separado de {@link NotificationPort} a propósito: uno guarda el evento
- * (rápido, local, transaccional) y el otro lo envía afuera (lento, remoto,
- * falible). Esa separación es la que desacopla las reservas del sistema de
- * notificaciones.
+ * <p>Separado de {@link EventPublisherPort} a propósito: uno guarda el hecho
+ * (rápido, local, transaccional) y el otro lo publica afuera (lento, remoto,
+ * falible). Esa separación es la que desacopla las reservas del destino, y es
+ * también la que hace que un broker caído no tumbe el servicio: los eventos se
+ * acumulan acá y salen cuando el broker vuelve.
  */
 public interface EventOutboxPort {
 
     /**
-     * Encola los eventos para despacharlos más tarde.
+     * Encola los eventos para publicarlos más tarde.
      *
-     * <p>Debe ejecutarse en la misma transacción que la escritura de la reserva:
-     * si la reserva no se guarda, el evento tampoco.
+     * <p>Se ejecuta en la misma transacción que la escritura de la reserva: si
+     * la reserva no se guarda, el evento tampoco. Vale en los dos sentidos, y
+     * el sentido inverso es el que más cuesta ver: sin esta garantía, dos
+     * confirmaciones concurrentes en las que una pierde el conflicto optimista
+     * dejan <em>dos</em> eventos y el usuario recibe dos avisos por una sola
+     * confirmación.
      */
     void enqueue(Collection<DomainEvent> events);
 
     /**
-     * Toma hasta {@code maxMessages} mensajes pendientes para despachar.
+     * <b>Reclama</b> hasta {@code maxMessages} mensajes elegibles y los
+     * devuelve.
      *
-     * <p>Con varias instancias de la aplicación corriendo en paralelo, la
-     * implementación debe garantizar que un mismo mensaje no se entregue a dos
-     * despachadores a la vez (por ejemplo, con {@code SELECT ... FOR UPDATE
-     * SKIP LOCKED} en PostgreSQL).
+     * <p>Reclamar, no sólo leer: la implementación marca los mensajes como
+     * tomados antes de devolverlos, de modo que dos despachadores concurrentes
+     * —varias instancias, o el {@code @Scheduled} y el replay del endpoint de
+     * gestión— nunca reciban el mismo mensaje. En PostgreSQL eso es
+     * {@code SELECT ... FOR UPDATE SKIP LOCKED} más el cambio de estado en la
+     * misma sentencia.
+     *
+     * <p>Elegible significa: pendiente <b>y</b> con su espera de reintento
+     * vencida. Un mensaje que acaba de fallar no vuelve en la corrida
+     * siguiente.
+     *
+     * <p>Los mensajes vienen ordenados por {@code sequence}, y el reclamo tiene
+     * <em>lease</em>: si el proceso muere entre el reclamo y la publicación, el
+     * mensaje vuelve a ser elegible al vencer.
      */
     List<OutboxMessage> pollPending(int maxMessages);
 
-    /** Marca el mensaje como enviado con éxito. */
+    /** Marca el mensaje como publicado con éxito. */
     void markDispatched(String messageId);
 
     /**
-     * Registra un intento fallido. La implementación incrementa el contador de
-     * intentos y, al superar el máximo configurado, deja el mensaje en
-     * {@code FAILED} para que no se reintente indefinidamente.
+     * Registra un intento fallido.
+     *
+     * <p>Con {@link OutboxFailure#TRANSIENT} agenda el próximo intento con
+     * backoff exponencial y jitter, y sólo lo da por muerto al agotar los
+     * intentos o al superar el techo de tiempo configurado. Con
+     * {@link OutboxFailure#PERMANENT} lo deja en la dead letter de inmediato:
+     * insistir con un payload que no serializa gasta el despachador sin
+     * cambiar el resultado.
      */
-    void markFailed(String messageId, String error);
+    void markFailed(String messageId, String error, OutboxFailure failure);
+
+    /**
+     * Devuelve mensajes reclamados al estado pendiente <b>sin contarlos como
+     * intento</b>.
+     *
+     * <p>Lo usa el despachador con los mensajes que decidió no enviar en este
+     * lote porque otro mensaje de la misma reserva falló: no fallaron, así que
+     * gastarles un intento los acercaría a la dead letter por un problema
+     * ajeno.
+     */
+    void release(Collection<String> messageIds);
 }

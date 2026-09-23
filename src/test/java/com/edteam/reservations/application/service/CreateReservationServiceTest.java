@@ -72,13 +72,17 @@ class CreateReservationServiceTest {
 
     @BeforeEach
     void setUp() {
+        // Dos piezas: el caso de uso, que valida contra el catálogo FUERA de la
+        // transacción, y el colaborador transaccional, que sólo toca la base.
+        // Se arman las dos de verdad porque lo que se prueba es el flujo
+        // completo; la separación existe para que una llamada de red lenta no
+        // retenga una conexión del pool, no para poder mockear una mitad.
+        ItineraryAssembler assembler = new ItineraryAssembler();
         service = new CreateReservationService(
-                reservationRepository,
-                userRepository,
-                new ItineraryAssembler(),
+                assembler,
                 new AirportExistenceValidator(airportCatalog),
-                eventOutbox,
-                auditTrail,
+                new CreateReservationTransaction(
+                        reservationRepository, userRepository, assembler, eventOutbox, auditTrail),
                 TestFixtures.fixedClock());
 
         // Camino feliz por defecto; cada test lo sobreescribe si necesita otro.
@@ -264,19 +268,30 @@ class CreateReservationServiceTest {
     @Test
     @DisplayName("exige todas sus dependencias")
     void requiresDependencies() {
-        assertThatThrownBy(() -> new CreateReservationService(
-                null, userRepository, new ItineraryAssembler(),
-                new AirportExistenceValidator(airportCatalog), eventOutbox, auditTrail,
+        ItineraryAssembler assembler = new ItineraryAssembler();
+        AirportExistenceValidator validator = new AirportExistenceValidator(airportCatalog);
+        CreateReservationTransaction transaction = new CreateReservationTransaction(
+                reservationRepository, userRepository, assembler, eventOutbox, auditTrail);
+
+        assertThatThrownBy(() -> new CreateReservationService(null, validator, transaction,
                 TestFixtures.fixedClock()))
                 .isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() -> new CreateReservationService(
-                reservationRepository, null, new ItineraryAssembler(),
-                new AirportExistenceValidator(airportCatalog), eventOutbox, auditTrail,
+        assertThatThrownBy(() -> new CreateReservationService(assembler, null, transaction,
                 TestFixtures.fixedClock()))
                 .isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() -> new CreateReservationService(
-                reservationRepository, userRepository, new ItineraryAssembler(),
-                new AirportExistenceValidator(airportCatalog), eventOutbox, auditTrail, null))
+        assertThatThrownBy(() -> new CreateReservationService(assembler, validator, null,
+                TestFixtures.fixedClock()))
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> new CreateReservationService(assembler, validator, transaction, null))
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> new CreateReservationTransaction(
+                null, userRepository, assembler, eventOutbox, auditTrail))
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> new CreateReservationTransaction(
+                reservationRepository, null, assembler, eventOutbox, auditTrail))
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> new CreateReservationTransaction(
+                reservationRepository, userRepository, assembler, null, auditTrail))
                 .isInstanceOf(NullPointerException.class);
     }
 

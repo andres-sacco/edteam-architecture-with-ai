@@ -1,30 +1,16 @@
 package com.edteam.reservations.application.service;
 
-import com.edteam.reservations.application.audit.AuditAction;
-import com.edteam.reservations.application.audit.AuditEntry;
 import com.edteam.reservations.application.port.in.CreateReservationCommand;
 import com.edteam.reservations.application.port.in.CreateReservationResult;
 import com.edteam.reservations.application.port.in.CreateReservationUseCase;
-import com.edteam.reservations.application.port.out.AuditTrailPort;
-import com.edteam.reservations.application.port.out.EventOutboxPort;
-import com.edteam.reservations.application.port.out.ReservationRepositoryPort;
-import com.edteam.reservations.application.port.out.UserRepositoryPort;
-import com.edteam.reservations.domain.event.ReservationCreated;
-import com.edteam.reservations.domain.model.IdempotencyKey;
 import com.edteam.reservations.domain.model.Itinerary;
 import com.edteam.reservations.domain.model.Passenger;
-import com.edteam.reservations.domain.model.Reservation;
-import com.edteam.reservations.domain.model.User;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
 
 /**
  * Alta de una reserva, o recuperación de la que ya existe para esa clave de
@@ -43,78 +29,45 @@ import java.util.Optional;
  *       validaciones, para que un pedido inválido no deje una fila en el
  *       maestro de usuarios.</li>
  * </ol>
+ *
+ * <h2>Un cambio de orden que es de disponibilidad</h2>
+ * <b>Este método no es transaccional.</b> Primero se arma y se valida el
+ * itinerario —lo que incluye la llamada HTTP al maestro de aeropuertos— y sólo
+ * después se abre la transacción, en
+ * {@link CreateReservationTransaction#apply}. Con la llamada adentro, un
+ * catálogo lento retenía una conexión del pool durante todos sus reintentos, y
+ * unas pocas reservas concurrentes agotaban el pool y tiraban la API completa,
+ * incluidas las lecturas que no tocan el catálogo. Es el mismo criterio que ya
+ * gobierna al resto de las integraciones: degradar, no propagar.
  */
 @Service
 public class CreateReservationService implements CreateReservationUseCase {
 
-    private static final Logger log = LoggerFactory.getLogger(CreateReservationService.class);
-
-    private final ReservationRepositoryPort reservationRepository;
-    private final UserRepositoryPort userRepository;
     private final ItineraryAssembler itineraryAssembler;
     private final AirportExistenceValidator airportValidator;
-    private final EventOutboxPort eventOutbox;
-    private final AuditTrailPort auditTrail;
+    private final CreateReservationTransaction transaction;
     private final Clock clock;
 
-    public CreateReservationService(ReservationRepositoryPort reservationRepository,
-                                    UserRepositoryPort userRepository,
-                                    ItineraryAssembler itineraryAssembler,
-                                    AirportExistenceValidator airportValidator,
-                                    EventOutboxPort eventOutbox,
-                                    AuditTrailPort auditTrail,
-                                    Clock clock) {
-        this.reservationRepository = Objects.requireNonNull(reservationRepository);
-        this.userRepository = Objects.requireNonNull(userRepository);
+    CreateReservationService(ItineraryAssembler itineraryAssembler,
+                             AirportExistenceValidator airportValidator,
+                             CreateReservationTransaction transaction,
+                             Clock clock) {
         this.itineraryAssembler = Objects.requireNonNull(itineraryAssembler);
         this.airportValidator = Objects.requireNonNull(airportValidator);
-        this.eventOutbox = Objects.requireNonNull(eventOutbox);
-        this.auditTrail = Objects.requireNonNull(auditTrail);
+        this.transaction = Objects.requireNonNull(transaction);
         this.clock = Objects.requireNonNull(clock);
     }
 
     @Override
-    @Transactional
     public CreateReservationResult create(CreateReservationCommand command) {
         Objects.requireNonNull(command, "El comando es obligatorio");
-
-        IdempotencyKey idempotencyKey = IdempotencyKey.of(command.idempotencyKey());
         Instant now = clock.instant();
 
-        // Se BUSCA al usuario, no se lo da de alta todavía. La clave de
-        // idempotencia se resuelve dentro del usuario, así que hace falta
-        // saber quién es; pero registrarlo acá haría que cualquier pedido
-        // inválido dejara una fila en el maestro. Un usuario que no existe
-        // tampoco puede haber usado la clave antes, así que saltear la
-        // búsqueda en ese caso es correcto y no sólo barato.
-        Optional<User> registered = userRepository.findByEmail(command.actor().email());
-        Optional<Reservation> alreadyCreated = registered
-                .flatMap(user -> reservationRepository.findByIdempotencyKey(user.requireId(), idempotencyKey));
-        if (alreadyCreated.isPresent()) {
-            Reservation existing = alreadyCreated.get();
-            log.info("Reintento con clave {}: se devuelve la reserva existente id={}",
-                    idempotencyKey, existing.requireId());
-            return CreateReservationResult.alreadyExisted(existing);
-        }
-
+        // Fuera de la transacción, a propósito: acá está la red.
         Itinerary itinerary = itineraryAssembler.toItinerary(command.itinerary());
         airportValidator.validate(itinerary);
         List<Passenger> passengers = itineraryAssembler.toPassengers(command.passengers());
 
-        User user = userRepository.findOrRegister(itineraryAssembler.toUser(command.actor(), now));
-        Reservation reservation = Reservation.create(user, idempotencyKey, itinerary, passengers, now);
-        Reservation saved = reservationRepository.save(reservation);
-
-        eventOutbox.enqueue(List.of(ReservationCreated.of(saved)));
-        auditTrail.record(AuditEntry.allowed(AuditAction.RESERVATION_CREATED,
-                command.actor().email(), saved.requireId().toString(), saved.version(), now));
-
-        // El usuario se identifica por su id interno y no por su email: estos
-        // logs salen del perímetro hacia el SaaS de observabilidad, que no
-        // tiene por qué heredar un dato personal regulado.
-        log.info("Reserva creada id={} usuario={} itinerario={}-{} pasajeros={}",
-                saved.requireId(), saved.userId(), saved.itinerary().origin(),
-                saved.itinerary().destination(), saved.passengers().size());
-        return CreateReservationResult.created(saved);
+        return transaction.apply(command, itinerary, passengers, now);
     }
 }

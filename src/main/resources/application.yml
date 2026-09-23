@@ -3,6 +3,28 @@ server:
   shutdown: graceful
 
 spring:
+  # El .env local, leído también por la APLICACIÓN.
+  #
+  # Sin esta línea, el .env sólo lo lee 'docker compose' —para sustituir los
+  # ${VAR:-default} del compose.yaml— y 'mvn spring-boot:run' arranca sin
+  # ninguna de sus variables: la contraseña de Redis y la del broker quedan
+  # vacías y hay que exportarlas a mano en la shell antes de levantar. Es un
+  # paso silencioso y fácil de olvidar, y el síntoma —un componente que no
+  # conecta— no se parece a su causa.
+  #
+  # 'optional:' es lo que hace que la ausencia del archivo no sea un error: en
+  # los tests y en cualquier entorno real no hay .env, y las variables las pone
+  # el gestor de secretos. El formato KEY=VALUE del .env es el de un
+  # .properties, así que el sufijo '[.properties]' le dice a Spring con qué
+  # lector abrirlo.
+  #
+  # Precedencia: las variables de entorno de verdad ganan sobre el archivo, que
+  # es el orden correcto —lo que el entorno exporta pisa al default local— y es
+  # también lo que permite un 'MESSAGING_ENABLED=false ./mvnw spring-boot:run'
+  # puntual sin editar el .env.
+  config:
+    import: optional:file:./.env[.properties]
+
   application:
     name: flight-reservations
   autoconfigure:
@@ -76,6 +98,34 @@ spring:
       # del catálogo irían en 'spring.http.client': en un solo lugar.
       timeout: 200ms
       connect-timeout: 200ms
+
+  rabbitmq:
+    # Broker de la mensajería. Coincide con el 'rabbitmq' de compose.yaml, así
+    # que 'docker compose up -d' y listo.
+    #
+    # Si no está levantado, la aplicación arranca igual: los eventos se
+    # acumulan en la tabla outbox_message y el relay los publica cuando el
+    # broker vuelve. Es el mismo criterio que con Redis y con el catálogo.
+    host: ${RABBIT_HOST:localhost}
+    port: ${RABBIT_PORT:5672}
+    username: ${RABBIT_USERNAME:reservations}
+    # La credencial nunca va en el archivo: viene del entorno.
+    password: ${RABBIT_PASSWORD:}
+    # Timeout de conexión de ESTE proveedor, no global: es la misma decisión
+    # que con el catálogo de ciudades. Establecer la conexión es rápido o no va
+    # a pasar.
+    connection-timeout: 2s
+    # No es opcional para este diseño: sin confirms, el relay marcaría el
+    # mensaje como despachado apenas los bytes salen del socket —mucho antes de
+    # que el broker los haya escrito— y la mentira se descubriría cuando el
+    # mensaje ya no está en el outbox para reintentarlo.
+    publisher-confirm-type: correlated
+    # Un mensaje sin ninguna cola atada se descarta EN SILENCIO. Con esto el
+    # broker lo devuelve y el binding faltante es un error visible en lugar de
+    # una pérdida masiva de notificaciones que se ve igual que un sistema sano.
+    publisher-returns: true
+    template:
+      mandatory: true
 
   flyway:
     enabled: true
@@ -226,12 +276,69 @@ reservations:
       # el maestro de usuarios.
       writes: ${RATE_LIMIT_WRITES:20}
 
+  messaging:
+    # Apagarlo deja el publicador que sólo loguea: la aplicación arranca y los
+    # tests corren sin broker, igual que arrancan sin Redis y sin el catálogo.
+    # Encendido sin broker levantado NO impide arrancar: los eventos se
+    # acumulan en el outbox y salen cuando el broker vuelve.
+    enabled: ${MESSAGING_ENABLED:true}
+    # Topic exchange al que publica el relay. Es lo ÚNICO que el productor
+    # necesita conocer de la topología: no nombra ninguna cola ni ningún
+    # destinatario, así que un consumidor nuevo se suscribe sin que cambie una
+    # línea de código nuestro.
+    exchange: reservations.events
+    # Va en el envelope. Distingue entornos: sin esto, un mensaje de staging
+    # que llegue por error a una cola productiva se procesa como productivo.
+    source: ${MESSAGING_SOURCE:urn:edteam:flight-reservations}
+    confirm-timeout: 5s
+    # Sólo en local: declara también las colas del consumidor para que
+    # 'docker compose up' deje el circuito completo andando. En cualquier otro
+    # entorno se declara únicamente el exchange y cada consumidor declara y ata
+    # su propia cola.
+    declare-consumer-topology: ${MESSAGING_DECLARE_CONSUMER_TOPOLOGY:true}
+    # Consumidor de referencia de este repositorio. En producción el consumidor
+    # es el servicio de notificaciones, que es su dueño.
+    consumer-enabled: ${MESSAGING_CONSUMER_ENABLED:true}
+    # Backoff del consumidor. Vive en la TTL de la cola de espera y no en un
+    # sleep del handler: dormir adentro ocupa el canal y frena los mensajes
+    # sanos que venían detrás del venenoso.
+    retry-delay: 30s
+    max-retry-rounds: 5
+    # Al llenarse, la cola rechaza la publicación en lugar de descartar en
+    # silencio: la fila se acumula en el outbox, que es donde se puede ver,
+    # medir y drenar.
+    queue-max-length: 100000
+
   outbox:
-    # Despacho de notificaciones hacia el sistema externo.
-    dispatch-enabled: true
+    # Relay de los hechos hacia el broker.
+    dispatch-enabled: ${OUTBOX_DISPATCH_ENABLED:true}
     dispatch-interval: 5s
     batch-size: 50
-    max-attempts: 5
+    # Diez y no cinco: con backoff exponencial, cinco intentos se agotan en
+    # pocos minutos y una caída del broker de media hora mandaría a la dead
+    # letter mensajes cuyo fallo era 100% recuperable. El corte real es el
+    # techo de tiempo de abajo; esto es la red por si el backoff queda mal
+    # configurado.
+    max-attempts: 10
+    # El corte que describe de verdad un fallo transitorio largo: seis horas
+    # reintentando es un problema que ya tiene dueño y alerta. Manda el que
+    # llegue primero entre esto y max-attempts.
+    retry-ceiling: 6h
+    # Mismo vocabulario que los reintentos del catálogo de ciudades. El jitter
+    # se sortea sobre el intervalo calculado, para que N instancias que
+    # fallaron juntas no reintenten todas en el mismo instante.
+    initial-backoff: 5s
+    max-backoff: 5m
+    # Cuánto vale un reclamo del relay. Si el proceso muere entre el reclamo y
+    # la publicación, al vencer esto el mensaje vuelve a ser elegible: es lo
+    # que impide que una caída deje mensajes trabados para siempre.
+    claim-lease: 2m
+    # Purga de los despachados. Sin esto la tabla crece indefinidamente. Los
+    # ids deduplicados del consumidor se conservan MÁS que esto: mientras un
+    # mensaje pueda reenviarse, su id tiene que seguir guardado.
+    retention: 7d
+    purge-enabled: ${OUTBOX_PURGE_ENABLED:true}
+    purge-cron: "0 17 3 * * *"
 
 springdoc:
   # No se declara 'springdoc.open-api.servers': sin esa lista, el documento sale
@@ -302,12 +409,23 @@ management:
         # Sondas de readiness/liveness para el orquestador, más las métricas:
         # sin ellas no hay forma de saber si el cache acierta ni de enterarse el
         # día que deja de hacerlo.
-        include: health,info,metrics
+        # Sondas de readiness/liveness para el orquestador, las métricas y las
+        # dos dead letters. 'outbox' y 'messaging-dlq' son la contracara
+        # obligatoria de la métrica que alerta: sin ellas se sabe que algo se
+        # perdió y no hay forma de verlo ni de reenviarlo.
+        include: health,info,metrics,outbox,messaging-dlq
   endpoint:
     health:
       probes:
         enabled: true
   health:
+    rabbit:
+      # Apagado, por el mismo motivo que el de Redis: el broker caído degrada
+      # —los eventos se acumulan en el outbox— y no impide responder pedidos.
+      # Marcarnos DOWN nos sacaría de rotación por algo que no afecta al
+      # cliente. Que el broker esté caído se ve en el lag del outbox, que es la
+      # métrica que mide el daño real.
+      enabled: false
     redis:
       # Apagado a propósito. El cache es opcional por diseño y su caída degrada
       # al origen sin afectar al cliente; dejar que marque la aplicación como

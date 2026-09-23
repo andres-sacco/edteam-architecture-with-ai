@@ -8,7 +8,10 @@ import com.edteam.reservations.infrastructure.adapter.out.airport.catalog.Catalo
 import com.edteam.reservations.infrastructure.adapter.out.airport.catalog.CityCatalogClient;
 import com.edteam.reservations.infrastructure.adapter.out.airport.catalog.RestCityCatalogClient;
 import com.edteam.reservations.infrastructure.adapter.out.airport.catalog.RetryingCityCatalogClient;
-import com.edteam.reservations.infrastructure.adapter.out.outbox.InMemoryEventOutbox;
+import com.edteam.reservations.infrastructure.adapter.out.messaging.DomainEventPayloadMapper;
+import com.edteam.reservations.infrastructure.adapter.out.outbox.JdbcEventOutbox;
+import com.edteam.reservations.infrastructure.adapter.out.outbox.MeteredEventOutbox;
+import com.edteam.reservations.infrastructure.adapter.out.outbox.OutboxAdmin;
 import com.edteam.reservations.infrastructure.cache.CacheStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,6 +19,9 @@ import org.springframework.boot.http.client.ClientHttpRequestFactoryBuilder;
 import org.springframework.boot.http.client.ClientHttpRequestFactorySettings;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
+import org.springframework.jdbc.core.JdbcTemplate;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.web.client.RestClient;
@@ -159,12 +165,33 @@ public class AdapterConfiguration {
     }
 
     /**
-     * Se declara con el tipo concreto —y no con el puerto— para que los tests de
-     * integración puedan inspeccionar el estado del outbox. Los consumidores
-     * siguen dependiendo de {@link EventOutboxPort}.
+     * Outbox durable sobre PostgreSQL.
+     *
+     * <p>Se declara con el tipo concreto porque cumple dos papeles: es el
+     * {@link EventOutboxPort} que usan los casos de uso y el
+     * {@link OutboxAdmin} que usa el endpoint de gestión. Son dos vistas de la
+     * misma tabla y no tiene sentido duplicar el adaptador para separarlas.
      */
     @Bean
-    public InMemoryEventOutbox eventOutboxPort(OutboxProperties properties, Clock clock) {
-        return new InMemoryEventOutbox(clock, properties.maxAttempts());
+    public JdbcEventOutbox jdbcEventOutbox(JdbcTemplate jdbcTemplate,
+                                           DomainEventPayloadMapper payloadMapper,
+                                           OutboxProperties properties,
+                                           Clock clock) {
+        return new JdbcEventOutbox(jdbcTemplate, payloadMapper, properties, clock);
+    }
+
+    /**
+     * El puerto que ven los casos de uso: el outbox instrumentado.
+     *
+     * <p>{@code @Primary} porque el bean de arriba también satisface el puerto
+     * —es el delegado— y sin esto la inyección quedaría ambigua. Es el mismo
+     * patrón de decorador con el que el cache se instrumenta y el maestro de
+     * aeropuertos se envuelve: la composición queda visible en el cableado y
+     * cada pieza se testea sin la otra.
+     */
+    @Bean
+    @Primary
+    public EventOutboxPort eventOutboxPort(JdbcEventOutbox outbox, MeterRegistry registry) {
+        return new MeteredEventOutbox(outbox, registry);
     }
 }

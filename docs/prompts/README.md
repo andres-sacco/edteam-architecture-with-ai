@@ -20,6 +20,9 @@ Cada archivo documenta **un prompt** con su estructura completa (Rol / Contexto 
 | 10 | [Implementación de la caché](10-implementacion-de-cache.md) | Implementación | Caché en los puntos priorizados + invalidación y tests |
 | 11 | [Auditoría de seguridad (STRIDE)](11-auditoria-de-seguridad-stride.md) | Seguridad | Tabla amenaza / STRIDE / mitigación |
 | 12 | [Remediación de seguridad](12-remediacion-de-seguridad.md) | Implementación | Mitigaciones en el código + matriz de trazabilidad |
+| 13 | [Topología de eventos y colas](13-topologia-de-eventos-y-colas.md) | Decisión arquitectónica | Colas/tópicos con publicador, consumidor y contrato |
+| 14 | [Auditoría de la mensajería](14-auditoria-de-mensajeria.md) | Revisión | Tabla de hallazgos + cómo detectar cada uno |
+| 15 | [Implementación de la mensajería](15-implementacion-de-mensajeria.md) | Implementación | Outbox durable, broker, consumidor idempotente y DLQ |
 
 ## Convenciones
 

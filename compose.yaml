@@ -1,7 +1,7 @@
 # Infraestructura de desarrollo. No hace falta instalar nada a mano:
 #
 #   cp .env.example .env        credenciales locales (el .env no se versiona)
-#   docker compose up -d        levanta PostgreSQL, Redis y el catálogo
+#   docker compose up -d        levanta PostgreSQL, Redis, RabbitMQ y el catálogo
 #   docker compose down         los detiene (conserva los datos)
 #   docker compose down -v      los detiene y borra los datos
 #
@@ -89,6 +89,48 @@ services:
     # sin consecuencias, y persistirlo sólo agregaría I/O y un estado más que
     # limpiar entre corridas. Por eso también '--save ""', que apaga el RDB.
 
+  # Broker de la mensajería. La aplicación arranca igual sin él —los eventos se
+  # acumulan en la tabla outbox_message y el relay los publica cuando vuelve—
+  # pero sin broker no salen a ningún lado.
+  #
+  # Consola de gestión: http://localhost:15672 (mismas credenciales). Es desde
+  # donde se miran las colas, la profundidad de la DLQ y el contenido de un
+  # mensaje muerto.
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    container_name: reservations-rabbitmq
+    hostname: reservations-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBIT_USERNAME:-reservations}
+      RABBITMQ_DEFAULT_PASS: ${RABBIT_PASSWORD:-reservations-local}
+      # Las colas quorum necesitan un nombre de nodo estable: sin 'hostname'
+      # fijo, cada recreación del contenedor genera uno nuevo y el volumen con
+      # los mensajes durables queda huérfano.
+      RABBITMQ_NODENAME: rabbit@reservations-rabbitmq
+    # Publicado sólo en la interfaz de loopback, por el mismo motivo que Redis:
+    # un broker alcanzable desde la red es un broker donde cualquiera publica
+    # un 'reservation.cancelled' —o se suscribe a la cola de notificaciones y
+    # lee la ruta y la fecha de viaje de cada pasajero—.
+    #
+    # En cualquier entorno real esto no se publica: el broker va en la red
+    # privada, con TLS y con una credencial propia por servicio.
+    ports:
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"
+    # Con volumen, al contrario que Redis: acá no hay nada descartable. Una
+    # notificación pendiente que se pierde en el reinicio del broker es una
+    # notificación que el usuario nunca recibe, y es exactamente lo que el
+    # outbox está tratando de evitar.
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_running"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
   # Catálogo de vuelos (servicio externo simulado) y su base MySQL.
   api-catalog:
     image: adschosen/api-catalog:1.1.0
@@ -114,3 +156,4 @@ services:
 
 volumes:
   postgres-data:
+  rabbitmq-data:

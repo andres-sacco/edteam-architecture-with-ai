@@ -131,6 +131,22 @@
             <artifactId>spring-boot-starter-data-redis</artifactId>
         </dependency>
 
+        <!--
+          AMQP (RabbitMQ): el cliente del broker. Está en el classpath siempre,
+          pero el publicador real se cablea sólo si
+          'reservations.messaging.enabled' es true; sin eso queda el publicador
+          que loguea y la aplicación arranca sin broker, igual que arranca sin
+          Redis y sin el catálogo externo.
+
+          El cliente no cruza hacia adentro: HexagonalArchitectureTest verifica
+          que ni 'domain' ni 'application' dependan de org.springframework.amqp
+          ni de com.rabbitmq.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-amqp</artifactId>
+        </dependency>
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
@@ -176,6 +192,32 @@
         <dependency>
             <groupId>org.testcontainers</groupId>
             <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!--
+          Awaitility: los tests del consumidor esperan un efecto que ocurre en
+          OTRO hilo (el contenedor de listeners). Sin esto habría que poner
+          Thread.sleep con un margen generoso, que es lento cuando pasa e
+          intermitente cuando no. La versión la fija el BOM de Spring Boot.
+        -->
+        <dependency>
+            <groupId>org.awaitility</groupId>
+            <artifactId>awaitility</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!--
+          RabbitMQ real en Docker para los tests de integración de mensajería.
+          Es la única forma de validar lo que importa del broker y no se puede
+          simular: los publisher confirms, el 'mandatory' sobre un exchange sin
+          bindings, la TTL de la cola de espera y el dead-lettering. Va en la
+          fase verify, como el de PostgreSQL, para que 'mvn test' siga sin
+          necesitar Docker.
+        -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>rabbitmq</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>

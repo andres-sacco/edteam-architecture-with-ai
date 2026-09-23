@@ -1,7 +1,6 @@
 package com.edteam.reservations;
 
 import com.edteam.reservations.application.outbox.OutboxDispatchResult;
-import com.edteam.reservations.application.outbox.OutboxStatus;
 import com.edteam.reservations.application.port.in.CancelReservationCommand;
 import com.edteam.reservations.application.port.in.CancelReservationUseCase;
 import com.edteam.reservations.application.port.in.ConfirmReservationCommand;
@@ -19,10 +18,8 @@ import com.edteam.reservations.application.port.out.ReservationRepositoryPort;
 import com.edteam.reservations.domain.model.Reservation;
 import com.edteam.reservations.domain.model.ReservationStatus;
 import com.edteam.reservations.infrastructure.adapter.in.scheduling.OutboxDispatchScheduler;
-import com.edteam.reservations.infrastructure.adapter.out.outbox.InMemoryEventOutbox;
 import com.edteam.reservations.support.AbstractPostgresIT;
 import com.edteam.reservations.support.TestFixtures;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -71,18 +68,7 @@ class ReservationsApplicationIT extends AbstractPostgresIT {
     private DispatchPendingNotificationsUseCase dispatchNotifications;
 
     @Autowired
-    private InMemoryEventOutbox eventOutbox;
-
-    @Autowired
     private Clock clock;
-
-    @BeforeEach
-    void resetOutbox() {
-        // El outbox vive en memoria y el contexto se comparte entre los tests
-        // de la clase: sin esto, los eventos de un test se cuentan en el
-        // siguiente. Es el equivalente al TRUNCATE de la base.
-        eventOutbox.clear();
-    }
 
     private CreateReservationCommand createCommand(Instant departure) {
         return new CreateReservationCommand(
@@ -171,9 +157,7 @@ class ReservationsApplicationIT extends AbstractPostgresIT {
         assertThat(reintento.reservation().requireId()).isEqualTo(primera.reservation().requireId());
         assertThat(countRows("reserva")).isEqualTo(1L);
         // Una sola notificación: la del alta, no una por intento.
-        assertThat(eventOutbox.findByStatus(OutboxStatus.PENDING))
-                .filteredOn(message -> message.event().eventType().equals("reservation.created"))
-                .hasSize(1);
+        assertThat(outboxTypes("PENDING")).containsExactly("reservation.created");
     }
 
     @Test
@@ -246,15 +230,17 @@ class ReservationsApplicationIT extends AbstractPostgresIT {
                 new ConfirmReservationCommand(created.requireId().value(), created.version(), TestFixtures.owner()));
         cancelReservation.cancel(new CancelReservationCommand(created.requireId().value(), confirmed.version(), TestFixtures.owner()));
 
-        assertThat(eventOutbox.findByStatus(OutboxStatus.PENDING))
-                .extracting(message -> message.event().eventType())
-                .contains("reservation.created", "reservation.confirmed", "reservation.cancelled");
+        // Los tres hechos están en la TABLA, no en el heap: sobreviven a un
+        // reinicio del proceso y son los mismos para todas las instancias.
+        assertThat(outboxTypes("PENDING"))
+                .containsExactly("reservation.created", "reservation.confirmed", "reservation.cancelled");
 
         OutboxDispatchResult result = dispatchNotifications.dispatchPending(50);
 
         assertThat(result.dispatched()).isGreaterThanOrEqualTo(3);
         assertThat(result.failed()).isZero();
-        assertThat(eventOutbox.findByStatus(OutboxStatus.PENDING)).isEmpty();
+        assertThat(countOutbox("PENDING")).isZero();
+        assertThat(countOutbox("DISPATCHED")).isEqualTo(3L);
     }
 
     @Test
