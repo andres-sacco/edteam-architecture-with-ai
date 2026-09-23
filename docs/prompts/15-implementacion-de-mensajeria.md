@@ -48,7 +48,6 @@ Las entradas de este prompt son la **topología diseñada** en [13](13-topologia
 6. **Reintentos acotados con backoff**: límite de intentos, espera exponencial con jitter y distinción explícita entre fallo transitorio (se reintenta) y permanente (va directo a la DLQ, no se reintenta).
 7. **Observabilidad**: exponer por Actuator/Micrometer los mensajes pendientes, la antigüedad del más viejo, los despachados, los fallidos y el tamaño de la DLQ. Sin esto no hay forma de enterarse de que la cola se trabó.
 8. **Tests**, uno por hallazgo de la auditoría: que el mismo mensaje procesado dos veces no duplique efectos; que un mensaje que agota intentos termine en la DLQ; que la caída del consumidor no afecte la latencia de la API; que un proceso que muere entre el commit y el envío no pierda la notificación; que dos despachadores concurrentes no entreguen el mismo mensaje.
-9. **Documentación**: ADR en `docs/adr/` con la topología y las garantías elegidas, y actualización del `README.md` con cómo levantar el broker y cómo inspeccionar la DLQ.
 
 ## Restricciones
 

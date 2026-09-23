@@ -37,7 +37,6 @@ La entrada de este prompt es la **tabla de amenazas del paso anterior** (amenaza
 4. Implementar las mitigaciones sobre las integraciones externas: manejo de credenciales (API keys y tokens) fuera del código y del control de versiones, y validación de lo que llega del servicio externo.
 5. Implementar las mitigaciones restantes de la tabla que apliquen al diseño actual (exposición del contrato, superficie de los endpoints, abuso por volumen, trazabilidad de las operaciones sensibles).
 6. Escribir los tests que prueban cada mitigación: no alcanza con que el camino feliz siga funcionando, hay que probar que el acceso indebido **falla**.
-7. Registrar la decisión en un ADR en `docs/adr/` y actualizar el `README.md` (estructura, decisiones y la sección _Fuera de alcance_, donde hoy la seguridad figura como pendiente).
 
 ## Restricciones
 

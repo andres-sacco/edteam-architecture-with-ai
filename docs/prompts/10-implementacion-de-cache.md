@@ -38,7 +38,6 @@ La entrada de este prompt es la **lista priorizada de cuellos de botella del pas
 5. Aprovechar el `ETag` que ya se emite: soportar `If-None-Match` en las lecturas para responder `304 Not Modified` y ahorrar payload, y definir los headers `Cache-Control` de cada endpoint según qué tan sensible es lo que devuelve.
 6. Dejar la caché **observable**: hits, misses, tamaño y evictions expuestos por Actuator/Micrometer, para poder verificar que efectivamente sirve y detectar cuándo deja de servir.
 7. Escribir los tests: que el hit no vaya al origen, que el TTL expire, que la invalidación efectivamente borre la clave, que una escritura no deje servir datos viejos y que nada sensible termine en la caché.
-8. Registrar la decisión en un ADR en `docs/adr/` (qué se cachea, qué no, y por qué) y actualizar el `README.md`.
 
 ## Restricciones
 

@@ -23,6 +23,20 @@ Cada archivo documenta **un prompt** con su estructura completa (Rol / Contexto 
 | 13 | [Topología de eventos y colas](13-topologia-de-eventos-y-colas.md) | Decisión arquitectónica | Colas/tópicos con publicador, consumidor y contrato |
 | 14 | [Auditoría de la mensajería](14-auditoria-de-mensajeria.md) | Revisión | Tabla de hallazgos + cómo detectar cada uno |
 | 15 | [Implementación de la mensajería](15-implementacion-de-mensajeria.md) | Implementación | Outbox durable, broker, consumidor idempotente y DLQ |
+| 16 | [Diseño de la resiliencia](16-diseno-de-resiliencia.md) | Decisión arquitectónica | Circuit breaker, reintentos y fallback por dependencia |
+| 17 | [Auditoría de la resiliencia](17-auditoria-de-resiliencia.md) | Revisión | Tabla de hallazgos + presupuesto de latencia |
+| 18 | [Implementación de la resiliencia](18-implementacion-de-resiliencia.md) | Implementación | Circuitos, fallbacks y reintentos acotados con métricas |
+| 19 | [Diseño de la observabilidad](19-diseno-de-observabilidad.md) | Decisión arquitectónica | Esquema de log, niveles, métricas, trazas y alertas |
+| 20 | [Auditoría de la observabilidad](20-auditoria-de-observabilidad.md) | Revisión | Tabla de hallazgos + mapa de trazabilidad |
+| 21 | [Implementación de la observabilidad](21-implementacion-de-observabilidad.md) | Implementación | Logs en JSON, métricas del pedido, trazabilidad y alertas |
+| 22 | [Dockerfile multietapa](22-dockerfile-multietapa.md) | Implementación | Dockerfile comentado + `.dockerignore` |
+| 23 | [Auditoría de la imagen](23-auditoria-de-la-imagen.md) | Revisión | Tabla de hallazgos + medición de la imagen |
+| 24 | [Pipeline de CI/CD](24-pipeline-ci-cd.md) | Implementación | Workflow de GitHub Actions completo |
+| 25 | [Auditoría del pipeline](25-auditoria-del-pipeline.md) | Revisión | Tabla de hallazgos + medición de tiempos |
+| 26 | [ADRs de las decisiones](26-adrs-de-las-decisiones.md) | Documentación | Un ADR por decisión + índice actualizado |
+| 27 | [Auditoría de los ADRs](27-auditoria-de-los-adrs.md) | Revisión | Matriz de consistencia + verificación contra el código |
+| 28 | [Diagramas C4 en Mermaid](28-diagramas-c4-mermaid.md) | Documentación | Bloques Mermaid de Contexto y Contenedores |
+| 29 | [Auditoría de los diagramas C4](29-auditoria-de-los-diagramas-c4.md) | Revisión | Tabla de hallazgos + contraste contra el sistema |
 
 ## Convenciones
 
