@@ -7,6 +7,8 @@ import com.edteam.reservations.infrastructure.cache.CacheKeys;
 import com.edteam.reservations.infrastructure.cache.CacheStore;
 import com.edteam.reservations.infrastructure.resilience.DegradationRecorder;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import com.edteam.reservations.infrastructure.logging.LogFields;
+import com.edteam.reservations.infrastructure.logging.LogSanitizer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -291,7 +293,15 @@ public class CachingAirportCatalog implements AirportCatalogPort {
                         Boolean.parseBoolean(raw.substring(0, separator)),
                         Instant.ofEpochMilli(Long.parseLong(raw.substring(separator + 1)))));
             } catch (NumberFormatException e) {
-                log.debug("Entrada de cache ilegible, se trata como miss: {}", raw);
+                // El valor va saneado y acotado. Redis es un almacén
+                // compartido y alcanzable por red: quien escriba ahí fabrica
+                // registros con saltos de línea, sin límite de largo, en un
+                // DEBUG que se enciende con una propiedad (hallazgo 7).
+                log.atDebug()
+                        .addKeyValue(LogFields.EVENT, "cache.unreadable")
+                        .addKeyValue(LogFields.CACHE, "city-catalog")
+                        .addKeyValue("raw", LogSanitizer.sanitize(raw, 64))
+                        .log("Entrada de cache ilegible: se trata como miss");
                 return Optional.empty();
             }
         }

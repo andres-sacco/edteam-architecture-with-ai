@@ -4,8 +4,11 @@ import com.edteam.reservations.domain.access.Actor;
 import com.edteam.reservations.domain.access.ActorRole;
 import com.edteam.reservations.domain.exception.InvalidUserException;
 import com.edteam.reservations.domain.model.Email;
+import com.edteam.reservations.infrastructure.logging.ActorRef;
+import com.edteam.reservations.infrastructure.logging.LogFields;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.core.convert.converter.Converter;
 import org.springframework.security.authentication.AbstractAuthenticationToken;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -72,7 +75,19 @@ public class JwtActorConverter implements Converter<Jwt, AbstractAuthenticationT
         String lastName = requiredClaim(jwt, FAMILY_NAME_CLAIM);
 
         try {
-            return new ActorAuthenticationToken(new Actor(email, firstName, lastName, rolesOf(jwt)), jwt);
+            ActorAuthenticationToken token =
+                    new ActorAuthenticationToken(new Actor(email, firstName, lastName, rolesOf(jwt)), jwt);
+            // El seudónimo del solicitante entra al MDC ACÁ y no en el log de
+            // acceso, y el motivo es de orden de filtros: el log de acceso
+            // corre por FUERA de la cadena de seguridad, así que para cuando
+            // recupera el control el SecurityContext ya está limpio. Lo que
+            // sobrevive es el MDC, que lo limpia CorrelationIdFilter, que es
+            // todavía más externo.
+            //
+            // Es el seudónimo y nunca el email: el log sale del perímetro hacia
+            // un sistema indexado con otra retención.
+            MDC.put(LogFields.ACTOR_REF, ActorRef.of(email.value()));
+            return token;
         } catch (InvalidUserException e) {
             // Sin la causa: OAuth2AuthenticationException adopta el mensaje del
             // cause como propio, y ese mensaje nombra el valor del claim. El

@@ -20,6 +20,9 @@ import com.edteam.reservations.infrastructure.resilience.Circuit;
 import com.edteam.reservations.infrastructure.resilience.DegradationRecorder;
 import io.github.resilience4j.bulkhead.Bulkhead;
 import io.micrometer.core.instrument.MeterRegistry;
+import com.edteam.reservations.infrastructure.logging.CorrelationIdPropagation;
+import com.edteam.reservations.infrastructure.logging.LogFields;
+import com.edteam.reservations.infrastructure.logging.LogSanitizer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -115,7 +118,8 @@ public class AdapterConfiguration {
 
         requireSecureTransport(properties);
 
-        CityCatalogClient http = new RestCityCatalogClient(catalogRestClient(restClientBuilder, properties));
+        CityCatalogClient http = new RestCityCatalogClient(
+                catalogRestClient(restClientBuilder, properties), registry);
         CityCatalogClient retrying = new RetryingCityCatalogClient(http, properties.retryPolicy(),
                 RetryingCityCatalogClient.Sleeper.real(), properties.attemptCost(), clock, registry);
         CityCatalogClient bulkheaded = new BulkheadCityCatalogClient(retrying, catalogBulkhead);
@@ -125,14 +129,19 @@ public class AdapterConfiguration {
         CityResolver fanout = new BudgetedCityCatalogFanout(
                 resolver, properties.itineraryBudget(), clock, registry);
 
-        log.info("Maestro de aeropuertos: API de catálogo en {} (connect {} ms, read {} ms, {} intentos, "
-                        + "presupuesto del itinerario {} ms, peor caso por ciudad {} ms)",
-                properties.baseUrl(),
-                properties.connectTimeout().toMillis(),
-                properties.readTimeout().toMillis(),
-                properties.retry().maxAttempts(),
-                properties.itineraryBudget().toMillis(),
-                properties.worstCasePerCity().toMillis());
+        // La base-url va SANEADA y acotada: es configuración de despliegue y
+        // puede traer credenciales en el userinfo (`https://user:clave@host`),
+        // que en un log es una credencial replicada a un sistema indexado.
+        log.atInfo()
+                .addKeyValue(LogFields.EVENT, LogFields.STARTUP_WIRING)
+                .addKeyValue("component", "airport-catalog")
+                .addKeyValue("catalog.baseUrl", safeBaseUrl(properties.baseUrl()))
+                .addKeyValue("catalog.connectTimeoutMs", properties.connectTimeout().toMillis())
+                .addKeyValue("catalog.readTimeoutMs", properties.readTimeout().toMillis())
+                .addKeyValue("catalog.maxAttempts", properties.retry().maxAttempts())
+                .addKeyValue("catalog.itineraryBudgetMs", properties.itineraryBudget().toMillis())
+                .addKeyValue("catalog.worstCasePerCityMs", properties.worstCasePerCity().toMillis())
+                .log("Maestro de aeropuertos cableado contra la API de catálogo");
 
         // La sonda del origen: con el circuito abierto, el cache ni baja por
         // la cadena. Es la memoria de «el origen está caído» que el fallback
@@ -163,11 +172,45 @@ public class AdapterConfiguration {
         RestClient.Builder configured = builder.clone()
                 .baseUrl(properties.baseUrl())
                 .requestFactory(ClientHttpRequestFactoryBuilder.detect().build(timeouts))
-                .defaultHeader(HttpHeaders.ACCEPT, MediaType.APPLICATION_JSON_VALUE);
+                .defaultHeader(HttpHeaders.ACCEPT, MediaType.APPLICATION_JSON_VALUE)
+                // El correlation id sale del proceso. Era el hallazgo 14: la
+                // traza se cortaba en el borde porque ningún interceptor
+                // inyectaba el header. El `traceparent` de W3C lo pone solo la
+                // instrumentación de Micrometer sobre este mismo builder, que
+                // es la razón por la que el cliente se arma desde el Builder
+                // autoconfigurado y no desde cero.
+                //
+                // Hoy el api-catalog es un contenedor de terceros que ignora
+                // los dos headers, así que el costo es futuro y no actual. El
+                // día que el catálogo sea nuestro, la traza se continúa sola
+                // sin tocar una línea de acá.
+                .requestInterceptor(CorrelationIdPropagation.interceptor());
         if (properties.hasApiKey()) {
             configured = configured.defaultHeader(properties.apiKeyHeader(), properties.apiKey());
         }
         return configured.build();
+    }
+
+    /**
+     * La URL sin el {@code userinfo}, para poder escribirla en un log.
+     *
+     * <p>{@code https://usuario:clave@catalogo/} es una URL perfectamente
+     * válida y una credencial perfectamente filtrada. Si no parsea, se dice
+     * que no parsea en lugar de escribirla igual.
+     */
+    private static String safeBaseUrl(String baseUrl) {
+        if (baseUrl == null || baseUrl.isBlank()) {
+            return "<stub en memoria>";
+        }
+        try {
+            java.net.URI uri = java.net.URI.create(baseUrl);
+            String rendered = uri.getUserInfo() == null
+                    ? baseUrl
+                    : baseUrl.replace(uri.getUserInfo() + "@", "***@");
+            return LogSanitizer.sanitize(rendered, 200);
+        } catch (IllegalArgumentException e) {
+            return "<url inválida>";
+        }
     }
 
     // -----------------------------------------------------------------

@@ -3,15 +3,20 @@ package com.edteam.reservations.infrastructure.adapter.in.scheduling;
 import com.edteam.reservations.application.outbox.OutboxDispatchResult;
 import com.edteam.reservations.application.port.in.DispatchPendingNotificationsUseCase;
 import com.edteam.reservations.infrastructure.config.OutboxProperties;
+import com.edteam.reservations.infrastructure.logging.LogFields;
+import com.edteam.reservations.infrastructure.logging.MdcTaskDecorator;
+import com.edteam.reservations.infrastructure.logging.Throwables;
 import com.edteam.reservations.infrastructure.resilience.Circuit;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
 import java.util.Objects;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -49,11 +54,26 @@ public class OutboxDispatchScheduler {
     /** Sondas disparadas en semiabierto. */
     public static final String PROBES = "reservations.outbox.dispatch.probes";
 
+    /**
+     * Cuánto dura una vuelta del relay.
+     *
+     * <p>La pregunta que responde es «¿la vuelta entra cómoda en los 5 s del
+     * intervalo?», y la decisión que habilita es bajar el {@code batch-size}
+     * <b>antes</b> de que dos vueltas se empiecen a pisar. Sin esto, el
+     * síntoma llega como lag del outbox y la causa —un lote que tarda más que
+     * su intervalo— no se distingue de un broker lento.
+     */
+    public static final String DISPATCH_DURATION = "reservations.outbox.dispatch.duration";
+
+    /** Nombre de la tarea. Es el valor de la etiqueta y de la clave del MDC. */
+    public static final String JOB = "outbox-relay";
+
     private final DispatchPendingNotificationsUseCase dispatchNotifications;
     private final OutboxProperties properties;
     private final Circuit brokerCircuit;
     private final Counter skipped;
     private final Counter probes;
+    private final Timer duration;
 
     public OutboxDispatchScheduler(DispatchPendingNotificationsUseCase dispatchNotifications,
                                    OutboxProperties properties,
@@ -69,24 +89,52 @@ public class OutboxDispatchScheduler {
         this.probes = Counter.builder(PROBES)
                 .description("Sondas del relay contra un broker que se cree recuperado")
                 .register(registry);
+        this.duration = Timer.builder(DISPATCH_DURATION)
+                .description("Duración de una vuelta del relay del outbox")
+                .register(registry);
     }
 
     @Scheduled(fixedDelayString = "${reservations.outbox.dispatch-interval:5s}",
             initialDelayString = "${reservations.outbox.dispatch-interval:5s}")
     public void dispatch() {
+        // El decorador del scheduler ya puso un id; acá se refina para que
+        // nombre a esta tarea. El MDC lo restituye el decorador en su finally.
+        String runId = MdcTaskDecorator.adopt(JOB);
+        long startedAt = System.nanoTime();
         try {
             jitter();
             OutboxDispatchResult result = tick();
-            if (result.total() > 0) {
-                log.info("Outbox despachado: {} publicados, {} fallidos, {} liberados",
-                        result.dispatched(), result.failed(), result.deferred());
+            duration.record(Duration.ofNanos(System.nanoTime() - startedAt));
+            // 'dispatched + failed' y no 'total()'. El hallazgo 28 de la
+            // auditoría: total() suma los diferidos, así que con el broker
+            // caído y backlog esta línea salía en cada vuelta —720 por hora—
+            // para decir que no pasó nada. Una vuelta que sólo liberó
+            // mensajes no hizo trabajo; el número de diferidos igual viaja
+            // como campo cuando sí lo hubo.
+            if (result.dispatched() + result.failed() > 0) {
+                log.atInfo()
+                        .addKeyValue(LogFields.EVENT, LogFields.OUTBOX_RELAY_TICK)
+                        .addKeyValue(LogFields.JOB_RUN_ID, runId)
+                        .addKeyValue(LogFields.DISPATCHED, result.dispatched())
+                        .addKeyValue(LogFields.FAILED, result.failed())
+                        .addKeyValue(LogFields.DEFERRED, result.deferred())
+                        .addKeyValue(LogFields.DURATION_MS,
+                                (System.nanoTime() - startedAt) / 1_000_000L)
+                        .log("Outbox despachado");
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         } catch (RuntimeException e) {
             // Si se propaga, Spring cancela las siguientes ejecuciones de la
             // tarea: el relay quedaría muerto hasta el próximo reinicio.
-            log.error("Error inesperado despachando el outbox", e);
+            log.atError()
+                    .addKeyValue(LogFields.EVENT, LogFields.OUTBOX_RELAY_TICK)
+                    .addKeyValue(LogFields.JOB_RUN_ID, runId)
+                    .addKeyValue(LogFields.OUTCOME, "error")
+                    .addKeyValue(LogFields.EXCEPTION_CLASS, Throwables.rootClassOf(e))
+                    .addKeyValue(LogFields.REASON, Throwables.reasonOf(e))
+                    .setCause(e)
+                    .log("Error inesperado despachando el outbox");
         }
     }
 
@@ -100,7 +148,10 @@ public class OutboxDispatchScheduler {
                 // En DEBUG y no en WARN: la transición ya se logueó una vez
                 // cuando el circuito abrió, y un WARN por tick durante una
                 // caída de una hora son 720 líneas que no dicen nada nuevo.
-                log.debug("Circuito del broker abierto: se saltea el tick del relay");
+                log.atDebug()
+                        .addKeyValue(LogFields.EVENT, LogFields.OUTBOX_RELAY_TICK)
+                        .addKeyValue(LogFields.SKIP_REASON, "circuit_open")
+                        .log("Tick del relay salteado");
                 yield OutboxDispatchResult.EMPTY;
             }
             case HALF_OPEN -> {

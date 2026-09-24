@@ -106,8 +106,13 @@ class CreateReservationTransaction {
                 .flatMap(user -> reservationRepository.findByIdempotencyKey(user.requireId(), idempotencyKey));
         if (alreadyCreated.isPresent()) {
             Reservation existing = alreadyCreated.get();
-            log.info("Reintento con clave {}: se devuelve la reserva existente id={}",
-                    idempotencyKey, existing.requireId());
+            log.atInfo()
+                    .addKeyValue("event", "reservation.replayed")
+                    .addKeyValue("idempotencyKey", idempotencyKey.value())
+                    .addKeyValue("reservationId", existing.requireId().value())
+                    .addKeyValue("userId", existing.userId().value())
+                    .addKeyValue("reservationVersion", existing.version())
+                    .log("Reintento con la misma clave de idempotencia: se devuelve la reserva existente");
             return CreateReservationResult.alreadyExisted(existing);
         }
 
@@ -122,9 +127,23 @@ class CreateReservationTransaction {
         // El usuario se identifica por su id interno y no por su email: estos
         // logs salen del perímetro hacia el SaaS de observabilidad, que no
         // tiene por qué heredar un dato personal regulado.
-        log.info("Reserva creada id={} usuario={} itinerario={}-{} pasajeros={}",
-                saved.requireId(), saved.userId(), saved.itinerary().origin(),
-                saved.itinerary().destination(), saved.passengers().size());
+        //
+        // Un campo por dato. El `message` es texto fijo: que el dato viajara
+        // interpolado adentro del mensaje era lo que obligaba a una expresión
+        // regular distinta por formato de línea para poder filtrar por reserva
+        // o por usuario. Los cuatro eventos de dominio llevan ahora el MISMO
+        // juego de campos obligatorios —`reservationId`, `userId`,
+        // `reservationVersion`— que es lo que permite preguntar «todo lo que le
+        // pasó al usuario 4471» y obtener las cuatro cosas, no una.
+        log.atInfo()
+                .addKeyValue("event", "reservation.created")
+                .addKeyValue("reservationId", saved.requireId().value())
+                .addKeyValue("userId", saved.userId().value())
+                .addKeyValue("reservationVersion", saved.version())
+                .addKeyValue("itinerary.origin", saved.itinerary().origin().value())
+                .addKeyValue("itinerary.destination", saved.itinerary().destination().value())
+                .addKeyValue("passengers", saved.passengers().size())
+                .log("Reserva creada");
         return CreateReservationResult.created(saved);
     }
 }

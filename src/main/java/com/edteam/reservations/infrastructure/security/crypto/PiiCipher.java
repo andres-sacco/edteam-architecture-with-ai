@@ -82,13 +82,22 @@ public class PiiCipher {
                             .formatted(KEY_BYTES, material.length));
         }
         if (properties.usesPublishedDevKey()) {
-            log.warn("""
-                    ################################################################
-                    # CLAVE DE CIFRADO DE DESARROLLO                               #
-                    # El documento de los pasajeros se cifra con una clave         #
-                    # publicada en el repositorio. Válido sólo en local y en los   #
-                    # tests: en cualquier otro entorno, PII_ENCRYPTION_KEY.        #
-                    ################################################################""");
+            // Un evento de log, un registro físico. El banner ASCII de seis
+            // líneas era, para un recolector orientado a líneas sin regla de
+            // multilínea, un registro con timestamp y cinco sin nivel, sin
+            // logger y sin mensaje — y justo en el registro que dice que este
+            // entorno corre con secretos de desarrollo (hallazgo 30).
+            //
+            // El aviso queda en el `message` fijo y lo demás en campos. El
+            // gauge `reservations.security.pii.dev_key` es lo que además lo
+            // hace alertable: un WARN de arranque aparece una vez en la vida
+            // del proceso, y nadie lo está mirando cuando aparece.
+            log.atWarn()
+                    .addKeyValue("event", "startup.wiring")
+                    .addKeyValue("component", "pii-cipher")
+                    .addKeyValue("pii.key.source", "dev")
+                    .addKeyValue("remediation", "PII_ENCRYPTION_KEY")
+                    .log("El documento de los pasajeros se cifra con la clave publicada en el repositorio");
         }
         this.key = new SecretKeySpec(material, "AES");
     }

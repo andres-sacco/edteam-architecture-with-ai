@@ -1,5 +1,8 @@
 package com.edteam.reservations.infrastructure.cache;
 
+import com.edteam.reservations.infrastructure.logging.LogFields;
+import com.edteam.reservations.infrastructure.logging.LogSanitizer;
+import com.edteam.reservations.infrastructure.logging.Throwables;
 import com.edteam.reservations.infrastructure.resilience.Circuit;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import org.slf4j.Logger;
@@ -54,6 +57,25 @@ import java.util.function.Consumer;
 public final class CircuitBreakingCacheStore implements CacheStore {
 
     private static final Logger log = LoggerFactory.getLogger(CircuitBreakingCacheStore.class);
+
+    /**
+     * Marca de «ya avisé en este pedido».
+     *
+     * <p>El {@code WARN} de degradación era <b>por operación fallida</b>, y un
+     * {@code POST} hace hasta 16 operaciones de cache: con Redis caído, eso
+     * son ~1,6 M de líneas/día sobre los 100.000 pedidos del escenario de
+     * volumen del diseño, o sea <b>doce veces el presupuesto diario completo</b>,
+     * en un nivel encendido en producción. Un presupuesto que se rompe el día
+     * que el log hace falta es un presupuesto que no existe: la cuota de
+     * ingesta descarta líneas, y las que se descartan son las del incidente.
+     *
+     * <p>Se avisa una vez por pedido. La cuenta exacta de operaciones
+     * degradadas sigue estando en {@code reservations.cache.errors}, que es
+     * donde tiene que estar: es un número, no un relato. Es la misma decisión
+     * que {@code OutboxDispatchScheduler} ya había tomado y documentado para
+     * el tick salteado.
+     */
+    private static final ThreadLocal<Boolean> WARNED = new ThreadLocal<>();
 
     private final CacheStore remote;
     private final CacheStore localFallback;
@@ -179,7 +201,11 @@ public final class CircuitBreakingCacheStore implements CacheStore {
         }
         Optional<String> value = localFallback.get(key);
         if (value.isPresent()) {
-            log.trace("Cache degradado en {}: '{}' se sirve desde memoria", operation, key);
+            log.atTrace()
+                    .addKeyValue(LogFields.EVENT, "cache.local_hit")
+                    .addKeyValue(LogFields.OPERATION, operation)
+                    .addKeyValue(LogFields.KEY, LogSanitizer.sanitize(key, 64))
+                    .log("Cache degradado: se sirve desde memoria");
         }
         return value;
     }
@@ -198,8 +224,35 @@ public final class CircuitBreakingCacheStore implements CacheStore {
     }
 
     private void degrade(String operation, String key, RuntimeException e) {
-        log.warn("El cache no respondió al {} de '{}': se sigue contra el origen ({})",
-                operation, key, e.getMessage());
+        // La métrica siempre; la línea, una vez por pedido.
         onFailure.accept(operation);
+        if (Boolean.TRUE.equals(WARNED.get())) {
+            log.atTrace()
+                    .addKeyValue(LogFields.EVENT, LogFields.CACHE_DEGRADED)
+                    .addKeyValue(LogFields.OPERATION, operation)
+                    .addKeyValue(LogFields.KEY, LogSanitizer.sanitize(key, 64))
+                    .log("El cache no respondió: se sigue contra el origen");
+            return;
+        }
+        WARNED.set(Boolean.TRUE);
+        log.atWarn()
+                .addKeyValue(LogFields.EVENT, LogFields.CACHE_DEGRADED)
+                .addKeyValue(LogFields.OPERATION, operation)
+                .addKeyValue(LogFields.KEY, LogSanitizer.sanitize(key, 64))
+                .addKeyValue(LogFields.EXCEPTION_CLASS, Throwables.rootClassOf(e))
+                .addKeyValue(LogFields.REASON, Throwables.reasonOf(e))
+                .log("El cache no respondió: se sigue contra el origen");
+    }
+
+    /**
+     * Rearma el aviso para el próximo pedido.
+     *
+     * <p>Lo llama {@code DegradationHeaderFilter} en su {@code finally}, que es
+     * el mismo lugar donde se limpia la marca de degradación y por el mismo
+     * motivo: con un pool de hilos, un estado que sobrevive al pedido le miente
+     * al siguiente — acá, callando un aviso que sí correspondía.
+     */
+    public static void resetWarningScope() {
+        WARNED.remove();
     }
 }

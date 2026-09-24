@@ -1,0 +1,36 @@
+# Prometheus local. Sólo para el profile 'observability' del compose.
+#
+#   docker compose --profile observability up -d
+#   http://127.0.0.1:9091
+#
+# Raspa el puerto de GESTIÓN de la aplicación (9090), no el de la API (8080).
+# Es la misma decisión que el application.yml ya justifica para el endpoint
+# 'prometheus': lo que se abre es la lectura de métricas, no la superficie de
+# la API, y el puerto de gestión sigue sin publicarse hacia afuera — lo que
+# cambia es que ahora un contenedor de la red local lo alcanza.
+global:
+  # 15 s. Con ~2.800 series por instancia son ~16 MB/día de muestras antes de
+  # comprimir: despreciable al lado de los logs.
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    env: local
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+scrape_configs:
+  - job_name: reservations
+    metrics_path: /actuator/prometheus
+    # 'host.docker.internal' + 'extra_hosts: host-gateway' en el compose.
+    #
+    # Es el detalle que hace que esto funcione en Linux y no sólo en Docker
+    # Desktop: la aplicación corre FUERA de Docker ('mvn spring-boot:run') y
+    # desde adentro de un contenedor 'localhost' es el contenedor mismo.
+    #
+    # Si la aplicación se levanta en un contenedor, este target cambia por el
+    # nombre del servicio y el extra_hosts sobra.
+    static_configs:
+      - targets: ["host.docker.internal:9090"]
+        labels:
+          application: flight-reservations

@@ -340,6 +340,52 @@ class HexagonalArchitectureTest {
     }
 
     @Test
+    @DisplayName("el dominio no loguea: la observabilidad es infraestructura")
+    void domainDoesNotLog() {
+        // El dominio hoy no tiene ni un Logger, y esto lo convierte en algo
+        // verificado en lugar de una propiedad accidental.
+        //
+        // No es purismo. Un `log.warn` en una regla de negocio hace dos cosas
+        // malas a la vez: ata el modelo a la existencia de un sistema de logs
+        // —y a su configuración, y a su nivel— y, sobre todo, pone la
+        // decisión de QUÉ se escribe en el único lugar del sistema donde vive
+        // el dato completo. Los mensajes de excepción del dominio ya fueron el
+        // canal de una fuga de PII (hallazgo 6 de la auditoría): darle además
+        // un logger es abrir la puerta de al lado.
+        noClasses().that().resideInAPackage(BASE + ".domain..")
+                .should().dependOnClassesThat().resideInAnyPackage("org.slf4j..")
+                .because("el dominio ni siquiera se entera de que la observabilidad existe")
+                .check(productionClasses);
+    }
+
+    @Test
+    @DisplayName("el dominio y la aplicación no conocen el formato del log ni el backend de métricas")
+    void observabilityBackendsStayInInfrastructure() {
+        // La regla que hace verificable la restricción de la hexagonal, y la
+        // que de verdad se rompe sola: la forma MÁS CÓMODA de escribir un campo
+        // estructurado desde un servicio de aplicación es importar
+        // `net.logstash.logback.argument.StructuredArguments.kv`, y a partir de
+        // ahí el caso de uso conoce el formato del log.
+        //
+        // Lo que sí puede usar `application` es la API fluida de SLF4J 2
+        // (`log.atInfo().addKeyValue(...)`): `addKeyValue` es org.slf4j, no
+        // net.logstash. La capa declara QUÉ dato acompaña al hecho; que ese par
+        // termine siendo un campo JSON, un campo de un formato binario o nada
+        // lo decide el encoder, que vive en infraestructura y se configura en
+        // un XML.
+        noClasses().that().resideInAnyPackage(BASE + ".domain..", BASE + ".application..")
+                .should().dependOnClassesThat().resideInAnyPackage(
+                        "ch.qos.logback..",
+                        "net.logstash..",
+                        "io.micrometer..",
+                        "io.opentelemetry..",
+                        BASE + ".infrastructure.logging..",
+                        BASE + ".infrastructure.observability..")
+                .because("el formato del log y el registry de métricas son decisiones de despliegue")
+                .check(productionClasses);
+    }
+
+    @Test
     @DisplayName("los puertos son interfaces")
     void portsAreInterfaces() {
         classes().that().resideInAPackage(BASE + ".application.port.out..")

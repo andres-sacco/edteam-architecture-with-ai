@@ -3,6 +3,8 @@ package com.edteam.reservations.infrastructure.adapter.in.rest;
 import com.edteam.reservations.domain.model.ReservationId;
 import com.edteam.reservations.infrastructure.cache.CacheKeys;
 import com.edteam.reservations.infrastructure.cache.CacheStore;
+import com.edteam.reservations.infrastructure.logging.LogFields;
+import com.edteam.reservations.infrastructure.logging.LogSanitizer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -95,7 +97,12 @@ public class ReservationVersionCache {
         try {
             return OptionalLong.of(Long.parseLong(raw.get()));
         } catch (NumberFormatException e) {
-            log.debug("Versión cacheada ilegible para {}, se trata como miss: {}", reservationId, raw.get());
+            log.atDebug()
+                    .addKeyValue(LogFields.EVENT, "cache.unreadable")
+                    .addKeyValue(LogFields.CACHE, "reservation-version")
+                    .addKeyValue(LogFields.RESERVATION_ID, reservationId.value())
+                    .addKeyValue("raw", LogSanitizer.sanitize(raw.get(), 64))
+                    .log("Versión cacheada ilegible: se trata como miss");
             return OptionalLong.empty();
         }
     }

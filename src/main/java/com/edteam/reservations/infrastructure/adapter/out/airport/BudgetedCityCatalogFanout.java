@@ -2,6 +2,9 @@ package com.edteam.reservations.infrastructure.adapter.out.airport;
 
 import com.edteam.reservations.application.exception.AirportCatalogIntegrationException;
 import com.edteam.reservations.infrastructure.adapter.out.airport.catalog.CatalogDeadline;
+import com.edteam.reservations.infrastructure.logging.LogFields;
+import io.micrometer.context.ContextSnapshot;
+import io.micrometer.context.ContextSnapshotFactory;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
@@ -118,12 +121,31 @@ public class BudgetedCityCatalogFanout implements CityResolver {
         // ejecutor se libera después, sin que nadie las espere.
         ExecutorService workers = Executors.newVirtualThreadPerTaskExecutor();
         try {
+            // El MDC de Logback es un ThreadLocal NO heredable, y
+            // `supplyAsync(..., workers)` no lleva nada: hasta acá, las catorce
+            // líneas que el catálogo escribe por un POST degradado salían sin
+            // correlationId. Son justamente las que uno va a buscar cuando un
+            // POST sale degradado, así que el id faltaba exactamente donde más
+            // se lo necesita (hallazgo 11).
+            //
+            // `captureAll()` se toma UNA vez en el hilo llamador y `wrap()` lo
+            // restituye en cada tarea y lo limpia al terminar. El mismo wrap
+            // arregla las dos cosas: el MDC y el padre del span cliente.
+            ContextSnapshot snapshot = ContextSnapshotFactory.builder().build().captureAll();
             List<CompletableFuture<Map.Entry<String, CityResolution>>> futures = new ArrayList<>(pending.size());
             for (String code : pending) {
-                futures.add(CompletableFuture.supplyAsync(
-                        () -> Map.entry(code, CatalogDeadline.within(deadline,
-                                () -> delegate.resolve(List.of(code)).getOrDefault(code, CityResolution.absent()))),
-                        workers));
+                futures.add(CompletableFuture.supplyAsync(() -> {
+                    // `setThreadLocals()` restituye el contexto capturado en el
+                    // hilo llamador —el MDC entre otros— y el try-with-resources
+                    // lo deshace al terminar. Sin el cierre, el hilo virtual
+                    // quedaría con el correlationId de este pedido pegado, y el
+                    // ejecutor los reusa.
+                    try (ContextSnapshot.Scope ignored = snapshot.setThreadLocals()) {
+                        return Map.entry(code, CatalogDeadline.within(deadline,
+                                () -> delegate.resolve(List.of(code))
+                                        .getOrDefault(code, CityResolution.absent())));
+                    }
+                }, workers));
             }
 
             int outOfBudget = 0;
@@ -146,8 +168,14 @@ public class BudgetedCityCatalogFanout implements CityResolver {
 
             if (outOfBudget > 0) {
                 budgetExhausted.increment(outOfBudget);
-                log.warn("Presupuesto del itinerario agotado ({} ms): {} de {} ciudades quedaron sin resolver",
-                        budget.toMillis(), outOfBudget, pending.size());
+                log.atWarn()
+                        .addKeyValue(LogFields.EVENT, LogFields.CATALOG_FANOUT)
+                        .addKeyValue(LogFields.DEPENDENCY, "api-catalog")
+                        .addKeyValue(LogFields.OUTCOME, "budget_exhausted")
+                        .addKeyValue("catalog.budget_ms", budget.toMillis())
+                        .addKeyValue("catalog.out_of_budget", outOfBudget)
+                        .addKeyValue("catalog.cities", pending.size())
+                        .log("Presupuesto del itinerario agotado: quedaron ciudades sin resolver");
             }
             // Las que no contestaron entran al fallback como cualquier otra
             // ciudad no disponible: el corte lo pusimos nosotros, así que NO

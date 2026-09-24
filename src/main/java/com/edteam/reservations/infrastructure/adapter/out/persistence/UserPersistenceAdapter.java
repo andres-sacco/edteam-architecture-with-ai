@@ -82,7 +82,13 @@ public class UserPersistenceAdapter implements UserRepositoryPort {
 
         return userRepository.findByEmail(email)
                 .map(userMapper::toDomain)
+                // Enmascarado, como las dos líneas de arriba. Sin esto el email
+                // salía en claro por el camino de la excepción no controlada,
+                // que además la loguea con stack trace y a nivel ERROR: el
+                // mismo archivo declaraba la regla seis líneas antes y la
+                // rompía acá (hallazgo 2).
                 .orElseThrow(() -> new IllegalStateException(
-                        "El usuario %s no quedó disponible después del insert".formatted(email)));
+                        "El usuario %s no quedó disponible después del insert"
+                                .formatted(PiiMasker.mask(email))));
     }
 }

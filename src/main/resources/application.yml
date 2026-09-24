@@ -23,7 +23,20 @@ spring:
   # también lo que permite un 'MESSAGING_ENABLED=false ./mvnw spring-boot:run'
   # puntual sin editar el .env.
   config:
-    import: optional:file:./.env[.properties]
+    import:
+      - optional:file:./.env[.properties]
+      # build-info.properties lo escribe el goal 'build-info' del plugin de
+      # Spring Boot y trae 'build.version' y 'build.time'. Importarlo como
+      # fuente de propiedades es lo que permite que el campo 'version' de cada
+      # registro de log salga del BUILD y no de una constante: una constante se
+      # olvida de actualizar y el log empieza a mentir sobre qué artefacto
+      # produjo la línea, que es el dato con el que se decide si un incidente
+      # lo introdujo el último despliegue.
+      #
+      # 'optional:' porque en un 'mvn test' sobre clases recién compiladas el
+      # archivo puede no estar todavía; ahí el campo sale como 'unknown', que
+      # es honesto.
+      - optional:classpath:META-INF/build-info.properties
 
   application:
     name: flight-reservations
@@ -163,6 +176,16 @@ spring:
     baseline-on-migrate: false
 
 reservations:
+  # El entorno, como campo de cada registro de log y como etiqueta de cada
+  # medidor. Sin esto, dos entornos que escriben en el mismo Prometheus o en el
+  # mismo índice de logs se mezclan, y no hay forma de saber si la línea que se
+  # está leyendo es de producción.
+  environment: ${APP_ENV:local}
+
+  # La versión del artefacto, para el campo 'version' del log. Sale de
+  # build-info.properties (ver spring.config.import de arriba).
+  build-version: ${build.version:unknown}
+
   cache:
     redis:
       # Coincide con el 'redis' de compose.yaml, así que 'docker compose up -d'
@@ -356,6 +379,21 @@ reservations:
       automatic-transition-from-open-to-half-open: true
       window-max-age: 10m
   security:
+    # /actuator/prometheus sin token, para que el recolector pueda raspar.
+    #
+    # APAGADO por defecto. El endpoint revela volumetría de negocio —cuántas
+    # reservas por minuto, cuántas fallan— y la superficie real de la API,
+    # incluidos los endpoints que el contrato no documenta.
+    #
+    # Se enciende junto con el profile 'observability' del compose:
+    #
+    #   docker compose --profile observability up -d
+    #   METRICS_SCRAPE_OPEN=true ./mvnw spring-boot:run
+    #
+    # y es defendible SÓLO mientras el puerto de gestión no se publique hacia
+    # afuera, que es la mitigación estructural que 'management.server.port' ya
+    # explica más abajo. En un entorno real, el scrape se autentica.
+    metrics-scrape-open: ${METRICS_SCRAPE_OPEN:false}
     jwt:
       # ---------------------------------------------------------------------
       # Modo de cualquier entorno real: el JWKS del proveedor de identidad.
@@ -638,6 +676,52 @@ management:
     health:
       probes:
         enabled: true
+  metrics:
+    distribution:
+      # Buckets del histograma de latencia HTTP.
+      #
+      # Sin esto, 'http.server.requests' publica count/sum/max y NO se puede
+      # calcular un p95 agregado entre instancias: el máximo de los p95 no es
+      # el p95, y la alerta de latencia del POST no tiene de dónde salir.
+      #
+      # 'slo' SIN 'percentiles-histogram: true', y la distinción no es
+      # cosmética: en Micrometer las dos opciones son ADITIVAS. Con las dos, el
+      # medidor sale con los ~70 buckets por defecto MÁS estos siete, y el
+      # presupuesto de cardinalidad del diseño —calculado sobre siete— se
+      # multiplica por diez en el único medidor cuyo costo depende del número
+      # de buckets.
+      #
+      # Los dos del medio no son redondos por casualidad: 4 s es el objetivo
+      # del POST y 4,5 s el del PUT, los mismos que LatencyBudgetTest sostiene
+      # como constantes. Un bucket justo en el objetivo hace que «qué
+      # porcentaje entró en el SLO» sea una lectura directa y no una
+      # interpolación entre dos buckets vecinos.
+      slo:
+        http.server.requests: 200ms,500ms,1s,2s,4s,4500ms,8s
+      # El timer de la llamada al catálogo, con el mismo criterio y menos
+      # buckets: el read timeout del proveedor es 2 s, así que todo lo que
+      # importa pasa antes.
+        reservations.catalog.call: 100ms,250ms,500ms,1s,2s
+  tracing:
+    sampling:
+      # Todo en local, para poder ver lo que se está construyendo; 10 % en
+      # producción, que alcanza para caracterizar latencia. Los casos puntuales
+      # los resuelve el log, que es del 100 % y lleva el correlationId.
+      probability: ${TRACING_SAMPLING:1.0}
+    export:
+      # APAGADO por defecto, y ésta es la línea que hace que la aplicación siga
+      # arrancando sin backend de observabilidad, igual que arranca sin Redis,
+      # sin broker y sin catálogo. Con el exportador encendido y sin Tempo
+      # levantado, el proceso reintenta contra localhost:4318 y llena su propio
+      # log con errores del sistema que lo está observando.
+      #
+      # Se enciende junto con el profile del compose:
+      #   docker compose --profile observability up -d
+      #   TRACING_EXPORT_ENABLED=true ./mvnw spring-boot:run
+      enabled: ${TRACING_EXPORT_ENABLED:false}
+  otlp:
+    tracing:
+      endpoint: ${OTLP_TRACING_ENDPOINT:http://localhost:4318/v1/traces}
   health:
     rabbit:
       # Apagado, por el mismo motivo que el de Redis: el broker caído degrada
@@ -656,3 +740,10 @@ management:
 logging:
   level:
     com.edteam.reservations: INFO
+    # Loggers de terceros. El resto de los niveles vive en logback-spring.xml,
+    # junto al esquema, porque son parte de la misma decisión: qué entra al
+    # panel de «WARN por minuto» y qué no.
+    #
+    # Hibernate en el arranque: dice la versión y poco más, y su INFO por
+    # entidad no agrega nada que el esquema de Flyway no diga mejor.
+    org.hibernate.orm.deprecation: ERROR

@@ -1,11 +1,19 @@
 package com.edteam.reservations.infrastructure.adapter.out.airport.catalog;
 
+import com.edteam.reservations.application.exception.AirportCatalogException;
 import com.edteam.reservations.application.exception.AirportCatalogIntegrationException;
 import com.edteam.reservations.application.exception.AirportCatalogThrottledException;
 import com.edteam.reservations.application.exception.AirportCatalogUnavailableException;
+import com.edteam.reservations.infrastructure.logging.LogFields;
 import com.edteam.reservations.infrastructure.logging.LogSanitizer;
+import com.edteam.reservations.infrastructure.logging.Throwables;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Tags;
+import io.micrometer.core.instrument.Timer;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.spi.LoggingEventBuilder;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
@@ -14,6 +22,7 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -104,10 +113,39 @@ public class RestCityCatalogClient implements CityCatalogClient {
     /** Recorte del cuerpo de error que va al log: alcanza para diagnosticar y no inunda. */
     private static final int MAX_ERROR_BODY = 512;
 
-    private final RestClient restClient;
+    /**
+     * Latencia y resultado de <b>cada</b> llamada al catálogo.
+     *
+     * <p>Hasta acá sólo se medía el itinerario entero
+     * ({@code reservations.catalog.fanout}), que con 8 ciudades en paralelo no
+     * distingue «una tardó 6 s» de «las ocho tardaron 700 ms». Son dos
+     * problemas distintos: el primero es el proveedor, el segundo es nuestro
+     * presupuesto. Esa es la decisión que esta métrica habilita y la otra no.
+     *
+     * <p>La etiqueta es {@code outcome} y nada más. El código IATA <b>no</b> es
+     * etiqueta: son ~9.000 valores posibles y los elige el cliente en el cuerpo
+     * del pedido, o sea cardinalidad controlada por un tercero. Qué ciudad
+     * falló lo responde el log, que sí lo lleva como campo.
+     */
+    public static final String CALL_DURATION = "reservations.catalog.call";
 
-    public RestCityCatalogClient(RestClient restClient) {
+    /** El valor de {@code dependency} en el log, igual al que sale en {@code X-Degraded}. */
+    private static final String DEPENDENCY = "api-catalog";
+
+    /** Plantilla, no la URI concreta: es el mismo criterio que la ruta HTTP de entrada. */
+    private static final String OPERATION = "GET /city/{code}";
+
+    private final RestClient restClient;
+    private final MeterRegistry registry;
+
+    public RestCityCatalogClient(RestClient restClient, MeterRegistry registry) {
         this.restClient = Objects.requireNonNull(restClient, "El RestClient es obligatorio");
+        this.registry = Objects.requireNonNull(registry, "El registro de métricas es obligatorio");
+    }
+
+    /** Sin métricas: es el que usan los tests de la traducción HTTP. */
+    public RestCityCatalogClient(RestClient restClient) {
+        this(restClient, new SimpleMeterRegistry());
     }
 
     @Override
@@ -116,22 +154,83 @@ public class RestCityCatalogClient implements CityCatalogClient {
             throw new IllegalArgumentException("El código a consultar es obligatorio");
         }
 
+        long startedAt = System.nanoTime();
         try {
-            return restClient.get()
+            Optional<CatalogCity> city = restClient.get()
                     .uri("/city/{code}", code)
                     .accept(MediaType.APPLICATION_JSON)
                     .exchange((request, response) -> classify(code, response));
+            String outcome = city.isPresent() ? "found" : "absent";
+            record(outcome, startedAt);
+            // El camino feliz vive en DEBUG y no en INFO: con hasta 8 ciudades
+            // por POST, un INFO por consulta son 40.000 líneas por día para
+            // decir lo que el timer de arriba dice mejor y agregado. Cuando
+            // una falla, la línea sí se escribe.
+            call(log.atDebug(), code, outcome).log("Catálogo consultado");
+            return city;
         } catch (ResourceAccessException e) {
-            // No hubo respuesta: conexión rechazada, DNS, socket cortado.
-            log.warn("No se pudo contactar al catálogo para {}: {}", code, e.getMessage());
+            // No hubo respuesta: conexión rechazada, DNS, socket cortado. Es
+            // WARN porque hay fallback y el circuito lo cuenta: el usuario
+            // recibe su reserva y nadie tiene que levantarse.
+            record("unavailable", startedAt);
+            call(log.atWarn(), code, "unavailable")
+                    .addKeyValue(LogFields.EXCEPTION_CLASS, Throwables.rootClassOf(e))
+                    .addKeyValue(LogFields.REASON, Throwables.reasonOf(e))
+                    .log("No se pudo contactar al catálogo");
             throw new AirportCatalogUnavailableException(
                     "No se pudo contactar al catálogo para consultar '%s'".formatted(code), e);
+        } catch (AirportCatalogException e) {
+            // Ya clasificada y ya logueada en classify(): se deja pasar sin
+            // escribir una segunda línea del mismo hecho. Una sola línea por
+            // llamada es también lo que hace que el techo de severidad por
+            // escenario sea acotable.
+            record(outcomeOf(e), startedAt);
+            throw e;
         } catch (RestClientException e) {
-            // Falla del cliente que no es de red: por ejemplo, no hay converter para la respuesta.
-            log.error("Fallo del cliente HTTP consultando el catálogo para {}", code, e);
+            // Falla del cliente que no es de red: por ejemplo, no hay converter
+            // para la respuesta. El mensaje de Jackson incrusta un fragmento
+            // del cuerpo del proveedor, así que pasa por el redactor: es el
+            // hallazgo 5 de la auditoría, que dejaba abierto justo el vector
+            // que LogSanitizer existe para cerrar.
+            record("integration", startedAt);
+            call(log.atError(), code, "integration")
+                    .addKeyValue(LogFields.EXCEPTION_CLASS, Throwables.rootClassOf(e))
+                    .addKeyValue(LogFields.REASON, Throwables.reasonOf(e))
+                    .log("Fallo del cliente HTTP consultando el catálogo");
             throw new AirportCatalogIntegrationException(
                     "Fallo consultando el catálogo para '%s'".formatted(code), e);
         }
+    }
+
+    /**
+     * Los campos comunes de {@code event=catalog.call}.
+     *
+     * <p>Están en un solo lugar para que las diez llamadas de esta clase no
+     * puedan salir con juegos distintos de campos, que es exactamente lo que
+     * la auditoría encontró: {@code cityCode} viajaba adentro del texto en las
+     * catorce líneas del catálogo, con un formato de mensaje por línea.
+     */
+    private static LoggingEventBuilder call(LoggingEventBuilder event, String code, String outcome) {
+        return event.addKeyValue(LogFields.EVENT, LogFields.CATALOG_CALL)
+                .addKeyValue(LogFields.DEPENDENCY, DEPENDENCY)
+                .addKeyValue(LogFields.OPERATION, OPERATION)
+                .addKeyValue(LogFields.CITY_CODE, code)
+                .addKeyValue(LogFields.OUTCOME, outcome);
+    }
+
+    private void record(String outcome, long startedAt) {
+        Timer.builder(CALL_DURATION)
+                .tags(Tags.of(LogFields.OUTCOME, outcome))
+                .description("Latencia y resultado de una consulta al catálogo, por llamada")
+                .register(registry)
+                .record(Duration.ofNanos(System.nanoTime() - startedAt));
+    }
+
+    private static String outcomeOf(AirportCatalogException e) {
+        if (e instanceof AirportCatalogThrottledException) {
+            return "throttled";
+        }
+        return e instanceof AirportCatalogIntegrationException ? "integration" : "unavailable";
     }
 
     /**
@@ -150,7 +249,9 @@ public class RestCityCatalogClient implements CityCatalogClient {
         }
 
         if (status.value() == HttpStatus.NOT_FOUND.value()) {
-            log.debug("El catálogo no conoce el código {}", code);
+            call(log.atDebug(), code, "absent")
+                    .addKeyValue(LogFields.HTTP_STATUS, status.value())
+                    .log("El catálogo no conoce el código");
             return Optional.empty();
         }
 
@@ -163,26 +264,55 @@ public class RestCityCatalogClient implements CityCatalogClient {
         // verdad frena el tráfico— y NO se reintenta, porque insistir es
         // desobedecer al proveedor y empeorar su saturación.
         if (status.value() == HttpStatus.TOO_MANY_REQUESTS.value()) {
-            log.warn("El catálogo nos está limitando (429) al consultar {}: {}", code, body);
+            call(log.atWarn(), code, "throttled")
+                    .addKeyValue(LogFields.HTTP_STATUS, status.value())
+                    .addKeyValue(LogFields.REASON, body)
+                    .log("El catálogo nos está limitando");
             throw new AirportCatalogThrottledException(
                     "El catálogo rechazó la consulta de '%s' por exceso de pedidos".formatted(code));
         }
 
         if (status.is5xxServerError()) {
-            log.warn("El catálogo respondió {} al consultar {}: {}", status.value(), code, body);
+            call(log.atWarn(), code, "unavailable")
+                    .addKeyValue(LogFields.HTTP_STATUS, status.value())
+                    .addKeyValue(LogFields.REASON, body)
+                    .log("El catálogo respondió con error de servidor");
             throw new AirportCatalogUnavailableException(
                     "El catálogo respondió %d al consultar '%s'".formatted(status.value(), code));
         }
 
         if (status.is4xxClientError()) {
-            // Se loguea como error porque hay que cambiar algo: credencial, permisos o el pedido.
-            log.error("El catálogo rechazó la consulta de {} con {}: {}", code, status.value(), body);
+            // Acá se separa lo que la auditoría encontró mezclado (hallazgo 27).
+            //
+            // 401 y 403 son una credencial: no hay reintento que lo arregle,
+            // ningún POST ni PUT puede completarse y hace falta una persona
+            // ahora. Eso es ERROR, y detrás tiene la alerta 1.
+            //
+            // 400, 409, 422 y compañía son contrato o un código mal armado:
+            // repetible, sin dueño humano inmediato, y se mira por TASA. Eso
+            // es WARN. Con hasta 8 ciudades por POST, un desajuste sistemático
+            // de contrato en ERROR eran 40.000 ERROR por día en el escenario
+            // de volumen del propio diseño, y un ERROR que aparece cien veces
+            // por hora deja de significar algo.
+            boolean credential = status.value() == HttpStatus.UNAUTHORIZED.value()
+                    || status.value() == HttpStatus.FORBIDDEN.value();
+            call(credential ? log.atError() : log.atWarn(), code, "integration")
+                    .addKeyValue(LogFields.HTTP_STATUS, status.value())
+                    .addKeyValue(LogFields.REASON, body)
+                    .addKeyValue("integration.kind", credential ? "credential" : "contract")
+                    .log(credential
+                            ? "El catálogo rechazó la credencial"
+                            : "El catálogo rechazó la consulta por contrato");
             throw new AirportCatalogIntegrationException(
                     "El catálogo rechazó la consulta de '%s' con estado %d".formatted(code, status.value()));
         }
 
         // 1xx/3xx acá no tienen sentido: el cliente sigue redirecciones por su cuenta.
-        log.error("Respuesta inesperada {} del catálogo al consultar {}: {}", status.value(), code, body);
+        call(log.atError(), code, "integration")
+                .addKeyValue(LogFields.HTTP_STATUS, status.value())
+                .addKeyValue(LogFields.REASON, body)
+                .addKeyValue("integration.kind", "unexpected_status")
+                .log("Respuesta inesperada del catálogo");
         throw new AirportCatalogIntegrationException(
                 "Respuesta inesperada %d del catálogo al consultar '%s'".formatted(status.value(), code));
     }
@@ -195,12 +325,20 @@ public class RestCityCatalogClient implements CityCatalogClient {
      * —ilegible o sin {@code code}— es otra cosa y ahí sí se falla: es la
      * diferencia entre un dato que no está y una integración rota.
      */
-    private static Optional<CatalogCity> readCity(String code, RestClient.RequestHeadersSpec.ConvertibleClientHttpResponse response) {
+    private Optional<CatalogCity> readCity(String code, RestClient.RequestHeadersSpec.ConvertibleClientHttpResponse response) {
         CatalogCity city;
         try {
             city = response.bodyTo(CatalogCity.class);
         } catch (RestClientException e) {
-            log.error("El catálogo devolvió 200 con un cuerpo ilegible para {}", code, e);
+            // Sin `e` como causa del log: el mensaje de Jackson incrusta el
+            // fragmento del cuerpo que no pudo parsear, y ese cuerpo lo elige
+            // el proveedor. Va redactado y saneado, como el resto.
+            call(log.atError(), code, "integration")
+                    .addKeyValue(LogFields.HTTP_STATUS, HttpStatus.OK.value())
+                    .addKeyValue(LogFields.EXCEPTION_CLASS, Throwables.rootClassOf(e))
+                    .addKeyValue(LogFields.REASON, Throwables.reasonOf(e))
+                    .addKeyValue("integration.kind", "unreadable_body")
+                    .log("El catálogo devolvió 200 con un cuerpo ilegible");
             throw new AirportCatalogIntegrationException(
                     "El catálogo devolvió un cuerpo ilegible para '%s'".formatted(code), e);
         }
@@ -210,13 +348,18 @@ public class RestCityCatalogClient implements CityCatalogClient {
             // quiere decir. Queda en WARN igual: el contrato exige un 404 y
             // mientras eso no se cumpla estamos leyendo una convención, no una
             // respuesta explícita.
-            log.warn("El catálogo respondió {} sin cuerpo para {}: se toma como inexistente (el contrato exige 404)",
-                    HttpStatus.OK.value(), code);
+            call(log.atWarn(), code, "absent")
+                    .addKeyValue(LogFields.HTTP_STATUS, HttpStatus.OK.value())
+                    .addKeyValue(LogFields.REASON, "cuerpo vacío; el contrato exige 404")
+                    .log("El catálogo respondió sin cuerpo: se toma como inexistente");
             return Optional.empty();
         }
 
         if (city.code() == null || city.code().isBlank()) {
-            log.error("El catálogo devolvió 200 con un cuerpo sin 'code' para {}", code);
+            call(log.atWarn(), code, "integration")
+                    .addKeyValue(LogFields.HTTP_STATUS, HttpStatus.OK.value())
+                    .addKeyValue("integration.kind", "contract")
+                    .log("El catálogo devolvió un cuerpo sin 'code'");
             throw new AirportCatalogIntegrationException(
                     "El catálogo devolvió una respuesta sin 'code' para '%s'".formatted(code));
         }
@@ -244,7 +387,13 @@ public class RestCityCatalogClient implements CityCatalogClient {
      */
     private static String errorBody(RestClient.RequestHeadersSpec.ConvertibleClientHttpResponse response) {
         try {
-            return LogSanitizer.sanitize(response.bodyTo(String.class), MAX_ERROR_BODY);
+            // Redactado además de saneado: un cuerpo de error de un tercero
+            // puede traer un email o un token que nos devuelve tal cual el que
+            // le mandamos, y el saneado sólo neutraliza los caracteres de
+            // control. El truncado sigue estando, y sigue siendo una defensa
+            // de costo tanto como de legibilidad.
+            return Throwables.redact(
+                    LogSanitizer.sanitize(response.bodyTo(String.class), MAX_ERROR_BODY));
         } catch (RestClientException e) {
             return "<cuerpo ilegible>";
         }

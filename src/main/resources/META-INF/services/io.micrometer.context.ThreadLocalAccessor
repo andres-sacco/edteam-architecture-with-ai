@@ -1,0 +1,12 @@
+# Cómo `context-propagation` se entera de que tiene que llevarse el MDC.
+#
+# `ContextRegistry.getInstance()` carga los accessors por ServiceLoader en su
+# inicialización, así que registrarlo acá lo deja disponible para TODO el
+# proceso —incluidos los tests unitarios del fan-out, que no levantan Spring—
+# sin una llamada de registro que alguien pueda olvidarse de hacer.
+#
+# Es lo que hace que el `ContextSnapshot.wrap()` de BudgetedCityCatalogFanout
+# propague el correlationId a los hilos virtuales y no sólo el contexto de
+# traza. La mitad que importa cuando las trazas están apagadas o el pedido no
+# fue muestreado es justamente ésta.
+com.edteam.reservations.infrastructure.logging.MdcThreadLocalAccessor

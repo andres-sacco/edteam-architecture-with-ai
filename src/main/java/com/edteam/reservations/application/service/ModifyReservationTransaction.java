@@ -74,8 +74,16 @@ class ModifyReservationTransaction {
         auditTrail.record(AuditEntry.allowed(AuditAction.RESERVATION_MODIFIED,
                 command.actor().email(), saved.requireId().toString(), saved.version(), now));
 
-        log.info("Reserva modificada id={} itinerario={}-{} version={}",
-                saved.requireId(), saved.itinerary().origin(), saved.itinerary().destination(), saved.version());
+        log.atInfo()
+                .addKeyValue("event", "reservation.modified")
+                .addKeyValue("reservationId", saved.requireId().value())
+                .addKeyValue("userId", saved.userId().value())
+                .addKeyValue("reservationVersion", saved.version())
+                .addKeyValue("itinerary.origin", saved.itinerary().origin().value())
+                .addKeyValue("itinerary.destination", saved.itinerary().destination().value())
+                .addKeyValue("itinerary.previousOrigin", previousItinerary.origin().value())
+                .addKeyValue("itinerary.previousDestination", previousItinerary.destination().value())
+                .log("Reserva modificada");
         return saved;
     }
 }

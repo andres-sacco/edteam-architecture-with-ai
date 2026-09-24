@@ -8,6 +8,8 @@ import com.edteam.reservations.domain.event.DomainEvent;
 import com.edteam.reservations.infrastructure.adapter.out.messaging.DomainEventPayloadMapper;
 import com.edteam.reservations.infrastructure.config.OutboxProperties;
 import com.edteam.reservations.infrastructure.jdbc.Utc;
+import com.edteam.reservations.infrastructure.logging.LogFields;
+import com.edteam.reservations.infrastructure.security.OpsActor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -358,7 +360,15 @@ public class JdbcEventOutbox implements EventOutboxPort, OutboxAdmin {
         Objects.requireNonNull(messageId, "messageId es obligatorio");
         int updated = jdbcTemplate.update(RESET_DEAD + " AND id = ?::uuid", Utc.param(clock.instant()), messageId);
         if (updated > 0) {
-            log.info("Mensaje {} reencolado desde la dead letter del productor", messageId);
+            // Con el actor. Es una escritura de un humano sobre datos de
+            // producción, y sin quién la hizo no se puede reconstruir después
+            // de un incidente quién reencoló qué (hallazgo 25).
+            log.atInfo()
+                    .addKeyValue(LogFields.EVENT, LogFields.OUTBOX_REQUEUED)
+                    .addKeyValue(LogFields.MESSAGE_ID, messageId)
+                    .addKeyValue(LogFields.COUNT, 1)
+                    .addKeyValue(LogFields.ACTOR, OpsActor.current())
+                    .log("Mensaje reencolado desde la dead letter del productor");
         }
         return updated > 0;
     }
@@ -367,7 +377,11 @@ public class JdbcEventOutbox implements EventOutboxPort, OutboxAdmin {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public int replayAll() {
         int updated = jdbcTemplate.update(RESET_DEAD, Utc.param(clock.instant()));
-        log.info("{} mensajes reencolados desde la dead letter del productor", updated);
+        log.atInfo()
+                .addKeyValue(LogFields.EVENT, LogFields.OUTBOX_REQUEUED)
+                .addKeyValue(LogFields.COUNT, updated)
+                .addKeyValue(LogFields.ACTOR, OpsActor.current())
+                .log("Mensajes reencolados desde la dead letter del productor");
         return updated;
     }
 

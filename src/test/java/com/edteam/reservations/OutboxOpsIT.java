@@ -145,12 +145,29 @@ class OutboxOpsIT extends AbstractPostgresIT {
     @Test
     @DisplayName("los contadores del relay distinguen el tipo de fallo")
     void countersTellApartTransientFromPermanentFailures() {
+        // Se mide el DELTA y no el valor absoluto.
+        //
+        // La base se trunca entre tests pero el contexto de Spring se comparte
+        // —y con él el MeterRegistry—, así que un contador es acumulativo para
+        // toda la clase y para cualquier otra que reuse el mismo contexto. El
+        // valor absoluto pasaba sólo mientras esta fuera la única IT que creaba
+        // reservas contra este contexto, que es una propiedad del orden de
+        // ejecución y no del código bajo prueba.
+        double enqueuedBefore = count(MeteredEventOutbox.ENQUEUED);
+        double dispatchedBefore = count(MeteredEventOutbox.DISPATCHED);
+        double claimedBefore = count(MeteredEventOutbox.CLAIMED);
+
         createReservation.create(createCommand());
         dispatchNotifications.dispatchPending(10);
 
-        assertThat(meterRegistry.get(MeteredEventOutbox.ENQUEUED).counter().count()).isEqualTo(1.0);
-        assertThat(meterRegistry.get(MeteredEventOutbox.CLAIMED).counter().count()).isGreaterThanOrEqualTo(1.0);
-        assertThat(meterRegistry.get(MeteredEventOutbox.DISPATCHED).counter().count()).isEqualTo(1.0);
+        assertThat(count(MeteredEventOutbox.ENQUEUED) - enqueuedBefore).isEqualTo(1.0);
+        assertThat(count(MeteredEventOutbox.CLAIMED) - claimedBefore).isGreaterThanOrEqualTo(1.0);
+        assertThat(count(MeteredEventOutbox.DISPATCHED) - dispatchedBefore).isEqualTo(1.0);
+    }
+
+    private double count(String meter) {
+        var counter = meterRegistry.find(meter).counter();
+        return counter == null ? 0.0 : counter.count();
     }
 
     // =================================================================

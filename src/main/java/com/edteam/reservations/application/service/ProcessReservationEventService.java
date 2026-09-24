@@ -91,8 +91,12 @@ public class ProcessReservationEventService implements ProcessReservationEventUs
         //    mirarlo, y sin arriesgar que una validación más estricta que la de
         //    ayer lo mande a la DLQ cuando su efecto ya está hecho.
         if (!processedMessages.claim(event.messageId(), event.type(), event.subject(), event.sequence())) {
-            log.info("[consumidor] duplicado type={} subject={} messageId={}: se confirma sin reprocesar",
-                    event.type(), event.subject(), event.messageId());
+            log.atInfo()
+                    .addKeyValue("event", "consumer.duplicate")
+                    .addKeyValue("eventType", event.type())
+                    .addKeyValue("subject", event.subject())
+                    .addKeyValue("messageId", event.messageId())
+                    .log("Mensaje duplicado: se confirma sin reprocesar");
             return EventProcessingOutcome.DUPLICATE;
         }
 
@@ -112,15 +116,26 @@ public class ProcessReservationEventService implements ProcessReservationEventUs
         // El payload no se loguea en INFO: lleva ruta y fecha de viaje, que
         // atadas a un usuario son dato personal. Acá quedan type, subject y
         // messageId, que es lo que hace falta para operar.
-        log.info("[consumidor] aplicado type={} subject={} messageId={} sequence={}",
-                event.type(), event.subject(), event.messageId(), event.sequence());
+        log.atInfo()
+                .addKeyValue("event", "consumer.applied")
+                .addKeyValue("eventType", event.type())
+                .addKeyValue("subject", event.subject())
+                .addKeyValue("messageId", event.messageId())
+                .addKeyValue("sequence", event.sequence())
+                .addKeyValue("userId", event.userId())
+                .log("Evento aplicado");
 
         if (outOfOrder) {
             // Se aplica igual y se deja constancia. Descartarlo sería perder
             // una notificación en silencio.
-            log.warn("[consumidor] fuera de orden type={} subject={} sequence={} < último aplicado {}: "
-                            + "se aplica igual y se registra como anomalía",
-                    event.type(), event.subject(), event.sequence(), lastApplied);
+            log.atWarn()
+                    .addKeyValue("event", "consumer.out_of_order")
+                    .addKeyValue("eventType", event.type())
+                    .addKeyValue("subject", event.subject())
+                    .addKeyValue("messageId", event.messageId())
+                    .addKeyValue("sequence", event.sequence())
+                    .addKeyValue("lastAppliedSequence", lastApplied)
+                    .log("Evento fuera de orden: se aplica igual y se registra como anomalía");
             return EventProcessingOutcome.APPLIED_OUT_OF_ORDER;
         }
         return EventProcessingOutcome.APPLIED;

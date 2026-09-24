@@ -1,6 +1,8 @@
 package com.edteam.reservations.infrastructure.adapter.out.airport.catalog;
 
 import com.edteam.reservations.application.exception.AirportCatalogUnavailableException;
+import com.edteam.reservations.infrastructure.logging.LogFields;
+import com.edteam.reservations.infrastructure.logging.Throwables;
 import com.edteam.reservations.infrastructure.resilience.FailureClassification;
 import com.edteam.reservations.infrastructure.resilience.Failures;
 import io.micrometer.core.instrument.Counter;
@@ -55,8 +57,20 @@ public class RetryingCityCatalogClient implements CityCatalogClient {
 
     private static final Logger log = LoggerFactory.getLogger(RetryingCityCatalogClient.class);
 
-    /** Reintentos, con el resultado como etiqueta. Sin esto la política no se puede auditar. */
+    /**
+     * Reintentos, con el resultado como etiqueta. Sin esto la política no se
+     * puede auditar.
+     *
+     * <p>La etiqueta es {@code result} y no {@code outcome}, y el §4.1 del
+     * diseño decía que este contador no tenía ninguna: el código estaba bien y
+     * la tabla mal (hallazgo 17). Lo que sostiene que las dos no se vuelvan a
+     * desalinear es {@code MetricsCatalogTest}, que contrasta el juego exacto
+     * de claves de cada medidor contra una tabla escrita en el test.
+     */
     public static final String RETRIES = "reservations.catalog.retries";
+
+    /** El valor de {@code dependency} en el log, igual al que sale en {@code X-Degraded}. */
+    private static final String DEPENDENCY = "api-catalog";
 
     private final CityCatalogClient delegate;
     private final Retry retry;
@@ -132,26 +146,55 @@ public class RetryingCityCatalogClient implements CityCatalogClient {
                 Duration wait = retry.backoffFor(attempt);
                 if (!CatalogDeadline.allows(wait.plus(attemptCost), clock)) {
                     skippedByBudget.increment();
-                    log.warn("El catálogo no respondió por {} y no queda presupuesto para otro intento "
-                            + "(hacen falta {} ms): se cae al fallback", code, wait.plus(attemptCost).toMillis());
+                    log.atWarn()
+                            .addKeyValue(LogFields.EVENT, LogFields.CATALOG_RETRY)
+                            .addKeyValue(LogFields.DEPENDENCY, DEPENDENCY)
+                            .addKeyValue(LogFields.CITY_CODE, code)
+                            .addKeyValue(LogFields.ATTEMPT, attempt)
+                            .addKeyValue(LogFields.OUTCOME, "skipped_by_budget")
+                            .addKeyValue("required_ms", wait.plus(attemptCost).toMillis())
+                            .log("No queda presupuesto del itinerario para otro intento: se cae al fallback");
                     break;
                 }
 
                 attempted.increment();
                 retried = true;
-                log.warn("El catálogo no respondió por {} (intento {}/{}): se reintenta en {} ms. Causa: {}",
-                        code, attempt, retry.maxAttempts(), wait.toMillis(), e.getMessage());
+                log.atWarn()
+                        .addKeyValue(LogFields.EVENT, LogFields.CATALOG_RETRY)
+                        .addKeyValue(LogFields.DEPENDENCY, DEPENDENCY)
+                        .addKeyValue(LogFields.CITY_CODE, code)
+                        .addKeyValue(LogFields.ATTEMPT, attempt)
+                        .addKeyValue(LogFields.MAX_ATTEMPTS, retry.maxAttempts())
+                        .addKeyValue(LogFields.BACKOFF_MS, wait.toMillis())
+                        .addKeyValue(LogFields.OUTCOME, "retrying")
+                        .addKeyValue(LogFields.EXCEPTION_CLASS, Throwables.rootClassOf(e))
+                        .addKeyValue(LogFields.REASON, Throwables.reasonOf(e))
+                        .log("El catálogo no respondió: se reintenta");
                 if (!sleeper.sleep(wait)) {
                     // Interrumpieron el hilo: se corta acá en lugar de seguir
                     // ocupando a un pedido que ya nadie está esperando.
-                    log.warn("Reintento de {} interrumpido: se devuelve el último fallo", code);
+                    log.atWarn()
+                            .addKeyValue(LogFields.EVENT, LogFields.CATALOG_RETRY)
+                            .addKeyValue(LogFields.DEPENDENCY, DEPENDENCY)
+                            .addKeyValue(LogFields.CITY_CODE, code)
+                            .addKeyValue(LogFields.ATTEMPT, attempt)
+                            .addKeyValue(LogFields.OUTCOME, "interrupted")
+                            .log("Reintento interrumpido: se devuelve el último fallo");
                     break;
                 }
             }
         }
 
         exhausted.increment();
-        log.warn("El catálogo no respondió por {} después de {} intentos", code, retry.maxAttempts());
+        log.atWarn()
+                .addKeyValue(LogFields.EVENT, LogFields.CATALOG_RETRY)
+                .addKeyValue(LogFields.DEPENDENCY, DEPENDENCY)
+                .addKeyValue(LogFields.CITY_CODE, code)
+                .addKeyValue(LogFields.MAX_ATTEMPTS, retry.maxAttempts())
+                .addKeyValue(LogFields.OUTCOME, "exhausted")
+                .addKeyValue(LogFields.EXCEPTION_CLASS, Throwables.rootClassOf(last))
+                .addKeyValue(LogFields.REASON, Throwables.reasonOf(last))
+                .log("El catálogo no respondió después de todos los intentos");
         throw new AirportCatalogUnavailableException(
                 "El catálogo no respondió por '%s' después de %d intentos".formatted(code, retry.maxAttempts()),
                 last);

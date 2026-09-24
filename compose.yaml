@@ -5,6 +5,30 @@
 #   docker compose down         los detiene (conserva los datos)
 #   docker compose down -v      los detiene y borra los datos
 #
+# El backend de observabilidad va aparte, detrás de un profile:
+#
+#   docker compose --profile observability up -d
+#
+# La aplicación se levanta aparte, con dos variables: una para que el scrape
+# pueda leer /actuator/prometheus sin token y otra para exportar las trazas.
+#
+#   METRICS_SCRAPE_OPEN=true TRACING_EXPORT_ENABLED=true LOG_FORMAT=json \
+#     ./mvnw spring-boot:run > docker/logs/app.log
+#
+#   Prometheus  http://127.0.0.1:9091   métricas y la pestaña Alerts
+#   Grafana     http://127.0.0.1:3000   paneles (anónimo, sólo lectura, local)
+#   Loki        http://127.0.0.1:3100   índice de logs
+#   Tempo       http://127.0.0.1:4318   OTLP/HTTP para las trazas
+#
+# Está detrás de un profile y no encendido por defecto por dos razones: los
+# cuatro contenedores en reposo son ~600 MB de RAM, y el compose de todos los
+# días tiene que seguir levantando lo que hace falta para CORRER la aplicación,
+# no para observarla. La aplicación arranca y los tests pasan sin ninguno de
+# estos cuatro, igual que arrancan sin Redis, sin broker y sin catálogo.
+#
+# Los cuatro son OSS y corren enteros en local: ninguno pide una cuenta ni un
+# plan pago.
+#
 # Los valores por defecto coinciden con los de src/main/resources/application.yml,
 # así que 'mvn spring-boot:run' conecta sin configurar nada más.
 #
@@ -154,6 +178,134 @@ services:
       - "3306"
     restart: always
 
+  # ------------------------------------------------------------------
+  # Backend de observabilidad. Profile 'observability'.
+  # ------------------------------------------------------------------
+
+  # Raspa /actuator/prometheus cada 15 s y evalúa las reglas de
+  # docker/prometheus/rules/reservations.yml.
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    container_name: reservations-prometheus
+    profiles: ["observability"]
+    # 9091 hacia afuera: el 9090 de la máquina es el puerto de GESTIÓN de la
+    # aplicación, y pisarlo haría que Prometheus se raspe a sí mismo.
+    #
+    # Sólo en loopback, igual que Redis y que RabbitMQ y por el mismo motivo:
+    # un Prometheus alcanzable desde la red publica la volumetría de negocio
+    # —cuántas reservas por minuto, cuántas fallan— sin pedir nada.
+    ports:
+      - "127.0.0.1:9091:9090"
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./docker/prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    # La aplicación corre FUERA de Docker ('mvn spring-boot:run'), así que
+    # desde adentro del contenedor 'localhost' es el contenedor. Esto es lo que
+    # hace que el target funcione en Linux y no sólo en Docker Desktop.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      # 7 días: es un entorno local y lo que se mira es la última hora.
+      - --storage.tsdb.retention.time=7d
+      - --web.enable-lifecycle
+    restart: unless-stopped
+
+  # Los paneles. Datasources provisionados por archivo: un Grafana que hay que
+  # configurar a mano después de cada 'down -v' no lo usa nadie.
+  grafana:
+    image: grafana/grafana-oss:11.5.1
+    container_name: reservations-grafana
+    profiles: ["observability"]
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      # Sin login y como Viewer. Es defendible SÓLO porque el puerto está en
+      # loopback: un Grafana sin contraseña alcanzable desde la red es una
+      # consola con acceso de lectura a todo. En cualquier entorno real esto va
+      # detrás del SSO de la organización.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    volumes:
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+      - loki
+      - tempo
+    restart: unless-stopped
+
+  # Índice de logs. Con el JSON del esquema, 'event' y 'level' son etiquetas de
+  # consulta y 'correlationId' es un campo del registro —no una etiqueta, que
+  # sería una serie por pedido—.
+  loki:
+    image: grafana/loki:3.3.2
+    container_name: reservations-loki
+    profiles: ["observability"]
+    ports:
+      - "127.0.0.1:3100:3100"
+    volumes:
+      - ./docker/loki/loki.yml:/etc/loki/local-config.yaml:ro
+      - loki-data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    restart: unless-stopped
+
+  # El que lee el archivo de log y lo empuja a Loki.
+  #
+  # Va acá y NO como un appender de red adentro de la aplicación: un appender
+  # que manda logs por TCP agrega un modo de falla nuevo —qué pasa cuando el
+  # backend de logs no responde— dentro del proceso que se está tratando de
+  # observar. La aplicación escribe JSON a stdout y punto.
+  #
+  #   LOG_FORMAT=json ./mvnw spring-boot:run > docker/logs/app.log
+  alloy:
+    image: grafana/alloy:v1.5.1
+    container_name: reservations-alloy
+    profiles: ["observability"]
+    volumes:
+      - ./docker/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      # El directorio vive en el repositorio (con su .gitignore) y no en /tmp:
+      # un bind mount de una ruta que no existe falla el arranque del contenedor
+      # en Docker Desktop, y «arreglalo creando un directorio» es el tipo de
+      # paso que hace que nadie levante el stack una segunda vez.
+      - ${RESERVATIONS_LOG_DIR:-./docker/logs}:/var/log/reservations:ro
+      - alloy-data:/var/lib/alloy/data
+    command:
+      - run
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    depends_on:
+      - loki
+    restart: unless-stopped
+
+  # Trazas. La aplicación exporta sólo con TRACING_EXPORT_ENABLED=true, que es
+  # lo que permite que el proceso arranque sin este contenedor.
+  tempo:
+    image: grafana/tempo:2.7.0
+    container_name: reservations-tempo
+    profiles: ["observability"]
+    ports:
+      - "127.0.0.1:4318:4318"
+      - "127.0.0.1:3200:3200"
+    volumes:
+      - ./docker/tempo/tempo.yml:/etc/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    command: -config.file=/etc/tempo.yaml
+    restart: unless-stopped
+
 volumes:
   postgres-data:
   rabbitmq-data:
+  # Los cuatro del profile 'observability'. Con volumen y no sin él porque
+  # perder el histórico de métricas en cada reinicio hace inútil mirar una
+  # ventana de más de cinco minutos, que es cuando esto empieza a servir.
+  prometheus-data:
+  grafana-data:
+  loki-data:
+  tempo-data:
+  alloy-data:

@@ -4,6 +4,7 @@ import com.edteam.reservations.infrastructure.config.CircuitBreakerProperties;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
+import com.edteam.reservations.infrastructure.logging.LogFields;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -90,18 +91,29 @@ public final class Circuit {
                 .build();
 
         CircuitBreaker breaker = registry.circuitBreaker(name, config);
-        breaker.getEventPublisher().onStateTransition(event -> log.warn(
-                "[circuito] {}: {} -> {}", name,
-                event.getStateTransition().getFromState(), event.getStateTransition().getToState()));
+        breaker.getEventPublisher().onStateTransition(event -> log.atWarn()
+                .addKeyValue(LogFields.EVENT, LogFields.CIRCUIT_STATE)
+                .addKeyValue("circuit", name)
+                .addKeyValue("state.from", event.getStateTransition().getFromState().name())
+                .addKeyValue("state.to", event.getStateTransition().getToState().name())
+                .log("Transición de estado del circuito"));
 
-        log.info("Circuito '{}': ventana {} llamadas (mín. {}), {} % de fallo o {} % por encima de {} ms, "
-                        + "abierto {} s, {} pruebas en semiabierto, ventana vencida a los {} min",
-                name, properties.slidingWindowSize(), properties.minimumNumberOfCalls(),
-                properties.failureRateThreshold(), properties.slowCallRateThreshold(),
-                properties.slowCallDurationThreshold().toMillis(),
-                properties.waitDurationInOpenState().toSeconds(),
-                properties.permittedCallsInHalfOpenState(),
-                properties.windowMaxAge().toMinutes());
+        // Toda la configuración en campos y no en prosa: antes era una frase
+        // de la que no se podía filtrar un solo valor, y son los umbrales que
+        // se comparan contra lo que el circuito está haciendo de verdad.
+        log.atInfo()
+                .addKeyValue(LogFields.EVENT, LogFields.STARTUP_WIRING)
+                .addKeyValue("component", "circuit")
+                .addKeyValue("circuit", name)
+                .addKeyValue("circuit.windowSize", properties.slidingWindowSize())
+                .addKeyValue("circuit.minimumCalls", properties.minimumNumberOfCalls())
+                .addKeyValue("circuit.failureRateThreshold", properties.failureRateThreshold())
+                .addKeyValue("circuit.slowCallRateThreshold", properties.slowCallRateThreshold())
+                .addKeyValue("circuit.slowCallDurationMs", properties.slowCallDurationThreshold().toMillis())
+                .addKeyValue("circuit.openSeconds", properties.waitDurationInOpenState().toSeconds())
+                .addKeyValue("circuit.halfOpenCalls", properties.permittedCallsInHalfOpenState())
+                .addKeyValue("circuit.windowMaxAgeMinutes", properties.windowMaxAge().toMinutes())
+                .log("Circuito configurado");
 
         return new Circuit(breaker, properties.windowMaxAge(), clock);
     }
@@ -117,7 +129,12 @@ public final class Circuit {
     public static Circuit disabled(String name, CircuitBreakerRegistry registry, Clock clock) {
         CircuitBreaker breaker = registry.circuitBreaker(name, CircuitBreakerConfig.ofDefaults());
         breaker.transitionToDisabledState();
-        log.warn("Circuito '{}' APAGADO por configuración: las llamadas pasan sin contarse", name);
+        log.atWarn()
+                .addKeyValue(LogFields.EVENT, LogFields.STARTUP_WIRING)
+                .addKeyValue("component", "circuit")
+                .addKeyValue("circuit", name)
+                .addKeyValue("circuit.enabled", false)
+                .log("Circuito APAGADO por configuración: las llamadas pasan sin contarse");
         return new Circuit(breaker, Duration.ofDays(365), clock);
     }
 
@@ -165,8 +182,12 @@ public final class Circuit {
         if (breaker.getState() != CircuitBreaker.State.CLOSED) {
             return;
         }
-        log.info("[circuito] {}: la ventana tenía más de {} min sin llamadas; se descarta",
-                breaker.getName(), windowMaxAge.toMinutes());
+        log.atInfo()
+                .addKeyValue(LogFields.EVENT, LogFields.CIRCUIT_STATE)
+                .addKeyValue("circuit", breaker.getName())
+                .addKeyValue(LogFields.REASON, "stale_window")
+                .addKeyValue("circuit.windowMaxAgeMinutes", windowMaxAge.toMinutes())
+                .log("La ventana del circuito quedó vieja: se descarta");
         breaker.reset();
     }
 }

@@ -1,5 +1,8 @@
 package com.edteam.reservations.infrastructure.adapter.out.outbox;
 
+import com.edteam.reservations.infrastructure.logging.LogFields;
+import com.edteam.reservations.infrastructure.logging.Throwables;
+import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.binder.MeterBinder;
 import org.slf4j.Logger;
@@ -8,6 +11,7 @@ import org.springframework.dao.DataAccessException;
 
 import java.time.Duration;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
@@ -55,10 +59,36 @@ public class OutboxMetrics implements MeterBinder {
     public static final String RETAINED = "reservations.outbox.dispatched.retained";
     public static final String DLQ_DEPTH = "reservations.messaging.dlq.depth";
 
+    /**
+     * Lecturas del estado del outbox que fallaron.
+     *
+     * <p>Existe porque una métrica ciega es un incidente en sí misma: si este
+     * contador crece, los cinco gauges de abajo están devolviendo el centinela
+     * y las alertas 4 y 5 no pueden disparar. La octava regla de Prometheus
+     * mira este contador, no los gauges.
+     */
+    public static final String READ_ERRORS = "reservations.outbox.metrics.errors";
+
+    /**
+     * Centinela de «no sé».
+     *
+     * <p>Es el hallazgo 15, y el repositorio ya conocía la regla: el
+     * {@code depth()} de la DLQ devuelve {@code -1} con el broker caído y su
+     * comentario explica por qué —«un cero sería una afirmación falsa, y en un
+     * tablero con alerta en {@code > 0} una afirmación falsa tranquiliza»—.
+     * Estos gauges devolvían {@code OutboxStats.EMPTY}, o sea ceros, con la
+     * base caída: la alerta 4 ({@code lag > 300}, P1) y la 5
+     * ({@code increase(dead) > 0}) fallaban en silencio <b>en el modo de falla
+     * que existen para atrapar</b>.
+     */
+    private static final long UNKNOWN = -1L;
+
     private final OutboxAdmin outbox;
     private final Supplier<Long> dlqDepth;
     private final Duration cacheTtl;
     private final AtomicReference<Snapshot> snapshot = new AtomicReference<>();
+    private final AtomicBoolean readable = new AtomicBoolean(true);
+    private final AtomicReference<Counter> readErrors = new AtomicReference<>();
 
     public OutboxMetrics(OutboxAdmin outbox, Supplier<Long> dlqDepth, Duration cacheTtl) {
         this.outbox = Objects.requireNonNull(outbox);
@@ -68,22 +98,49 @@ public class OutboxMetrics implements MeterBinder {
 
     @Override
     public void bindTo(MeterRegistry registry) {
-        io.micrometer.core.instrument.Gauge.builder(PENDING, this, m -> m.stats().pending())
-                .description("Mensajes del outbox esperando publicación")
+        readErrors.set(Counter.builder(READ_ERRORS)
+                .description("Lecturas del estado del outbox que fallaron: mientras crezca, "
+                        + "los gauges del outbox devuelven el centinela y las alertas están ciegas")
+                .register(registry));
+
+        io.micrometer.core.instrument.Gauge.builder(PENDING, this, m -> m.honest(OutboxStats::pending))
+                .description("Mensajes del outbox esperando publicación. -1 = no se pudo leer")
                 .register(registry);
-        io.micrometer.core.instrument.Gauge.builder(LAG, this, m -> m.stats().lag().toMillis() / 1000.0)
+        io.micrometer.core.instrument.Gauge.builder(LAG, this,
+                        m -> m.honest(stats -> stats.lag().toMillis() / 1000.0))
                 .baseUnit("seconds")
-                .description("Antigüedad del mensaje pendiente más viejo: el retraso real de la notificación")
+                .description("Antigüedad del mensaje pendiente más viejo: el retraso real de la "
+                        + "notificación. -1 = no se pudo leer")
                 .register(registry);
-        io.micrometer.core.instrument.Gauge.builder(DEAD, this, m -> m.stats().dead())
-                .description("Dead letter del PRODUCTOR: mensajes que no se pudieron publicar. Alerta con > 0")
+        io.micrometer.core.instrument.Gauge.builder(DEAD, this, m -> m.honest(OutboxStats::dead))
+                .description("Dead letter del PRODUCTOR: mensajes que no se pudieron publicar. "
+                        + "Alerta con > 0. -1 = no se pudo leer")
                 .register(registry);
-        io.micrometer.core.instrument.Gauge.builder(RETAINED, this, m -> m.stats().dispatched())
-                .description("Mensajes ya publicados y todavía no purgados")
+        io.micrometer.core.instrument.Gauge.builder(RETAINED, this, m -> m.honest(OutboxStats::dispatched))
+                .description("Mensajes ya publicados y todavía no purgados. -1 = no se pudo leer")
                 .register(registry);
         io.micrometer.core.instrument.Gauge.builder(DLQ_DEPTH, this, m -> m.dlqDepth.get())
-                .description("Dead letter del CONSUMIDOR, en el broker. Alerta con > 0")
+                .description("Dead letter del CONSUMIDOR, en el broker. Alerta con > 0. -1 = no se pudo leer")
                 .register(registry);
+    }
+
+    /**
+     * Un gauge que no afirma lo que no puede verificar.
+     *
+     * <p>Devuelve el valor leído, o {@code -1} si la última lectura falló. La
+     * alternativa —el último valor conocido, o cero— es peor que no tener la
+     * métrica: con la base caída el lag no sube, se congela, y la alerta que
+     * existe para avisar que las notificaciones no salen se queda callada
+     * exactamente cuando hay que despertarla.
+     */
+    private double honest(java.util.function.ToDoubleFunction<OutboxStats> field) {
+        // El orden importa: PRIMERO se lee —que es lo que actualiza la marca de
+        // «esta foto es verificada»— y recién después se decide si el valor se
+        // puede afirmar. Al revés, la primera lectura fallida devolvería el
+        // cero de OutboxStats.EMPTY, que es exactamente la afirmación falsa que
+        // este método existe para no hacer.
+        OutboxStats stats = stats();
+        return readable.get() ? field.applyAsDouble(stats) : UNKNOWN;
     }
 
     private OutboxStats stats() {
@@ -95,12 +152,22 @@ public class OutboxMetrics implements MeterBinder {
         try {
             OutboxStats fresh = outbox.stats();
             snapshot.set(new Snapshot(fresh, now));
+            readable.set(true);
             return fresh;
         } catch (DataAccessException e) {
-            // Que el monitoreo no tire el raspado completo. Se devuelve lo
-            // último conocido —o ceros— y se avisa: una métrica que falla no
-            // puede ser un incidente peor que el que está midiendo.
-            log.warn("No se pudieron leer las métricas del outbox: {}", e.getMessage());
+            // Que el monitoreo no tire el raspado completo, y que tampoco
+            // mienta: se marca la foto como no verificada —los gauges pasan a
+            // -1— y se cuenta el fallo, que es lo que alerta la regla 8.
+            readable.set(false);
+            Counter counter = readErrors.get();
+            if (counter != null) {
+                counter.increment();
+            }
+            log.atWarn()
+                    .addKeyValue(LogFields.EVENT, "outbox.metrics_unreadable")
+                    .addKeyValue(LogFields.EXCEPTION_CLASS, Throwables.rootClassOf(e))
+                    .addKeyValue(LogFields.REASON, Throwables.reasonOf(e))
+                    .log("No se pudieron leer las métricas del outbox: los gauges pasan al centinela");
             return current != null ? current.stats() : OutboxStats.EMPTY;
         }
     }

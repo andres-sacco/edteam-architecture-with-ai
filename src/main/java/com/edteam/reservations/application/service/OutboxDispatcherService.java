@@ -16,6 +16,7 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
@@ -57,6 +58,15 @@ public class OutboxDispatcherService implements DispatchPendingNotificationsUseC
 
     /** Misma clave que usa el filtro HTTP: la traza no se corta en el relay. */
     private static final String MDC_CORRELATION_ID = "correlationId";
+
+    /**
+     * Vocabulario del log de esta clase. Literales y no una constante de
+     * {@code infrastructure.logging}: la capa de aplicación declara QUÉ dato
+     * acompaña al hecho y no importa nada del sistema de logs —ArchUnit lo
+     * verifica—. Que estos nombres coincidan con los del resto lo sostiene el
+     * test de esquema, no un import.
+     */
+    private static final String EVENT = "event";
 
     private final EventOutboxPort eventOutbox;
     private final EventPublisherPort eventPublisher;
@@ -129,13 +139,25 @@ public class OutboxDispatcherService implements DispatchPendingNotificationsUseC
             // Sin intento gastado: no fallaron. O esperan a que salga el
             // mensaje anterior de su reserva, o ni se intentaron porque el
             // destino está caído, o eran una sonda que no prosperó.
+            //
+            // A DEBUG y no a INFO: el número ya viaja como campo 'deferred' en
+            // la línea del tick, y en INFO eran dos líneas por vuelta para el
+            // mismo dato —2.160 por hora durante una caída del broker—.
             eventOutbox.release(deferred);
-            log.info("{} mensajes liberados sin gastar intento{}", deferred.size(),
-                    publisherDown ? " (el destino no está disponible)" : "");
+            log.atDebug()
+                    .addKeyValue(EVENT, "outbox.deferred")
+                    .addKeyValue("deferred", deferred.size())
+                    .addKeyValue("publisherDown", publisherDown)
+                    .log("Mensajes liberados sin gastar intento");
         }
 
-        log.debug("Despacho de outbox{}: {} publicados, {} fallidos, {} liberados",
-                probe ? " (sonda)" : "", dispatched, failed, deferred.size());
+        log.atDebug()
+                .addKeyValue(EVENT, "outbox.batch")
+                .addKeyValue("probe", probe)
+                .addKeyValue("dispatched", dispatched)
+                .addKeyValue("failed", failed)
+                .addKeyValue("deferred", deferred.size())
+                .log("Lote del outbox despachado");
         return new OutboxDispatchResult(dispatched, failed, deferred.size());
     }
 
@@ -152,6 +174,12 @@ public class OutboxDispatcherService implements DispatchPendingNotificationsUseC
         // El correlation id del pedido que originó el hecho se restituye acá:
         // sin esto la traza se corta justo en el salto de lo sincrónico a lo
         // asincrónico, que es donde más cuesta reconstruirla a mano.
+        //
+        // Se GUARDA el anterior y se restituye al salir, en lugar de borrarlo.
+        // Es el hallazgo 10 de la auditoría: con 'remove', después del primer
+        // mensaje el id de la corrida del relay quedaba vacío y el resto de la
+        // vuelta —incluida la línea INFO del tick— salía sin ninguno.
+        Map<String, String> previous = MDC.getCopyOfContextMap();
         boolean correlated = message.correlationId() != null;
         if (correlated) {
             MDC.put(MDC_CORRELATION_ID, message.correlationId());
@@ -164,32 +192,77 @@ public class OutboxDispatcherService implements DispatchPendingNotificationsUseC
             // El publicador sabe que el destino está caído y ni lo intentó.
             // Es la diferencia entre «el mensaje llegará tarde» y «el mensaje
             // está un intento más cerca de la dead letter».
-            log.info("No se intentó publicar {} (mensaje {}): {}", message.type(), message.id(), e.getMessage());
+            //
+            // A DEBUG y no a INFO: durante una caída del broker esto es una
+            // línea por mensaje del lote, cada cinco segundos. Que el destino
+            // no está se sabe por la transición del circuito, que se loguea
+            // una vez, y por el lag del outbox, que es lo que alerta.
+            log.atDebug()
+                    .addKeyValue(EVENT, "outbox.not_attempted")
+                    .addKeyValue("eventType", message.type())
+                    .addKeyValue("messageId", message.id())
+                    .log("No se intentó publicar: el destino no está disponible");
             return Outcome.NOT_ATTEMPTED;
         } catch (EventPublishException e) {
             if (probe) {
                 // Una sonda no es un intento de entrega: el mensaje vuelve
                 // como estaba y el circuito ya se enteró del fallo.
-                log.info("La sonda sobre {} (mensaje {}) no prosperó; se libera sin gastar intento: {}",
-                        message.type(), message.id(), e.getMessage());
+                log.atDebug()
+                        .addKeyValue(EVENT, "outbox.probe")
+                        .addKeyValue("eventType", message.type())
+                        .addKeyValue("messageId", message.id())
+                        .addKeyValue("outcome", "failed")
+                        .log("La sonda no prosperó: se libera sin gastar intento");
                 return Outcome.NOT_ATTEMPTED;
             }
-            log.warn("Fallo transitorio publicando {} (mensaje {}, reserva {}, intento {}): {}",
-                    message.type(), message.id(), message.subject(), message.attempts() + 1, e.getMessage());
+            log.atWarn()
+                    .addKeyValue(EVENT, "outbox.publish_failed")
+                    .addKeyValue("eventType", message.type())
+                    .addKeyValue("messageId", message.id())
+                    .addKeyValue("subject", message.subject())
+                    .addKeyValue("attempt", message.attempts() + 1)
+                    .addKeyValue("failure", "transient")
+                    .addKeyValue("exception.class", e.getClass().getSimpleName())
+                    .log("Fallo transitorio publicando el mensaje");
             eventOutbox.markFailed(message.id(), e.getMessage(), OutboxFailure.TRANSIENT);
             return Outcome.FAILED;
         } catch (RuntimeException e) {
             // Permanente: insistir no cambia el resultado. Va a la dead letter
             // ahora y no después de quemar cinco intentos del despachador.
-            log.error("Fallo permanente publicando {} (mensaje {}, reserva {}): {}. "
-                            + "Va a la dead letter del productor sin reintentos.",
-                    message.type(), message.id(), message.subject(), e.toString());
+            //
+            // Se escribe la CLASE de la excepción y no su toString(): el
+            // mensaje de una excepción de JPA o de PostgreSQL trae los valores
+            // enlazados, que es el hallazgo 4 de la auditoría. La columna
+            // last_error de la fila sí guarda el detalle: es nuestra base, no
+            // el SaaS de logs.
+            log.atError()
+                    .addKeyValue(EVENT, "outbox.dead_lettered")
+                    .addKeyValue("eventType", message.type())
+                    .addKeyValue("messageId", message.id())
+                    .addKeyValue("subject", message.subject())
+                    .addKeyValue("failure", "permanent")
+                    .addKeyValue("exception.class", e.getClass().getSimpleName())
+                    .log("Fallo permanente publicando: va a la dead letter del productor sin reintentos");
             eventOutbox.markFailed(message.id(), e.toString(), OutboxFailure.PERMANENT);
             return Outcome.FAILED;
         } finally {
             if (correlated) {
-                MDC.remove(MDC_CORRELATION_ID);
+                restoreMdc(previous);
             }
+        }
+    }
+
+    /**
+     * Devuelve el MDC al estado en que estaba antes de publicar este mensaje.
+     *
+     * <p>{@code setContextMap(null)} tira {@code IllegalArgumentException}, así
+     * que el caso «no había nada» se escribe a mano.
+     */
+    private static void restoreMdc(Map<String, String> previous) {
+        if (previous == null || previous.isEmpty()) {
+            MDC.remove(MDC_CORRELATION_ID);
+        } else {
+            MDC.setContextMap(previous);
         }
     }
 }

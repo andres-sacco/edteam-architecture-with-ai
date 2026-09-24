@@ -1,5 +1,6 @@
 package com.edteam.reservations.infrastructure.resilience;
 
+import com.edteam.reservations.infrastructure.logging.LogFields;
 import com.edteam.reservations.infrastructure.logging.LogSanitizer;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -69,9 +70,15 @@ public class DegradationRecorder {
 
         Degradation.mark(dependency);
 
-        log.warn("[degradado] {} respondió por fallback ({}): {}{}",
-                dependency, reason, LogSanitizer.sanitize(detail, 256),
-                staleness == null ? "" : ", dato de hace %d s".formatted(staleness.toSeconds()));
+        var event = log.atWarn()
+                .addKeyValue(LogFields.EVENT, LogFields.DEGRADED_SERVED)
+                .addKeyValue(LogFields.DEPENDENCY, dependency)
+                .addKeyValue(LogFields.REASON, reason)
+                .addKeyValue("detail", LogSanitizer.sanitize(detail, 256));
+        if (staleness != null) {
+            event = event.addKeyValue("staleness_s", staleness.toSeconds());
+        }
+        event.log("Respuesta servida por fallback");
     }
 
     /**
@@ -87,7 +94,11 @@ public class DegradationRecorder {
                 .description("Pedidos que no tuvieron ningún fallback y fallaron de forma explícita")
                 .register(registry)
                 .increment();
-        log.warn("[degradado] {} sin fallback posible ({}): {}",
-                dependency, reason, LogSanitizer.sanitize(detail, 256));
+        log.atWarn()
+                .addKeyValue(LogFields.EVENT, LogFields.DEGRADED_EXHAUSTED)
+                .addKeyValue(LogFields.DEPENDENCY, dependency)
+                .addKeyValue(LogFields.REASON, reason)
+                .addKeyValue("detail", LogSanitizer.sanitize(detail, 256))
+                .log("Sin fallback posible: el pedido falla de frente");
     }
 }

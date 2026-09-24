@@ -1,0 +1,68 @@
+// Los logs llegan a Loki por ARCHIVO, no por un appender de red adentro de la
+// aplicación.
+//
+// La razón no es de comodidad: un appender que manda logs por TCP agrega un
+// modo de falla nuevo —qué pasa cuando el backend de logs no responde— DENTRO
+// del proceso que se está tratando de observar. La aplicación escribe JSON a
+// stdout y punto; quien lo recoja es problema del entorno. En local lo hace
+// esto; en un despliegue real, el agente del nodo.
+//
+// Uso:
+//   LOG_FORMAT=json ./mvnw spring-boot:run > docker/logs/app.log
+//   docker compose --profile observability up -d
+
+local.file_match "reservations" {
+  path_targets = [{
+    __path__ = "/var/log/reservations/*.log",
+    job      = "flight-reservations",
+  }]
+  sync_period = "5s"
+}
+
+loki.source.file "reservations" {
+  targets    = local.file_match.reservations.targets
+  forward_to = [loki.process.reservations.receiver]
+}
+
+loki.process "reservations" {
+  // El esquema del §1 es JSON, así que los campos sobre los que se investiga
+  // se extraen directo en vez de con una expresión regular por formato de
+  // mensaje — que es exactamente lo que el log de texto obligaba a escribir.
+  stage.json {
+    expressions = {
+      level         = "level",
+      event         = "event",
+      correlationId = "correlationId",
+      traceId       = "traceId",
+      service       = "service",
+      env           = "env",
+      timestamp     = "\"@timestamp\"",
+    }
+  }
+
+  stage.timestamp {
+    source = "timestamp"
+    format = "RFC3339"
+  }
+
+  // ETIQUETAS: sólo las de cardinalidad acotada. `correlationId` y `traceId`
+  // NO son etiquetas —serían una serie por pedido, que es la forma más rápida
+  // de tumbar un Loki— y quedan como campos del registro, buscables con
+  // | json | correlationId = "...".
+  stage.labels {
+    values = {
+      level   = "",
+      event   = "",
+      service = "",
+      env     = "",
+    }
+  }
+
+  forward_to = [loki.write.default.receiver]
+}
+
+loki.write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

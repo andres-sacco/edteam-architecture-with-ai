@@ -16,6 +16,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.MDC;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -54,6 +55,73 @@ class OutboxDispatcherServiceTest {
     private static OutboxMessage message(String id, String type, String subject, long sequence) {
         return new OutboxMessage(id, type, 1, subject, sequence, "{}", "corr-1",
                 TestFixtures.NOW, TestFixtures.NOW, 0, OutboxStatus.IN_FLIGHT);
+    }
+
+    // =================================================================
+    // El id de la corrida del relay (hallazgo 10 de la auditoría)
+    // =================================================================
+
+    @Test
+    @DisplayName("al terminar, el MDC vuelve al id de la corrida en lugar de quedar vacío")
+    void restoresTheRunIdInsteadOfClearingIt() {
+        // Era el hallazgo 10: el despachador pisaba el correlationId con el del
+        // mensaje y lo BORRABA al terminar. Con el id de la corrida del relay
+        // puesto por el decorador del scheduler, eso hacía que —después del
+        // primer mensaje— el resto de la vuelta saliera sin ningún id: las dos
+        // líneas de cierre del despachador y, sobre todo, la línea INFO del
+        // tick, que es la que el §1.4 del diseño muestra como ejemplo
+        // llevándolo.
+        MDC.put("correlationId", "job-outbox-relay-3f2a91c4");
+        try {
+            when(eventOutbox.pollPending(anyInt()))
+                    .thenReturn(List.of(message("m-1", "reservation.created", "10241", 1)));
+
+            service.dispatchPending(10);
+
+            assertThat(MDC.get("correlationId"))
+                    .withFailMessage("El relay dejó el MDC vacío: el resto de la vuelta sale sin id")
+                    .isEqualTo("job-outbox-relay-3f2a91c4");
+        } finally {
+            MDC.clear();
+        }
+    }
+
+    @Test
+    @DisplayName("durante la publicación, el MDC lleva el id del pedido que originó el hecho")
+    void usesTheOriginatingRequestIdWhilePublishing() {
+        // Es el salto mejor resuelto del sistema y no se toca: la traza cruza
+        // el borde de lo sincrónico a lo asincrónico porque el envelope lleva
+        // el id del pedido que originó el hecho.
+        MDC.put("correlationId", "job-outbox-relay-3f2a91c4");
+        List<String> seenWhilePublishing = new ArrayList<>();
+        try {
+            when(eventOutbox.pollPending(anyInt()))
+                    .thenReturn(List.of(message("m-1", "reservation.created", "10241", 1)));
+            doAnswer(invocation -> {
+                seenWhilePublishing.add(MDC.get("correlationId"));
+                return null;
+            }).when(eventPublisher).publish(any(OutboxMessage.class));
+
+            service.dispatchPending(10);
+
+            assertThat(seenWhilePublishing).containsExactly("corr-1");
+        } finally {
+            MDC.clear();
+        }
+    }
+
+    @Test
+    @DisplayName("sin id previo, el MDC queda limpio y no explota")
+    void withoutAPreviousIdTheMdcIsLeftClean() {
+        // `MDC.setContextMap(null)` tira IllegalArgumentException, y «no había
+        // nada» es el caso normal en un test y en un reprocesamiento manual.
+        MDC.clear();
+        when(eventOutbox.pollPending(anyInt()))
+                .thenReturn(List.of(message("m-1", "reservation.created", "10241", 1)));
+
+        service.dispatchPending(10);
+
+        assertThat(MDC.get("correlationId")).isNull();
     }
 
     // =================================================================

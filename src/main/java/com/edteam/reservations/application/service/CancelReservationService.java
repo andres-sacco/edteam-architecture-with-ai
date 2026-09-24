@@ -80,7 +80,17 @@ public class CancelReservationService implements CancelReservationUseCase {
         auditTrail.record(AuditEntry.allowed(AuditAction.RESERVATION_CANCELLED,
                 command.actor().email(), saved.requireId().toString(), saved.version(), now));
 
-        log.info("Reserva cancelada id={} version={}", saved.requireId(), saved.version());
+        // Era la línea con menos campos de las cuatro, y es la del reclamo más
+        // frecuente («yo no cancelé»): sin `userId` no se podía responder
+        // «mostrame todo lo que hizo este usuario».
+        log.atInfo()
+                .addKeyValue("event", "reservation.cancelled")
+                .addKeyValue("reservationId", saved.requireId().value())
+                .addKeyValue("userId", saved.userId().value())
+                .addKeyValue("reservationVersion", saved.version())
+                .addKeyValue("itinerary.origin", saved.itinerary().origin().value())
+                .addKeyValue("itinerary.destination", saved.itinerary().destination().value())
+                .log("Reserva cancelada");
         return saved;
     }
 }

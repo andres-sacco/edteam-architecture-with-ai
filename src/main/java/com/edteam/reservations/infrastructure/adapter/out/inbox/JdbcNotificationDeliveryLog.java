@@ -3,6 +3,7 @@ package com.edteam.reservations.infrastructure.adapter.out.inbox;
 import com.edteam.reservations.application.notification.NotificationDelivery;
 import com.edteam.reservations.application.port.out.NotificationDeliveryPort;
 import com.edteam.reservations.infrastructure.jdbc.Utc;
+import com.edteam.reservations.infrastructure.logging.LogFields;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -50,8 +51,18 @@ public class JdbcNotificationDeliveryLog implements NotificationDeliveryPort {
 
         // El destinatario por id interno, que fuera de nuestra base no es un
         // dato personal. Ni el email ni la ruta del viaje entran acá.
-        log.info("[notificaciones] emitida type={} reserva={} usuario={} messageId={}",
-                delivery.type(), delivery.subject(), delivery.userId(), delivery.messageId());
+        //
+        // A DEBUG y no a INFO: duplica exactamente lo que
+        // `ProcessReservationEventService` ya dice con `event=consumer.applied`
+        // sobre el mismo `messageId`. Son 10.500 líneas por día que no agregan
+        // un dato que la otra no tenga.
+        log.atDebug()
+                .addKeyValue(LogFields.EVENT, "notification.delivered")
+                .addKeyValue(LogFields.EVENT_TYPE, delivery.type())
+                .addKeyValue(LogFields.SUBJECT, delivery.subject())
+                .addKeyValue(LogFields.USER_ID, delivery.userId())
+                .addKeyValue(LogFields.MESSAGE_ID, delivery.messageId())
+                .log("Notificación emitida");
     }
 
     @Override

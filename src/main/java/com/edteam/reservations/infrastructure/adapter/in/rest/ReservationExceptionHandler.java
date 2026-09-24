@@ -17,6 +17,9 @@ import com.edteam.reservations.domain.exception.ReservationAlreadyCancelledExcep
 import com.edteam.reservations.domain.exception.ReservationNotModifiableException;
 import com.edteam.reservations.infrastructure.adapter.in.rest.dto.ApiErrorCode;
 import com.edteam.reservations.infrastructure.adapter.in.rest.dto.FieldErrorResponse;
+import com.edteam.reservations.infrastructure.logging.LogFields;
+import com.edteam.reservations.infrastructure.logging.RequestLogFilter;
+import com.edteam.reservations.infrastructure.logging.Throwables;
 import org.springframework.dao.QueryTimeoutException;
 import org.springframework.dao.TransientDataAccessException;
 import org.springframework.transaction.CannotCreateTransactionException;
@@ -107,8 +110,29 @@ public class ReservationExceptionHandler extends ResponseEntityExceptionHandler 
     // 409: el pedido es válido, pero choca con el estado actual del recurso
     // ------------------------------------------------------------------
 
+    /**
+     * Conflicto de versión del locking optimista.
+     *
+     * <p>Deja línea, contra lo que el §2.2 del diseño decía. El argumento era
+     * «su volumen es una métrica, no una línea de log», y apuntaba a
+     * {@code http.server.requests} con {@code status}, que no distingue este
+     * 409 del de clave de idempotencia reusada: son dos problemas con dos
+     * dueños distintos. Ahora la métrica que los separa existe
+     * ({@code reservations.operations{outcome=conflict}}), y la línea se
+     * escribe igual pero en {@code INFO} y con las dos versiones como campos:
+     * un frontend que manda un {@code If-Match} viejo en serie se diagnostica
+     * viendo que la versión esperada es siempre la misma, y eso no se ve en
+     * ningún contador.
+     */
     @ExceptionHandler(ConcurrentUpdateException.class)
     public ProblemDetail handleConcurrentUpdate(ConcurrentUpdateException e, WebRequest request) {
+        log.atInfo()
+                .addKeyValue(LogFields.EVENT, LogFields.VERSION_CONFLICT)
+                .addKeyValue(LogFields.RESERVATION_ID, e.reservationId().value())
+                .addKeyValue(LogFields.EXPECTED_VERSION, e.expectedVersion())
+                .addKeyValue(LogFields.HTTP_STATUS, HttpStatus.CONFLICT.value())
+                .addKeyValue(LogFields.OUTCOME, "conflict")
+                .log("Conflicto de versión al escribir la reserva");
         return problem(HttpStatus.CONFLICT, ApiErrorCode.CONCURRENT_UPDATE,
                 "%s Volvé a leer la reserva y reintentá con el ETag actualizado.".formatted(e.getMessage()),
                 request);
@@ -133,7 +157,22 @@ public class ReservationExceptionHandler extends ResponseEntityExceptionHandler 
      */
     @ExceptionHandler(DuplicateReservationException.class)
     public ProblemDetail handleDuplicateReservation(DuplicateReservationException e, WebRequest request) {
-        log.warn("No se pudo resolver la carrera por la clave de idempotencia: {}", e.getMessage());
+        // La clave se conserva en claro y como campo propio. El §3.3 proponía
+        // hashearla porque «es un valor que elige el cliente»; la premisa es
+        // falsa: `ReservationController` la enlaza como `UUID` —un valor que
+        // no lo es muere en un 400 antes de llegar acá— y `IdempotencyKey`
+        // vuelve a validarlo. Hashearla quitaba lo único para lo que sirve en
+        // un incidente —buscar en el log la clave que el integrador reporta en
+        // el ticket— sin quitar ningún riesgo (hallazgo 32).
+        //
+        // Lo que sí cambia es que deja de viajar dentro de `e.getMessage()`,
+        // que era el tercer sitio donde salía y el que el diseño no enumeraba.
+        log.atWarn()
+                .addKeyValue(LogFields.EVENT, LogFields.RESERVATION_DUPLICATE)
+                .addKeyValue(LogFields.IDEMPOTENCY_KEY, e.idempotencyKey().value().toString())
+                .addKeyValue(LogFields.HTTP_STATUS, HttpStatus.CONFLICT.value())
+                .addKeyValue(LogFields.OUTCOME, "unresolved")
+                .log("No se pudo resolver la carrera por la clave de idempotencia");
         return problem(HttpStatus.CONFLICT, ApiErrorCode.IDEMPOTENCY_KEY_REUSED, e.getMessage(), request);
     }
 
@@ -147,10 +186,23 @@ public class ReservationExceptionHandler extends ResponseEntityExceptionHandler 
 
     @ExceptionHandler(ReservationAccessDeniedException.class)
     public ProblemDetail handleAccessDenied(ReservationAccessDeniedException e, WebRequest request) {
-        // El mensaje del dominio nombra al solicitante; el detalle que sale es
-        // fijo. Un cuerpo de error termina en consolas, capturas de pantalla y
-        // tickets de soporte, y no es el lugar donde reflejar un email.
-        log.info("Pedido rechazado por alcance en {}: {}", pathOf(request), e.getMessage());
+        // Sin `e.getMessage()`. Era el hallazgo 1 de la auditoría, reproducido:
+        // el mensaje del dominio nombraba al solicitante por su email y esta
+        // línea lo escribía entero, en INFO, o sea en un nivel encendido en
+        // producción. El comentario de tres líneas que estaba acá protegía el
+        // CUERPO de la respuesta del mismo dato y lo dejaba pasar al log, que
+        // es otro sistema con otra retención y otro perímetro.
+        //
+        // Quién fue lo dice el `actorRef` del MDC, y el dato completo está en
+        // la fila de `auditoria` que acompaña a este rechazo, que es donde el
+        // §3.3 decide que viva.
+        //
+        // Y en WARN, no en INFO: es una señal de seguridad.
+        log.atWarn()
+                .addKeyValue(LogFields.EVENT, LogFields.AUTH_DENIED)
+                .addKeyValue(LogFields.REASON, "other_user_resource")
+                .addKeyValue(LogFields.HTTP_STATUS, HttpStatus.FORBIDDEN.value())
+                .log("Pedido rechazado por alcance");
         return problem(HttpStatus.FORBIDDEN, ApiErrorCode.FORBIDDEN,
                 "El solicitante no puede consultar reservas de otro usuario.", request);
     }
@@ -249,7 +301,25 @@ public class ReservationExceptionHandler extends ResponseEntityExceptionHandler 
      */
     @ExceptionHandler(Exception.class)
     public ProblemDetail handleUnexpected(Exception e, WebRequest request) {
-        log.error("Error no controlado procesando {}", pathOf(request), e);
+        // Ni `e.getMessage()` interpolado ni el throwable crudo como causa del
+        // log. Era el hallazgo 3: una violación de integridad que no se
+        // reconoce llega hasta acá y el mensaje de PostgreSQL trae el SQL y el
+        // `Detail: Key (email)=(...)`, con las columnas `email`, `nombre`,
+        // `apellido` y `fecha_nacimiento` en claro en el modelo.
+        //
+        // Lo que se escribe es la clase —que no lleva ningún valor— y el
+        // motivo redactado. El stack trace se conserva porque sin él no hay
+        // diagnóstico posible de un defecto propio, y por eso los mensajes que
+        // podían traer el dato se corrigieron en el ORIGEN: truncar el stack
+        // no saca el mensaje, que es su primera línea.
+        log.atError()
+                .addKeyValue(LogFields.EVENT, LogFields.UNHANDLED_ERROR)
+                .addKeyValue(LogFields.EXCEPTION_CLASS, Throwables.classOf(e))
+                .addKeyValue("exception.root", Throwables.rootClassOf(e))
+                .addKeyValue(LogFields.REASON, Throwables.reasonOf(e))
+                .addKeyValue(LogFields.HTTP_STATUS, HttpStatus.INTERNAL_SERVER_ERROR.value())
+                .setCause(e)
+                .log("Error no controlado procesando el pedido");
         return problem(HttpStatus.INTERNAL_SERVER_ERROR, ApiErrorCode.INTERNAL_ERROR,
                 "Ocurrió un error inesperado procesando el pedido.", request);
     }
@@ -273,7 +343,13 @@ public class ReservationExceptionHandler extends ResponseEntityExceptionHandler 
     @ExceptionHandler(AirportCatalogUnavailableException.class)
     public ResponseEntity<ProblemDetail> handleCatalogUnavailable(AirportCatalogUnavailableException e,
                                                                   WebRequest request) {
-        log.warn("Maestro de aeropuertos no disponible procesando {}: {}", pathOf(request), e.getMessage());
+        log.atWarn()
+                .addKeyValue(LogFields.EVENT, LogFields.DEGRADED_EXHAUSTED)
+                .addKeyValue(LogFields.DEPENDENCY, "api-catalog")
+                .addKeyValue(LogFields.OUTCOME, "unavailable")
+                .addKeyValue(LogFields.REASON, Throwables.reasonOf(e))
+                .addKeyValue(LogFields.HTTP_STATUS, HttpStatus.SERVICE_UNAVAILABLE.value())
+                .log("Maestro de aeropuertos no disponible: el pedido falla de frente");
         ProblemDetail problem = problem(HttpStatus.SERVICE_UNAVAILABLE, ApiErrorCode.AIRPORT_CATALOG_UNAVAILABLE,
                 "No se pudo validar los aeropuertos del itinerario contra el maestro. Reintentá en unos segundos.",
                 request);
@@ -293,7 +369,14 @@ public class ReservationExceptionHandler extends ResponseEntityExceptionHandler 
      */
     @ExceptionHandler(AirportCatalogIntegrationException.class)
     public ProblemDetail handleCatalogIntegration(AirportCatalogIntegrationException e, WebRequest request) {
-        log.error("Integración con el maestro de aeropuertos rota procesando {}", pathOf(request), e);
+        log.atError()
+                .addKeyValue(LogFields.EVENT, LogFields.DEGRADED_EXHAUSTED)
+                .addKeyValue(LogFields.DEPENDENCY, "api-catalog")
+                .addKeyValue(LogFields.OUTCOME, "integration")
+                .addKeyValue(LogFields.EXCEPTION_CLASS, Throwables.rootClassOf(e))
+                .addKeyValue(LogFields.REASON, Throwables.reasonOf(e))
+                .addKeyValue(LogFields.HTTP_STATUS, HttpStatus.INTERNAL_SERVER_ERROR.value())
+                .log("Integración con el maestro de aeropuertos rota");
         return problem(HttpStatus.INTERNAL_SERVER_ERROR, ApiErrorCode.AIRPORT_CATALOG_ERROR,
                 "Ocurrió un error inesperado procesando el pedido.", request);
     }
@@ -315,7 +398,14 @@ public class ReservationExceptionHandler extends ResponseEntityExceptionHandler 
     @ExceptionHandler({TransientDataAccessException.class, CannotCreateTransactionException.class,
             QueryTimeoutException.class})
     public ResponseEntity<ProblemDetail> handleDatabaseUnavailable(Exception e, WebRequest request) {
-        log.warn("La base no respondió a tiempo procesando {}: {}", pathOf(request), e.getMessage());
+        log.atWarn()
+                .addKeyValue(LogFields.EVENT, LogFields.DEGRADED_EXHAUSTED)
+                .addKeyValue(LogFields.DEPENDENCY, "database")
+                .addKeyValue(LogFields.OUTCOME, "unavailable")
+                .addKeyValue(LogFields.EXCEPTION_CLASS, Throwables.rootClassOf(e))
+                .addKeyValue(LogFields.REASON, Throwables.reasonOf(e))
+                .addKeyValue(LogFields.HTTP_STATUS, HttpStatus.SERVICE_UNAVAILABLE.value())
+                .log("La base no respondió a tiempo");
         ProblemDetail problem = problem(HttpStatus.SERVICE_UNAVAILABLE, ApiErrorCode.DATABASE_UNAVAILABLE,
                 "El servicio está saturado y no pudo procesar el pedido. Reintentá en unos segundos.",
                 request);
@@ -338,6 +428,14 @@ public class ReservationExceptionHandler extends ResponseEntityExceptionHandler 
         problem.setType(code.type());
         problem.setTitle(code.title());
         problem.setProperty("code", code.name());
+
+        // El log de acceso y la métrica de negocio corren en un filtro, fuera
+        // del alcance de este advice. Este atributo es el único canal por el
+        // que el código de error les llega, y es lo que hace que un 409 por
+        // If-Match viejo y uno por clave reusada dejen de ser la misma serie.
+        if (request instanceof ServletWebRequest servletRequest) {
+            servletRequest.getRequest().setAttribute(RequestLogFilter.ERROR_CODE_ATTRIBUTE, code.name());
+        }
 
         String path = pathOf(request);
         if (path != null) {

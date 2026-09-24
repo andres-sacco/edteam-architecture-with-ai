@@ -1,0 +1,265 @@
+# Las alertas, versionadas junto al código.
+#
+# El criterio para que una alerta exista es que se puedan contestar DOS
+# preguntas: qué está roto para el usuario, y qué hace quien la recibe. Si
+# alguna de las dos respuestas es «hay que investigar», no es una alerta: es un
+# panel, y va a Grafana.
+#
+# Dos severidades. 'P1' despierta a alguien, a cualquier hora. 'P2' abre un
+# ticket que se ve en horario de trabajo. La anotación 'action' no es
+# decorativa: es lo que hace la diferencia entre una página útil y una que se
+# empieza a ignorar.
+#
+# Se prueban en local sin Alertmanager, en la pestaña Alerts de Prometheus:
+#   docker compose --profile observability up -d
+#   docker compose exec prometheus promtool check rules /etc/prometheus/rules/reservations.yml
+#
+# A quién se le manda la página es una decisión del entorno y no del
+# repositorio, así que no hay un quinto contenedor para eso.
+groups:
+  - name: reservations-recording
+    interval: 1m
+    rules:
+      # La línea de base de ayer para la alerta 6.
+      #
+      # Sin esta regla, «20 veces la línea de base del día anterior» no se
+      # puede escribir: PromQL no tiene un operador que compare una serie
+      # consigo misma desplazada, y la comparación tiene que apoyarse en una
+      # serie grabada. Es el hallazgo 21 de la auditoría — la alerta estaba
+      # escrita en el diseño y no era expresable.
+      - record: reservations:auth_failures:rate10m
+        expr: sum(rate(reservations_security_auth_failures_total{reason="invalid_token"}[10m]))
+
+  - name: reservations-alerts
+    rules:
+      # ------------------------------------------------------------------
+      # 1 — La integración con el catálogo está rota
+      # ------------------------------------------------------------------
+      - alert: CatalogIntegrationBroken
+        expr: rate(reservations_catalog_errors_total{kind="integration"}[5m]) > 0
+        for: 5m
+        labels:
+          severity: P1
+        annotations:
+          summary: "La integración con el catálogo de ciudades está rota"
+          # Corregido contra el código: el diseño decía 502 y
+          # ReservationExceptionHandler devuelve 500 con AIRPORT_CATALOG_ERROR
+          # (hallazgo 20). Quien recibiera la página iba a buscar 502 en el
+          # tablero y no iba a encontrar ninguno.
+          impact: >-
+            Ningún POST ni PUT puede completarse: es el único fallo del catálogo
+            que NO tiene fallback. Sale como 500 con code=AIRPORT_CATALOG_ERROR.
+          action: >-
+            Verificar la credencial y el contrato del catálogo. Es un cambio del
+            proveedor o una credencial vencida: no se arregla solo y ningún
+            reintento lo mejora. Los logs con event=catalog.call y
+            integration.kind=credential dicen con qué status rechaza.
+
+      # ------------------------------------------------------------------
+      # 2 — Las escrituras están fallando
+      # ------------------------------------------------------------------
+      - alert: WritesFailing
+        # AIRPORT_CATALOG_ERROR queda FUERA del numerador. Sin esta exclusión,
+        # una credencial vencida del catálogo dispara esta alerta y la 1 a la
+        # vez, por la misma causa — que es la forma más rápida de que la
+        # segunda se empiece a ignorar (hallazgo 20).
+        expr: |
+          (
+            sum(rate(reservations_operations_total{operation=~"create|modify|confirm|cancel",outcome="error"}[10m]))
+            /
+            clamp_min(sum(rate(reservations_operations_total{operation=~"create|modify|confirm|cancel"}[10m])), 0.001)
+          ) > 0.02
+        for: 10m
+        labels:
+          severity: P1
+        annotations:
+          summary: "Más del 2 % de las escrituras termina en error"
+          impact: >-
+            Más de 1 de cada 50 intentos de reservar, modificar o cancelar
+            termina en error. El usuario ve un formulario que falla y reintenta,
+            multiplicando la carga.
+          action: >-
+            Mirar reservations_operations_total por outcome para separar base
+            (unavailable), catálogo (unavailable/degraded) y defecto propio
+            (error). Si es la base, mirar hikaricp_connections_pending.
+
+      # ------------------------------------------------------------------
+      # 3 — El POST se salió del presupuesto
+      # ------------------------------------------------------------------
+      - alert: CreateReservationSlow
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(http_server_requests_seconds_bucket{uri="/v1/reservations",method="POST"}[10m]))
+          ) > 4
+        for: 15m
+        labels:
+          severity: P1
+        annotations:
+          summary: "El p95 del POST /v1/reservations superó los 4 s"
+          impact: >-
+            Crear una reserva tarda más que el techo del diseño para 1 de cada
+            20 usuarios. A esa altura la gente abandona el formulario o lo manda
+            dos veces.
+          action: >-
+            Contrastar con reservations_catalog_call_seconds y
+            reservations_catalog_fanout_seconds. Si el catálogo está lento,
+            bajar el presupuesto del itinerario para caer al stale antes; si no,
+            es la base.
+          # No hay alerta equivalente para el PUT, y la omisión es deliberada:
+          # el objetivo es 4,5 s y el peor caso medido hoy es 7,1 s. Una alerta
+          # contra un techo que el sistema todavía no cumple suena siempre, y
+          # una alerta que suena siempre deja de leerse. El bucket en 4,5 s del
+          # histograma es lo que va a permitir verificar el recorte el día que
+          # se haga.
+
+      # ------------------------------------------------------------------
+      # 4 — Las notificaciones no salen
+      # ------------------------------------------------------------------
+      - alert: OutboxLagging
+        # '>= 0' en la segunda condición no es redundante: el gauge devuelve -1
+        # cuando la base no responde, y sin este guardia un -1 nunca dispararía
+        # pero tampoco se distinguiría de un sistema sano. La alerta 8 es la
+        # que cubre ese caso.
+        # `_seconds` no es decorativo: Micrometer le agrega a la serie el
+        # sufijo de su unidad base, y el gauge se declara con
+        # `baseUnit("seconds")`. Una regla escrita contra
+        # `reservations_outbox_lag` a secas no matchea ninguna serie y NO
+        # DISPARA NUNCA — que es la misma clase de fallo silencioso que el
+        # hallazgo 17, por otra puerta. Se verificó contra la salida real de
+        # /actuator/prometheus.
+        expr: reservations_outbox_lag_seconds >= 0 and reservations_outbox_lag_seconds > 300
+        for: 10m
+        labels:
+          severity: P1
+        annotations:
+          summary: "El outbox tiene más de 5 minutos de retraso"
+          impact: >-
+            Un pasajero reservó y no recibió su notificación hace más de cinco
+            minutos. La reserva existe y es correcta: lo que falta es que el
+            usuario se entere.
+          action: >-
+            Mirar el estado del circuito del broker y
+            reservations_outbox_dispatch_skipped_total. Si el broker está caído,
+            no hay nada que hacer más que confirmarlo: el outbox drena solo al
+            volver. Si el broker está sano y el lag sube igual, el relay está
+            trabado.
+
+      # ------------------------------------------------------------------
+      # 5 — Hay notificaciones muertas
+      # ------------------------------------------------------------------
+      - alert: DeadNotifications
+        expr: reservations_outbox_dead > 0 or reservations_messaging_dlq_depth > 0
+        for: 30m
+        labels:
+          severity: P2
+        annotations:
+          summary: "Hay mensajes en alguna de las dos dead letters"
+          impact: >-
+            Uno o más pasajeros NUNCA van a recibir su notificación sin
+            intervención manual. No hay reintento pendiente: el mensaje agotó su
+            presupuesto.
+          action: >-
+            Inspeccionar con /actuator/outbox y /actuator/messaging-dlq, entender
+            por qué murió y reencolar. Es la contracara de esos dos endpoints,
+            que existen para esto.
+
+      # ------------------------------------------------------------------
+      # 6 — Presión de credenciales
+      # ------------------------------------------------------------------
+      - alert: CredentialPressure
+        # Dos condiciones, y las dos se pueden evaluar desde el primer día. El
+        # umbral absoluto es el piso —por debajo de 5/s no vale la pena mirar
+        # nada— y la comparación contra la línea de base de ayer usa la
+        # recording rule de arriba, que es lo que el diseño daba por sentado y
+        # no definía (hallazgo 21).
+        expr: |
+          reservations:auth_failures:rate10m > 5
+          and
+          reservations:auth_failures:rate10m
+            > 20 * clamp_min(reservations:auth_failures:rate10m offset 1d, 0.01)
+        for: 15m
+        labels:
+          severity: P2
+        annotations:
+          summary: "Tasa de tokens inválidos muy por encima de lo habitual"
+          impact: >-
+            Nada todavía. Es la alerta que llega ANTES de que algo se rompa:
+            alguien está probando tokens contra la API.
+          action: >-
+            Buscar el clientIp de los registros con event=auth.failed y
+            reason=invalid_token, bloquear en el borde o bajar la cuota del rate
+            limiter. Si aparecen event=auth.denied con tokens válidos, escalar a
+            P1.
+
+      # ------------------------------------------------------------------
+      # 7 — El proceso corre con secretos de desarrollo
+      # ------------------------------------------------------------------
+      - alert: DevelopmentSecretsInUse
+        # No existía en el diseño. Es la mitad del hallazgo 19: el WARN de
+        # arranque existe, el gauge ahora también, y esto es lo que hace que
+        # alguien se entere. En local es esperable, así que la regla excluye
+        # env=local en lugar de apagarse.
+        expr: |
+          (reservations_security_pii_dev_key{env!="local"} == 1)
+          or (reservations_security_jwt_dev_tokens{env!="local"} == 1)
+        for: 5m
+        labels:
+          severity: P1
+        annotations:
+          summary: "Un entorno que no es local está usando secretos de desarrollo"
+          impact: >-
+            Si es la clave de PII, los documentos de los pasajeros están
+            cifrados con una clave publicada en el repositorio: es equivalente a
+            tenerlos en claro. Si son los tokens, cualquiera que conozca el
+            secreto de desarrollo emite una credencial válida.
+          action: >-
+            Poner PII_ENCRYPTION_KEY y/o
+            reservations.security.jwt.jwk-set-uri + dev-tokens=false, y
+            REcifrar los documentos ya guardados con la clave nueva.
+
+      # ------------------------------------------------------------------
+      # 8 — El publicador real no está cableado
+      # ------------------------------------------------------------------
+      - alert: MessagingPublisherDisabled
+        # La otra mitad del hallazgo 19, y la pérdida silenciosa más perfecta
+        # del sistema: con el publicador falso, el outbox DRENA y marca todo
+        # como despachado. reservations_outbox_lag se queda en 0, la alerta 4
+        # nunca dispara, y ningún pasajero recibe nada. La señal ya estaba
+        # publicada y nadie la miraba.
+        expr: reservations_messaging_enabled{env!="local"} == 0
+        for: 5m
+        labels:
+          severity: P1
+        annotations:
+          summary: "La mensajería está apagada fuera de local: las notificaciones se descartan"
+          impact: >-
+            Los eventos se marcan como despachados sin publicarse en ningún
+            lado. NINGUNA notificación llega, y ninguna otra alerta se entera
+            porque el outbox drena normalmente.
+          action: >-
+            Poner reservations.messaging.enabled=true y reiniciar. Los eventos
+            ya marcados como despachados NO se recuperan solos: hay que
+            reencolarlos desde la tabla outbox_message.
+
+      # ------------------------------------------------------------------
+      # 9 — Las métricas del outbox están ciegas
+      # ------------------------------------------------------------------
+      - alert: OutboxMetricsBlind
+        # Una métrica ciega es un incidente en sí misma. Mientras este contador
+        # crezca, los gauges del outbox devuelven -1 y las alertas 4 y 5 no
+        # pueden disparar: hay que saberlo explícitamente y no deducirlo de un
+        # gauge que no se mueve.
+        expr: rate(reservations_outbox_metrics_errors_total[10m]) > 0
+        for: 10m
+        labels:
+          severity: P2
+        annotations:
+          summary: "No se puede leer el estado del outbox: sus alertas están ciegas"
+          impact: >-
+            Las alertas 4 (lag) y 5 (dead letters) no pueden disparar. Si las
+            notificaciones dejan de salir ahora, nadie se va a enterar.
+          action: >-
+            Mirar los registros con event=outbox.metrics_unreadable. Casi
+            siempre es la base: contrastar con /actuator/health y con
+            hikaricp_connections_pending.

@@ -1,0 +1,10 @@
+# Acá cae el archivo de log que Alloy lee y empuja a Loki:
+#
+#   LOG_FORMAT=json ./mvnw spring-boot:run > docker/logs/app.log
+#
+# El directorio se versiona (este .gitignore) y su contenido no. Existe en el
+# repositorio a propósito: un bind mount de una ruta que no existe falla el
+# arranque del contenedor en Docker Desktop, y "arreglalo creando un
+# directorio" es el tipo de paso que hace que nadie levante el stack una
+# segunda vez.
+*.log

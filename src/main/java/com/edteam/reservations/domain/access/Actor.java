@@ -66,14 +66,58 @@ public record Actor(Email email, String firstName, String lastName, Set<ActorRol
     }
 
     /**
-     * Representación segura para logs y auditoría: el dominio no decide cómo se
-     * enmascara la PII, pero sí que la identidad de un actor se escribe por su
-     * email y no por otra cosa. El enmascarado es del adaptador que loguea.
+     * Sin el email.
+     *
+     * <p>Decía «representación segura para logs» y escribía el email entero.
+     * La premisa —«el enmascarado es del adaptador que loguea»— es correcta
+     * para los campos que el adaptador ELIGE escribir, y no vale para un
+     * {@code toString()}: un {@code toString()} termina en un log sin que
+     * nadie lo decida. El gate de datos sensibles lo encontró donde era
+     * previsible que apareciera: Spring Security escribe el principal entero
+     * en un {@code DEBUG} de su propio filtro, y ahí nuestro adaptador no
+     * interviene.
+     *
+     * <p>Lo que queda identifica al actor sin identificar a la persona: el
+     * mismo seudónimo estable que lleva el log de acceso. Quien necesite el
+     * email tiene {@link #email()}, que es una decisión explícita de quien
+     * escribe la línea.
+     *
+     * <p>El seudónimo se calcula acá, en el dominio, y no con
+     * {@code infrastructure.logging.ActorRef}: el dominio no puede depender de
+     * infraestructura, y ArchUnit lo verifica. Los dos usan los mismos 12 hex
+     * de {@code sha256}, y {@code ActorTest} sostiene que coincidan.
      */
     @Override
     public String toString() {
-        return "Actor[%s, roles=%s]".formatted(email, roles);
+        return "Actor[ref=%s, roles=%s]".formatted(reference(), roles);
     }
+
+    /**
+     * Seudónimo estable del actor: los primeros 12 hex de
+     * {@code sha256(email)}.
+     *
+     * <p>No es anonimización —con la lista de emails el hash se invierte
+     * probando— sino seudonimización, y alcanza para lo que hace: que el log
+     * deje de ser una lista de emails indexada en un sistema con otra
+     * retención, conservando la capacidad de decir «estas N líneas son del
+     * mismo solicitante».
+     */
+    public String reference() {
+        try {
+            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(email.value().trim()
+                    .toLowerCase(java.util.Locale.ROOT)
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return java.util.HexFormat.of().formatHex(hash).substring(0, REFERENCE_LENGTH);
+        } catch (java.security.NoSuchAlgorithmException e) {
+            // SHA-256 es obligatorio en toda JVM. Si no estuviera, lo correcto
+            // es no escribir nada antes que escribir el valor crudo.
+            return "anon";
+        }
+    }
+
+    /** 48 bits: la colisión es despreciable y su costo es un panel, no una decisión. */
+    private static final int REFERENCE_LENGTH = 12;
 
     private static String requireText(String value, String field) {
         if (value == null || value.isBlank()) {

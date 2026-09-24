@@ -33,6 +33,20 @@
           ni plan pago.
         -->
         <resilience4j.version>2.2.0</resilience4j.version>
+        <!--
+          logstash-logback-encoder: el encoder JSON del esquema de log. Versión
+          FIJA y no un rango, y declarada acá porque el BOM de Spring Boot no la
+          administra. El esquema del log es un contrato —hay consultas, paneles
+          y alertas escritos contra sus nombres de campo— y los providers por
+          defecto de esta librería cambian entre versiones mayores: un upgrade
+          silencioso renombraría campos sin que falle nada hasta el día del
+          incidente. La 8.1 es la línea que acompaña a Logback 1.5.x, que es lo
+          que trae Boot 3.5. Licencia Apache 2.0 / MIT, sin servicio externo.
+        -->
+        <logstash.encoder.version>8.1</logstash.encoder.version>
+        <exec.plugin.version>3.5.0</exec.plugin.version>
+        <!-- El gate de PII necesita 'sh'. Se apaga con -Dpii.gate.skip=true. -->
+        <pii.gate.skip>false</pii.gate.skip>
     </properties>
 
     <dependencies>
@@ -198,6 +212,59 @@
             <artifactId>micrometer-registry-prometheus</artifactId>
         </dependency>
 
+        <!--
+          Encoder JSON para Logback. Es lo único que hace falta para que el
+          esquema del §1 del diseño salga como un objeto por línea: los
+          providers se declaran uno por uno en logback-spring.xml, no se
+          heredan los defaults.
+
+          Vive en 'infrastructure' por construcción: ninguna clase del código
+          la importa. La capa de aplicación escribe pares clave/valor con
+          org.slf4j y no sabe que el destino es JSON; HexagonalArchitectureTest
+          lo verifica.
+        -->
+        <dependency>
+            <groupId>net.logstash.logback</groupId>
+            <artifactId>logstash-logback-encoder</artifactId>
+            <version>${logstash.encoder.version}</version>
+        </dependency>
+
+        <!--
+          Trazas: el bridge de OpenTelemetry para Micrometer Tracing más el
+          exportador OTLP. Las versiones las fija el BOM de Boot.
+
+          Dos cosas que esto compra y que el correlationId no puede dar: el
+          gráfico de tiempos del fan-out de hasta 8 ciudades en paralelo (§5.1
+          del diseño) y la propagación W3C 'traceparent' hacia el catálogo.
+
+          El EXPORTADOR está apagado por defecto
+          ('management.tracing.export.enabled: false'): sin esto, una
+          aplicación sin Tempo levantado reintenta contra localhost:4318 y
+          llena el log de errores del propio sistema de observabilidad. Se
+          enciende junto con el profile 'observability' del compose.
+        -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-tracing-bridge-otel</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-exporter-otlp</artifactId>
+        </dependency>
+
+        <!--
+          Propagación de contexto a hilos que no son el del pedido. Es lo que
+          arregla el hueco 1 del §0 del diseño y el hallazgo 11 de la
+          auditoría: 'CompletableFuture.supplyAsync(..., workers)' sobre hilos
+          virtuales no lleva ni el MDC ni el contexto de traza, así que las 14
+          líneas del catálogo salían sin correlationId — justo las que se
+          buscan cuando un POST sale degradado.
+        -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>context-propagation</artifactId>
+        </dependency>
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
@@ -278,6 +345,25 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+                <executions>
+                    <!--
+                      build-info: escribe META-INF/build-info.properties con la
+                      versión y el instante del build. Es de dónde sale el campo
+                      'version' obligatorio de cada registro de log (§1.2 del
+                      diseño) y el 'version' de /actuator/info.
+
+                      Sale del build y no de una constante a propósito: una
+                      constante se olvida de actualizar y el log empieza a
+                      mentir sobre qué artefacto produjo la línea, que es
+                      justamente el dato con el que se decide si un incidente
+                      lo introdujo el último despliegue.
+                    -->
+                    <execution>
+                        <goals>
+                            <goal>build-info</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
             <!--
               'mvn test' corre sólo los unitarios (*Test): rápidos y sin Docker.
@@ -286,12 +372,66 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-failsafe-plugin</artifactId>
+                <configuration>
+                    <!--
+                      La salida de los tests va a archivo además de a consola.
+                      Es lo que le da al gate de datos sensibles algo que
+                      revisar: sin esto, la única forma de verificar que la
+                      suite no escribe un email en claro es mirarla pasar, que
+                      es exactamente lo que la auditoría hizo a mano y lo que
+                      este paso viene a convertir en un paso del build.
+                    -->
+                    <redirectTestOutputToFile>true</redirectTestOutputToFile>
+                </configuration>
                 <executions>
                     <execution>
                         <goals>
                             <goal>integration-test</goal>
                             <goal>verify</goal>
                         </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <redirectTestOutputToFile>true</redirectTestOutputToFile>
+                </configuration>
+            </plugin>
+            <!--
+              El gate de datos sensibles, como paso de 'verify'.
+              
+              Corre DESPUÉS de failsafe —fase 'verify', que es la que sigue a
+              'integration-test'— para poder mirar la salida de los tests de
+              integración además de la de los unitarios.
+              
+              Los tests con ListAppender afirman sobre los registros que UNA
+              prueba provoca; esto mira TODO lo que la suite escribió, incluido
+              el arranque del contexto y las líneas que nadie está asertando.
+              Son dos redes distintas y hacen falta las dos.
+              
+              'skip' con -Dpii.gate.skip=true para las plataformas sin 'sh'.
+            -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>${exec.plugin.version}</version>
+                <executions>
+                    <execution>
+                        <id>pii-log-gate</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                        <configuration>
+                            <skip>${pii.gate.skip}</skip>
+                            <executable>sh</executable>
+                            <arguments>
+                                <argument>${project.basedir}/scripts/pii-log-gate.sh</argument>
+                                <argument>${project.build.directory}</argument>
+                            </arguments>
+                        </configuration>
                     </execution>
                 </executions>
             </plugin>

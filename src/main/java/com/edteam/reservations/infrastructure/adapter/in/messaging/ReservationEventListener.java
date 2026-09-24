@@ -5,6 +5,10 @@ import com.edteam.reservations.application.port.in.EventProcessingOutcome;
 import com.edteam.reservations.application.port.in.InboundEvent;
 import com.edteam.reservations.application.port.in.ProcessReservationEventUseCase;
 import com.edteam.reservations.infrastructure.adapter.out.messaging.MessagingTopology;
+import com.edteam.reservations.infrastructure.logging.LogFields;
+import com.edteam.reservations.infrastructure.logging.LogSanitizer;
+import com.edteam.reservations.infrastructure.logging.MdcTaskDecorator;
+import com.edteam.reservations.infrastructure.logging.Throwables;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tags;
@@ -17,8 +21,12 @@ import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 
 import java.time.Duration;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.regex.Pattern;
 
 /**
  * Adaptador de entrada: consume la cola de trabajo y delega en el caso de uso.
@@ -63,6 +71,31 @@ public class ReservationEventListener {
 
     private static final String MDC_CORRELATION_ID = "correlationId";
 
+    /**
+     * Los tipos que este consumidor conoce, más el centinela.
+     *
+     * <p>Es la cota de cardinalidad de {@code type}. Sin esto, la etiqueta era
+     * el header {@code type} crudo de AMQP —o sea, un valor que elige quien
+     * publica— y 200 mensajes con tipos al azar producían 200 series en
+     * Prometheus. Una bomba de cardinalidad disparable por un tercero, que
+     * además explota justo cuando llega la avalancha y el monitoreo es lo
+     * único que queda en pie.
+     *
+     * <p>Se duplica acá el conjunto que valida
+     * {@code ProcessReservationEventService} en lugar de compartirlo: ese
+     * vocabulario es de la aplicación y esta clase es el borde. Lo que impide
+     * que se desalineen es el test de cardinalidad, no un import.
+     */
+    private static final Set<String> KNOWN_TYPES = Set.of(
+            "reservation.created", "reservation.confirmed",
+            "reservation.modified", "reservation.cancelled");
+
+    /** Valor de la etiqueta para cualquier tipo fuera del vocabulario. */
+    private static final String OTHER_TYPE = "other";
+
+    /** El mismo formato que {@code CorrelationIdFilter} acepta del cliente. */
+    private static final Pattern ACCEPTED_CORRELATION_ID = Pattern.compile("[A-Za-z0-9_-]{8,64}");
+
     private final ProcessReservationEventUseCase processEvent;
     private final InboundEnvelopeParser parser;
     private final RabbitTemplate rabbitTemplate;
@@ -99,17 +132,44 @@ public class ReservationEventListener {
     @RabbitListener(queues = MessagingTopology.CONSUMER_QUEUE, id = "reservation-events")
     public void onMessage(Message message) {
         int attempt = attemptOf(message);
+        // El MDC se pone ANTES de parsear, desde las propiedades AMQP. El
+        // hallazgo 12 de la auditoría: el registro más severo del consumidor
+        // —el ERROR del mensaje ilegible— no podía llevar correlationId por
+        // construcción, porque se escribía antes de tocar el MDC y el envelope
+        // no se había podido parsear. La salida ya estaba ahí:
+        // `message.getMessageProperties()` tiene el correlationId de AMQP
+        // aunque el cuerpo sea basura, igual que `InboundEnvelopeParser` ya usa
+        // el messageId y el type de las propiedades como respaldo.
+        Map<String, String> previousMdc = MDC.getCopyOfContextMap();
+        String amqpCorrelationId = acceptedCorrelationId(
+                message.getMessageProperties().getCorrelationId());
+        if (amqpCorrelationId != null) {
+            MDC.put(MDC_CORRELATION_ID, amqpCorrelationId);
+        }
+
         InboundEvent event;
         try {
             event = parser.parse(message);
         } catch (UnprocessableEventException e) {
             // No se puede ni identificar: no hay messageId con el que
             // deduplicar ni reintentar con sentido.
-            log.error("[consumidor] mensaje ilegible, va a la DLQ: {}", e.getMessage());
-            toDeadLetter(message, attempt, "ilegible: " + e.getMessage());
+            try {
+                log.atError()
+                        .addKeyValue(LogFields.EVENT, LogFields.CONSUMER_DEAD_LETTERED)
+                        .addKeyValue(LogFields.REASON, "unreadable")
+                        .addKeyValue(LogFields.ATTEMPT, attempt)
+                        .addKeyValue(LogFields.EXCEPTION_CLASS, Throwables.classOf(e))
+                        .addKeyValue("detail", Throwables.reasonOf(e))
+                        .log("Mensaje ilegible: va a la dead letter del consumidor");
+                toDeadLetter(message, attempt, "ilegible: " + e.getMessage());
+            } finally {
+                MdcTaskDecorator.restore(previousMdc);
+            }
             return;
         }
 
+        // El envelope es el contrato y manda sobre las propiedades AMQP, que
+        // son su espejo. Recién acá se puede saber cuál es el id de verdad.
         boolean correlated = event.correlationId() != null;
         if (correlated) {
             MDC.put(MDC_CORRELATION_ID, event.correlationId());
@@ -121,24 +181,74 @@ public class ReservationEventListener {
                 count(OUT_OF_ORDER, event.type(), "applied");
             }
         } catch (UnprocessableEventException e) {
-            log.error("[consumidor] type={} subject={} messageId={} no es procesable, va a la DLQ: {}",
-                    event.type(), event.subject(), event.messageId(), e.getMessage());
+            log.atError()
+                    .addKeyValue(LogFields.EVENT, LogFields.CONSUMER_DEAD_LETTERED)
+                    .addKeyValue(LogFields.EVENT_TYPE, event.type())
+                    .addKeyValue(LogFields.SUBJECT, event.subject())
+                    .addKeyValue(LogFields.MESSAGE_ID, event.messageId())
+                    .addKeyValue(LogFields.REASON, "unprocessable")
+                    .addKeyValue(LogFields.ATTEMPT, attempt)
+                    .addKeyValue(LogFields.EXCEPTION_CLASS, Throwables.classOf(e))
+                    .addKeyValue("detail", Throwables.reasonOf(e))
+                    .log("Mensaje no procesable: va a la dead letter del consumidor");
             toDeadLetter(message, attempt, e.getMessage());
         } catch (RuntimeException e) {
-            // El mensaje del error puede traer datos del payload: va sin el
-            // cuerpo y con los identificadores, que es lo que hace falta.
-            log.warn("[consumidor] fallo transitorio en type={} subject={} messageId={} (vuelta {}/{}): {}",
-                    event.type(), event.subject(), event.messageId(), attempt + 1, maxAttempts, e.toString());
-            if (attempt + 1 >= maxAttempts) {
-                toDeadLetter(message, attempt, "agotó las %d vueltas de reintento: %s".formatted(maxAttempts, e));
+            // La CLASE de la excepción y no su `toString()`. El comentario que
+            // estaba acá prometía «va sin el cuerpo y con los identificadores»
+            // y la línea siguiente escribía el mensaje completo, que en un
+            // error de JPA o de PostgreSQL trae los valores enlazados —o sea,
+            // el payload que el comentario decía excluir (hallazgo 4)—. El
+            // motivo va redactado; el detalle completo viaja al header de la
+            // dead letter, que es nuestro broker y no el SaaS de logs.
+            boolean lastRound = attempt + 1 >= maxAttempts;
+            log.atWarn()
+                    .addKeyValue(LogFields.EVENT, LogFields.CONSUMER_RETRY)
+                    .addKeyValue(LogFields.EVENT_TYPE, event.type())
+                    .addKeyValue(LogFields.SUBJECT, event.subject())
+                    .addKeyValue(LogFields.MESSAGE_ID, event.messageId())
+                    .addKeyValue(LogFields.ATTEMPT, attempt + 1)
+                    .addKeyValue(LogFields.MAX_ATTEMPTS, maxAttempts)
+                    .addKeyValue(LogFields.OUTCOME, lastRound ? "exhausted" : "retrying")
+                    .addKeyValue(LogFields.EXCEPTION_CLASS, Throwables.rootClassOf(e))
+                    .addKeyValue(LogFields.REASON, Throwables.reasonOf(e))
+                    .log("Fallo transitorio procesando el mensaje");
+            if (lastRound) {
+                log.atError()
+                        .addKeyValue(LogFields.EVENT, LogFields.CONSUMER_DEAD_LETTERED)
+                        .addKeyValue(LogFields.EVENT_TYPE, event.type())
+                        .addKeyValue(LogFields.SUBJECT, event.subject())
+                        .addKeyValue(LogFields.MESSAGE_ID, event.messageId())
+                        .addKeyValue(LogFields.REASON, "attempts_exhausted")
+                        .addKeyValue(LogFields.MAX_ATTEMPTS, maxAttempts)
+                        .addKeyValue(LogFields.EXCEPTION_CLASS, Throwables.rootClassOf(e))
+                        .log("Agotadas las vueltas de reintento: va a la dead letter del consumidor");
+                toDeadLetter(message, attempt,
+                        "agotó las %d vueltas de reintento: %s".formatted(maxAttempts, e));
             } else {
                 toRetry(message, attempt);
             }
         } finally {
-            if (correlated) {
-                MDC.remove(MDC_CORRELATION_ID);
-            }
+            // Se restituye el MDC anterior en vez de borrar la clave: el
+            // contenedor reusa el hilo entre mensajes, y con `remove` la
+            // correlación del siguiente dependía de que su envelope trajera la
+            // suya. Mismo motivo que en el relay (hallazgo 10).
+            MdcTaskDecorator.restore(previousMdc);
         }
+    }
+
+    /**
+     * El correlation id de las propiedades AMQP, si cumple el formato.
+     *
+     * <p>Se valida con el mismo patrón que {@code CorrelationIdFilter} aplica
+     * al header del cliente, y por la misma razón: el valor termina en el MDC y
+     * de ahí en cada línea de log, así que quien publique en la cola estaría
+     * escribiendo en nuestros logs. Un valor que no cumple se descarta en
+     * silencio; el mensaje se procesa igual, sólo que sin id.
+     */
+    private static String acceptedCorrelationId(String claimed) {
+        return claimed != null && ACCEPTED_CORRELATION_ID.matcher(claimed).matches()
+                ? claimed
+                : null;
     }
 
     /**
@@ -180,7 +290,7 @@ public class ReservationEventListener {
         // es para inspeccionar y reenviar, no para caducar.
         properties.setExpiration(null);
         rabbitTemplate.send(MessagingTopology.DLQ_EXCHANGE, "", message);
-        count(DEAD_LETTERED, properties.getType() == null ? "desconocido" : properties.getType(), "consumer");
+        count(DEAD_LETTERED, properties.getType(), "consumer");
     }
 
     /**
@@ -202,8 +312,30 @@ public class ReservationEventListener {
         return header instanceof Number number ? number.intValue() : 0;
     }
 
+    /**
+     * Incrementa un contador con el tipo <b>validado</b>.
+     *
+     * <p>{@link #boundedType(String)} es lo que impide que la etiqueta la elija
+     * quien publica. Se aplica en los tres contadores y no sólo en el de la
+     * dead letter: el camino del duplicado reclama el mensaje
+     * ({@code ProcessReservationEventService}) <b>antes</b> de validar contra
+     * el vocabulario, así que `consumed` compartía el mismo riesgo por otra
+     * puerta.
+     */
     private void count(String metric, String type, String result) {
-        Counter.builder(metric).tags(Tags.of("type", type, "result", result)).register(registry).increment();
+        Counter.builder(metric)
+                .tags(Tags.of("type", boundedType(type), "result", result))
+                .register(registry)
+                .increment();
+    }
+
+    /** El tipo si está en el vocabulario; {@code other} si no. */
+    private static String boundedType(String type) {
+        if (type == null || type.isBlank()) {
+            return OTHER_TYPE;
+        }
+        String normalized = LogSanitizer.sanitize(type, 64).toLowerCase(Locale.ROOT);
+        return KNOWN_TYPES.contains(normalized) ? normalized : OTHER_TYPE;
     }
 
     /** El header no es el lugar para un stack trace. */

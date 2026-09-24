@@ -82,14 +82,13 @@ public final class JwtDecoderFactory {
                     "La clave de desarrollo necesita al menos %d bytes y tiene %d"
                             .formatted(MIN_SECRET_BYTES, key.length));
         }
-        log.warn("""
-                ################################################################
-                # TOKENS DE DESARROLLO ACTIVOS                                 #
-                # Se aceptan tokens firmados con una clave simétrica conocida. #
-                # Válido sólo en local y en los tests. En cualquier otro       #
-                # entorno: reservations.security.jwt.jwk-set-uri + dev-tokens  #
-                # en false.                                                    #
-                ################################################################""");
+        // Ver el comentario equivalente en PiiCipher: un evento, un registro.
+        log.atWarn()
+                .addKeyValue("event", "startup.wiring")
+                .addKeyValue("component", "jwt-decoder")
+                .addKeyValue("jwt.tokens.source", "dev")
+                .addKeyValue("remediation", "reservations.security.jwt.jwk-set-uri + dev-tokens=false")
+                .log("Se aceptan tokens firmados con una clave simétrica conocida");
         return withValidators(
                 NimbusJwtDecoder.withSecretKey(new SecretKeySpec(key, HMAC_ALGORITHM)).build(), properties);
     }

@@ -71,7 +71,16 @@ public class ConfirmReservationService implements ConfirmReservationUseCase {
         auditTrail.record(AuditEntry.allowed(AuditAction.RESERVATION_CONFIRMED,
                 command.actor().email(), saved.requireId().toString(), saved.version(), now));
 
-        log.info("Reserva confirmada id={} version={}", saved.requireId(), saved.version());
+        // Con `userId` e itinerario, que antes no llevaba: los cuatro eventos
+        // de dominio comparten el mismo juego de campos obligatorios.
+        log.atInfo()
+                .addKeyValue("event", "reservation.confirmed")
+                .addKeyValue("reservationId", saved.requireId().value())
+                .addKeyValue("userId", saved.userId().value())
+                .addKeyValue("reservationVersion", saved.version())
+                .addKeyValue("itinerary.origin", saved.itinerary().origin().value())
+                .addKeyValue("itinerary.destination", saved.itinerary().destination().value())
+                .log("Reserva confirmada");
         return saved;
     }
 }

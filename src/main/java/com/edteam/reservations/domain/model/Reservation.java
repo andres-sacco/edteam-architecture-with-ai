@@ -320,15 +320,22 @@ public final class Reservation {
             throw new InvalidReservationException("La reserva debe tener al menos un pasajero");
         }
 
+        // Los mensajes señalan la POSICIÓN del pasajero en la lista y no su
+        // nombre. El nombre completo y la fecha de nacimiento son dato
+        // personal, y el mensaje de una excepción de dominio viaja al cuerpo
+        // del error y —a un `log.warn` de distancia— al SaaS de logs. La
+        // posición alcanza para que el cliente sepa qué campo marcar, que es
+        // lo único que el mensaje tiene que lograr.
         Set<String> identities = new HashSet<>();
-        for (Passenger passenger : passengers) {
+        for (int index = 0; index < passengers.size(); index++) {
+            Passenger passenger = passengers.get(index);
             if (!identities.add(passenger.identityKey())) {
                 throw new InvalidReservationException(
-                        "El pasajero %s aparece más de una vez en la reserva".formatted(passenger.fullName()));
+                        "El pasajero en la posición %d aparece más de una vez en la reserva".formatted(index + 1));
             }
             if (passenger.isBornAfter(now.atZone(ZoneOffset.UTC).toLocalDate())) {
                 throw new InvalidReservationException(
-                        "La fecha de nacimiento de %s es futura".formatted(passenger.fullName()));
+                        "La fecha de nacimiento del pasajero en la posición %d es futura".formatted(index + 1));
             }
         }
     }
@@ -350,10 +357,21 @@ public final class Reservation {
         return idempotencyKey.hashCode();
     }
 
+    /**
+     * Sin el email del usuario.
+     *
+     * <p>Un {@code toString()} es lo que termina adentro de un mensaje de
+     * excepción o de un argumento de log sin que nadie lo decida
+     * explícitamente, y éste escribía email, ruta y fecha en la misma línea —o
+     * sea, el viaje de una persona identificada—. Lo que queda identifica la
+     * reserva sin identificar a nadie: el id interno del usuario resuelve la
+     * identidad con un {@code SELECT} contra nuestra base, que es exactamente
+     * la propiedad que se busca.
+     */
     @Override
     public String toString() {
-        return "Reservation[id=%s, usuario=%s, estado=%s, itinerario=%s-%s, pasajeros=%d, version=%d]"
-                .formatted(describeId(), user.email(), status, itinerary.origin(), itinerary.destination(),
-                        passengers.size(), version);
+        return "Reservation[id=%s, userId=%s, estado=%s, itinerario=%s-%s, pasajeros=%d, version=%d]"
+                .formatted(describeId(), user.id().map(Object::toString).orElse("<nuevo>"), status,
+                        itinerary.origin(), itinerary.destination(), passengers.size(), version);
     }
 }

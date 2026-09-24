@@ -1,0 +1,208 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  El esquema del log, como contrato.
+
+  Este archivo es la pieza que desbloquea al resto de la observabilidad: antes
+  de que existiera, el `correlationId` estaba en el MDC y no aparecía en
+  ninguna línea (hallazgo 8 de la auditoría), así que `CorrelationIdFilter`, la
+  reposición del MDC del relay y la del consumidor no se podían ni verificar.
+
+  Dos decisiones que no son de estilo:
+
+  1. Los providers se declaran UNO POR UNO y no se heredan los defaults del
+     encoder. Los defaults cambian entre versiones de la librería, y un campo
+     que se renombra solo rompe cada consulta, cada panel y cada alerta escrita
+     contra él, sin que falle nada hasta el día del incidente.
+
+  2. El `stack_trace` pasa por `ShortenedThrowableConverter`, que además de
+     acotar el largo EXCLUYE los frames de los paquetes de framework. El
+     mensaje de la excepción sigue saliendo, y por eso los mensajes que podían
+     traer un dato personal se corrigieron en el origen (hallazgos 1 a 6): un
+     truncado no saca el mensaje, que es la primera línea.
+
+  Perfiles: `local` y `dev` escriben texto legible en consola; cualquier OTRO
+  entorno —incluido el perfil por defecto con el que corre la suite de tests—
+  escribe JSON, y ahí no hay forma de apagarlo.
+
+  Es una desviación consciente del §1.1 del diseño, que pedía JSON en todos
+  lados con el argumento de que «un formato distinto en desarrollo es un
+  esquema que sólo se prueba en producción». El argumento es correcto y por eso
+  la desviación viene con su compensación: el esquema está bajo prueba en cada
+  `mvn verify` —la suite corre con el perfil por defecto, que es JSON, y
+  LogSchemaTest carga ESTE archivo— y `LOG_FORMAT=json` fuerza el JSON también
+  en local sin cambiar de perfil. Lo que se gana es que `spring-boot:run` en la
+  máquina de uno siga siendo legible sin un `| jq` en el medio.
+-->
+<configuration>
+
+    <!--
+      Los tres campos comunes que salen de la configuración. `defaultValue` en
+      los tres: durante el arranque más temprano el Environment todavía no
+      resolvió nada, y sin default el campo saldría con el literal `${...}`
+      adentro justo en las líneas de `startup.wiring`, que son las primeras que
+      alguien mira cuando «en este ambiente no anda».
+    -->
+    <springProperty scope="context" name="serviceName" source="spring.application.name"
+                    defaultValue="flight-reservations"/>
+    <springProperty scope="context" name="environment" source="reservations.environment"
+                    defaultValue="local"/>
+    <springProperty scope="context" name="buildVersion" source="reservations.build-version"
+                    defaultValue="unknown"/>
+
+    <!--
+      `instance` sale del HOSTNAME del contenedor, que es lo que el orquestador
+      pone y lo que identifica al pod en un panel. Logback ya expone `HOSTNAME`
+      como propiedad del contexto, así que no hace falta leer el entorno.
+    -->
+    <property name="instanceName" value="${HOSTNAME:-local}"/>
+
+    <!--
+      El encoder del esquema. Un objeto JSON por línea, un campo por dato, y el
+      `message` como texto fijo: el dato no vuelve a viajar interpolado adentro
+      del mensaje.
+    -->
+    <appender name="json" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="net.logstash.logback.encoder.LoggingEventCompositeJsonEncoder">
+            <providers>
+                <!-- UTC y milisegundos: el offset local del formato por defecto
+                     hace incomparables dos instancias en zonas distintas. -->
+                <timestamp>
+                    <fieldName>@timestamp</fieldName>
+                    <timeZone>UTC</timeZone>
+                    <pattern>yyyy-MM-dd'T'HH:mm:ss.SSS'Z'</pattern>
+                </timestamp>
+                <logLevel>
+                    <fieldName>level</fieldName>
+                </logLevel>
+                <loggerName>
+                    <fieldName>logger</fieldName>
+                    <shortenedLoggerNameLength>40</shortenedLoggerNameLength>
+                </loggerName>
+                <message>
+                    <fieldName>message</fieldName>
+                </message>
+                <threadName>
+                    <fieldName>thread</fieldName>
+                </threadName>
+
+                <!-- Los cuatro comunes del §1.2. Salen del build y de la
+                     configuración, no de una constante en el código. -->
+                <pattern>
+                    <omitEmptyFields>true</omitEmptyFields>
+                    <pattern>
+                        {
+                          "service": "${serviceName}",
+                          "env": "${environment}",
+                          "version": "${buildVersion}",
+                          "instance": "${instanceName}"
+                        }
+                    </pattern>
+                </pattern>
+
+                <!--
+                  El MDC: `correlationId`, `actorRef`, `job`, y
+                  `traceId`/`spanId` cuando la traza está muestreada. Es la
+                  costura de toda la investigación, y el motivo por el que este
+                  archivo existe.
+
+                  `clientIp` se EXCLUYE, y no es un descuido. Está en el MDC
+                  porque el adaptador de auditoría lo lee de ahí, pero es dato
+                  personal: escribirlo en cada línea lo multiplica por el
+                  volumen del log sin comprar nada —un DEBUG de cache no
+                  necesita la IP del cliente— y le da la retención del log a un
+                  dato que el diseño acota a 30 días. Donde sí se escribe es en
+                  `event=http.request`, que es donde sirve para investigar
+                  abuso, y ahí lo pone `RequestLogFilter` como campo explícito.
+                -->
+                <mdc>
+                    <excludeMdcKeyName>clientIp</excludeMdcKeyName>
+                </mdc>
+
+                <!-- Los pares de `log.atInfo().addKeyValue(...)`, cada uno como
+                     campo propio del objeto raíz. Sin `fieldName`, que los
+                     anidaría bajo una clave y obligaría a escribir
+                     `kv.event` en cada consulta. -->
+                <keyValuePairs/>
+
+                <!-- Los marcadores estructurados de `net.logstash`, si alguna
+                     vez se usan desde infraestructura. La aplicación NO los
+                     usa: usa `org.slf4j`, y ArchUnit lo sostiene. -->
+                <arguments/>
+
+                <stackTrace>
+                    <fieldName>stack_trace</fieldName>
+                    <throwableConverter class="net.logstash.logback.stacktrace.ShortenedThrowableConverter">
+                        <maxDepthPerThrowable>30</maxDepthPerThrowable>
+                        <maxLength>4096</maxLength>
+                        <shortenedClassNameLength>40</shortenedClassNameLength>
+                        <!-- El ruido del framework no explica ningún incidente
+                             y sí multiplica el costo por línea. -->
+                        <exclude>^sun\.reflect\..*\.invoke</exclude>
+                        <exclude>^net\.sf\.cglib\.proxy\.MethodProxy\.invoke</exclude>
+                        <exclude>^org\.springframework\.aop\..*</exclude>
+                        <exclude>^org\.apache\.catalina\..*</exclude>
+                        <exclude>^org\.apache\.tomcat\..*</exclude>
+                        <rootCauseFirst>true</rootCauseFirst>
+                    </throwableConverter>
+                </stackTrace>
+            </providers>
+        </encoder>
+    </appender>
+
+    <!--
+      Qué appender queda enchufado.
+
+      En `local` y `dev`, el legible; `LOG_FORMAT=json` fuerza el otro sin
+      cambiar de perfil, que es cómo se verifica en la máquina de uno lo que va
+      a salir en producción:
+
+          LOG_FORMAT=json ./mvnw spring-boot:run | jq -r '.correlationId + " " + .event'
+
+      En cualquier otro entorno —incluido el perfil por defecto con el que
+      corre la suite de tests— es JSON y no hay forma de apagarlo: el esquema
+      tiene que estar bajo prueba en cada `mvn verify`, no sólo en producción.
+    -->
+    <springProfile name="local,dev">
+        <!--
+          El formato legible vive DENTRO del perfil de desarrollo, y no fuera,
+          por una razón práctica: un appender declarado y no referenciado hace
+          que Logback escriba un WARN de configuración en cada arranque de
+          cualquier otro entorno. Un aviso que aparece siempre y que no
+          significa nada es ruido en el primer lugar donde se mira cuando algo
+          no anda.
+
+          Lleva el `correlationId` y los pares clave/valor explícitos: si el
+          formato de desarrollo no mostrara los campos sobre los que se
+          investiga, el esquema se probaría por primera vez en producción, que
+          es exactamente lo que este diseño quería evitar.
+        -->
+        <appender name="console" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder>
+                <pattern>%d{HH:mm:ss.SSS} %5p [%X{correlationId:-—}] %-40.40logger{39} : %m %kvp%n%wEx</pattern>
+            </encoder>
+        </appender>
+        <property name="rootAppender" value="${LOG_FORMAT:-console}"/>
+    </springProfile>
+    <springProfile name="!local &amp; !dev">
+        <property name="rootAppender" value="json"/>
+    </springProfile>
+
+    <root level="INFO">
+        <appender-ref ref="${rootAppender}"/>
+    </root>
+
+    <!--
+      Loggers de terceros, que `logging.level.com.edteam.reservations` no
+      alcanza (hallazgo 33).
+
+      `PageNotFound` escribe un WARN por cada 405 y por cada 415, o sea por el
+      sistema funcionando: entra al panel de «WARN por minuto» y lo contamina.
+      La decisión escrita es que un error del cliente que la API ya responde
+      correctamente no es un WARN nuestro.
+    -->
+    <logger name="org.springframework.web.servlet.PageNotFound" level="ERROR"/>
+    <!-- El mismo criterio: un cuerpo malformado ya sale como 400 con su
+         ProblemDetail, y el handler del §4 lo cuenta. -->
+    <logger name="org.springframework.web.servlet.mvc.method.annotation.ExceptionHandlerExceptionResolver"
+            level="ERROR"/>
+</configuration>

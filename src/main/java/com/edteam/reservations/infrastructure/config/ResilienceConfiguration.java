@@ -1,6 +1,7 @@
 package com.edteam.reservations.infrastructure.config;
 
 import com.edteam.reservations.infrastructure.adapter.in.rest.DegradationHeaderFilter;
+import com.edteam.reservations.infrastructure.observability.BusinessMetrics;
 import com.edteam.reservations.infrastructure.resilience.Circuit;
 import com.edteam.reservations.infrastructure.resilience.DegradationRecorder;
 import com.edteam.reservations.infrastructure.resilience.Failures;
@@ -133,12 +134,19 @@ public class ResilienceConfiguration {
      * El filtro del header de degradación, fuera de la cadena de seguridad y
      * antes que ella, igual que el del correlation id: un {@code 503} por
      * catálogo caído también tiene que llevar la marca.
+     *
+     * <p>El orden sube de {@code MIN_VALUE + 1} a {@code MIN_VALUE + 20} para
+     * dejarle lugar a {@code RequestLogFilter} ({@code MIN_VALUE + 10}), que
+     * tiene que <b>envolver</b> a éste: cuando el log de acceso escribe su
+     * línea, {@code Degradation.sources()} ya tiene que estar completo, o el
+     * campo {@code degraded} sale vacío siempre. Sigue estando antes de la
+     * cadena de seguridad, que es lo que este orden protege.
      */
     @Bean
-    public FilterRegistrationBean<DegradationHeaderFilter> degradationHeaderFilter() {
+    public FilterRegistrationBean<DegradationHeaderFilter> degradationHeaderFilter(BusinessMetrics metrics) {
         FilterRegistrationBean<DegradationHeaderFilter> registration =
-                new FilterRegistrationBean<>(new DegradationHeaderFilter());
-        registration.setOrder(Integer.MIN_VALUE + 1);
+                new FilterRegistrationBean<>(new DegradationHeaderFilter(metrics));
+        registration.setOrder(Integer.MIN_VALUE + 20);
         return registration;
     }
 }

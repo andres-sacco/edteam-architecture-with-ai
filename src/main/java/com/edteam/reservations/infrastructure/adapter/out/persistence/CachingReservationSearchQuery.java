@@ -5,6 +5,8 @@ import com.edteam.reservations.domain.model.Email;
 import com.edteam.reservations.domain.model.ReservationStatus;
 import com.edteam.reservations.infrastructure.cache.CacheKeys;
 import com.edteam.reservations.infrastructure.cache.CacheStore;
+import com.edteam.reservations.infrastructure.logging.LogFields;
+import com.edteam.reservations.infrastructure.logging.LogSanitizer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -135,7 +137,11 @@ public class CachingReservationSearchQuery implements ReservationSearchQuery {
         try {
             return Long.valueOf(raw);
         } catch (NumberFormatException e) {
-            log.debug("Total cacheado ilegible, se trata como miss: {}", raw);
+            log.atDebug()
+                    .addKeyValue(LogFields.EVENT, "cache.unreadable")
+                    .addKeyValue(LogFields.CACHE, "reservation-count")
+                    .addKeyValue("raw", LogSanitizer.sanitize(raw, 64))
+                    .log("Total cacheado ilegible: se trata como miss");
             return null;
         }
     }

@@ -2,6 +2,9 @@ package com.edteam.reservations.infrastructure.adapter.out.messaging;
 
 import com.rabbitmq.client.AMQP;
 import com.rabbitmq.client.GetResponse;
+import com.edteam.reservations.infrastructure.logging.LogFields;
+import com.edteam.reservations.infrastructure.logging.Throwables;
+import com.edteam.reservations.infrastructure.security.OpsActor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.AmqpException;
@@ -75,7 +78,11 @@ public class RabbitDeadLetterQueue implements DeadLetterQueue {
         } catch (AmqpException e) {
             // Sin broker no se sabe. Un cero sería una afirmación falsa, y en
             // un tablero con alerta en '> 0' una afirmación falsa tranquiliza.
-            log.debug("No se pudo leer la profundidad de la DLQ: {}", e.getMessage());
+            log.atDebug()
+                    .addKeyValue(LogFields.EVENT, "messaging.dlq_unreadable")
+                    .addKeyValue(LogFields.EXCEPTION_CLASS, Throwables.classOf(e))
+                    .addKeyValue(LogFields.REASON, Throwables.reasonOf(e))
+                    .log("No se pudo leer la profundidad de la DLQ: el gauge devuelve el centinela");
             return -1L;
         }
     }
@@ -128,8 +135,12 @@ public class RabbitDeadLetterQueue implements DeadLetterQueue {
             return count;
         });
         int total = moved == null ? 0 : moved;
-        log.info("{} mensajes reencolados desde la DLQ del consumidor hacia {}",
-                total, MessagingTopology.CONSUMER_QUEUE);
+        log.atInfo()
+                .addKeyValue(LogFields.EVENT, LogFields.OUTBOX_REQUEUED)
+                .addKeyValue("queue", MessagingTopology.CONSUMER_QUEUE)
+                .addKeyValue(LogFields.COUNT, total)
+                .addKeyValue(LogFields.ACTOR, OpsActor.current())
+                .log("Mensajes reencolados desde la dead letter del consumidor");
         return total;
     }
 

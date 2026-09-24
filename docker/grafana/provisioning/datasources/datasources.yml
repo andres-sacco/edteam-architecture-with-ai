@@ -1,0 +1,36 @@
+# Datasources provisionados por archivo.
+#
+# Un Grafana que hay que configurar a mano después de cada 'docker compose
+# down -v' no lo usa nadie: se abre una vez, se ve vacío, y la próxima vez ya
+# no se abre. Esto hace que 'up -d' deje los tres enchufados.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      timeInterval: 15s
+
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    jsonData:
+      # El puente del §5.4 del diseño: del correlationId del reclamo se llega
+      # al log, y del campo traceId del log se salta a la traza en Tempo. Es lo
+      # que hace que los dos identificadores convivan en vez de competir.
+      derivedFields:
+        - name: TraceID
+          matcherType: label
+          matcherRegex: traceId
+          url: "${__value.raw}"
+          datasourceUid: tempo
+
+  - name: Tempo
+    uid: tempo
+    type: tempo
+    access: proxy
+    url: http://tempo:3200

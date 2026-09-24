@@ -89,8 +89,12 @@ public final class ReservationAccessPolicy {
             return requestedOwner;
         }
         if (requestedOwner.isPresent() && !requestedOwner.get().equals(actor.email())) {
+            // Sin nombrar al solicitante. El mensaje de una excepción termina
+            // en un log y en un cuerpo de error, y los dos son sistemas con
+            // otra retención y otro perímetro que la base. Quién pidió qué lo
+            // dice la fila de `auditoria`, que para eso existe.
             throw new ReservationAccessDeniedException(
-                    "El solicitante %s no puede listar las reservas de otro usuario".formatted(actor.email()));
+                    "El solicitante no puede listar las reservas de otro usuario");
         }
         return Optional.of(actor.email());
     }

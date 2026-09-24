@@ -39,6 +39,14 @@ public class CorrelationIdFilter extends OncePerRequestFilter {
     /** Clave del MDC con la IP del cliente, para la auditoría. */
     public static final String MDC_CLIENT_IP = "clientIp";
 
+    /**
+     * Clave del MDC con el seudónimo del solicitante. La <b>escribe</b>
+     * {@code JwtActorConverter}, cuando la cadena de seguridad resuelve la
+     * identidad; se limpia acá porque éste es el filtro más externo y el único
+     * que corre siempre, incluido el camino del 401.
+     */
+    public static final String MDC_ACTOR_REF = "actorRef";
+
     /** Alfanumérico, guion y guion bajo. Cubre UUID, ULID y los ids de los gateways. */
     private static final Pattern ACCEPTED = Pattern.compile("[A-Za-z0-9_-]{8,64}");
 
@@ -57,6 +65,7 @@ public class CorrelationIdFilter extends OncePerRequestFilter {
             // pedido que tome ese thread y la traza queda mintiendo.
             MDC.remove(MDC_KEY);
             MDC.remove(MDC_CLIENT_IP);
+            MDC.remove(MDC_ACTOR_REF);
         }
     }
 

@@ -1,0 +1,39 @@
+# Loki en modo monolítico y en disco local. Es lo mínimo para indexar el JSON
+# del §1 del diseño y consultarlo por correlationId y por event.
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  log_level: warn
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  # Un contenedor que acaba de arrancar recibe líneas con timestamps de la
+  # corrida anterior; sin esto las rechaza y el panel sale vacío justo en la
+  # primera prueba, que es cuando se decide si esto sirve.
+  reject_old_samples: false
+  allow_structured_metadata: true
+
+# Sin retención configurada: es un entorno local y el disco se recupera con
+# 'docker compose down -v'.

@@ -1,6 +1,8 @@
 package com.edteam.reservations.infrastructure.security;
 
+import com.edteam.reservations.infrastructure.observability.SecurityMetrics;
 import com.edteam.reservations.support.MutableClock;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.FilterChain;
 import org.junit.jupiter.api.BeforeEach;
@@ -44,7 +46,7 @@ class RateLimitFilterTest {
         chain = mock(FilterChain.class);
         filter = new RateLimitFilter(
                 new SecurityProperties.RateLimit(true, Duration.ofMinutes(1), 3, 1),
-                new ObjectMapper(), clock);
+                new ObjectMapper(), clock, new SecurityMetrics(new SimpleMeterRegistry()));
         SecurityContextHolder.clearContext();
     }
 
@@ -132,7 +134,7 @@ class RateLimitFilterTest {
     void canBeTurnedOff() throws Exception {
         RateLimitFilter disabled = new RateLimitFilter(
                 new SecurityProperties.RateLimit(false, Duration.ofMinutes(1), 1, 1),
-                new ObjectMapper(), clock);
+                new ObjectMapper(), clock, new SecurityMetrics(new SimpleMeterRegistry()));
 
         for (int i = 0; i < 10; i++) {
             MockHttpServletRequest request = new MockHttpServletRequest("GET", "/v1/reservations");

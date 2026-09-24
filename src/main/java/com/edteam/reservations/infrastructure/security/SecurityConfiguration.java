@@ -1,5 +1,7 @@
 package com.edteam.reservations.infrastructure.security;
 
+import com.edteam.reservations.infrastructure.observability.SecurityMetrics;
+import org.springframework.beans.factory.annotation.Value;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -73,6 +75,36 @@ public class SecurityConfiguration {
     private static final String[] PROBES = {"/actuator/health", "/actuator/health/**"};
 
     /**
+     * El endpoint que raspa el recolector de métricas.
+     *
+     * <p>Se abre sólo con {@code reservations.security.metrics-scrape-open=true},
+     * y el default es {@code false}.
+     *
+     * <h2>Por qué hace falta la propiedad</h2>
+     * El §7.2 del diseño da por hecho que Prometheus «alcanza el puerto 9090 y
+     * listo». No es así: la cadena de seguridad también cubre el contexto de
+     * gestión, así que el scrape recibe un 401 y el target queda en
+     * {@code DOWN} — verificado contra el contenedor del profile
+     * {@code observability}, que es donde se descubrió.
+     *
+     * <p>Las alternativas eran peores. Un token en el {@code prometheus.yml}
+     * es una credencial de larga vida escrita en un archivo del repositorio, y
+     * además hay que rotarla; y abrirlo sin condición contradice la decisión
+     * que este archivo ya tomó y documentó («que Actuator exija token en el
+     * puerto de la aplicación es cinturón y tirantes»).
+     *
+     * <h2>Qué se está aceptando al encenderla</h2>
+     * {@code /actuator/prometheus} revela volumetría de negocio —cuántas
+     * reservas por minuto, qué porcentaje falla— y la superficie real de la
+     * API, incluidos los endpoints que el contrato no documenta. Encenderla es
+     * defendible <b>sólo</b> mientras el puerto de gestión no se publique,
+     * que es la mitigación estructural que el {@code application.yml} ya
+     * explica. En local, el puerto lo alcanza un contenedor de la red de
+     * Docker y nada más.
+     */
+    private static final String[] METRICS_SCRAPE = {"/actuator/prometheus"};
+
+    /**
      * El contrato y su interfaz.
      *
      * <p>Van sin token, y la razón es que ponérselo no protege nada: lo rompe.
@@ -105,7 +137,18 @@ public class SecurityConfiguration {
                                                                JwtDecoder jwtDecoder,
                                                                SecurityProperties properties,
                                                                ObjectMapper objectMapper,
-                                                               Clock clock) throws Exception {
+                                                               Clock clock,
+                                                               SecurityMetrics securityMetrics,
+                                                               @Value("${reservations.security.metrics-scrape-open:false}")
+                                                               boolean metricsScrapeOpen) throws Exception {
+        if (metricsScrapeOpen) {
+            log.atWarn()
+                    .addKeyValue("event", "startup.wiring")
+                    .addKeyValue("component", "security")
+                    .addKeyValue("actuator.prometheus", "anonymous")
+                    .log("El endpoint de métricas se sirve SIN token: sólo es aceptable "
+                            + "mientras el puerto de gestión no se publique hacia afuera");
+        }
         http
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -123,6 +166,10 @@ public class SecurityConfiguration {
                         .contentTypeOptions(Customizer.withDefaults()))
                 .authorizeHttpRequests(requests -> requests
                         .requestMatchers(PROBES).permitAll()
+                        .requestMatchers(METRICS_SCRAPE)
+                        .access((authentication, context) -> new org.springframework.security.authorization
+                                .AuthorizationDecision(metricsScrapeOpen
+                                || (authentication.get() != null && authentication.get().isAuthenticated())))
                         // El preflight no lleva credencial por definición.
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers(API_DOCS).permitAll()
@@ -141,16 +188,18 @@ public class SecurityConfiguration {
                         .jwt(jwt -> jwt
                                 .decoder(jwtDecoder)
                                 .jwtAuthenticationConverter(new JwtActorConverter()))
-                        .authenticationEntryPoint(ProblemDetailAuthenticationHandlers.entryPoint(objectMapper))
-                        .accessDeniedHandler(
-                                ProblemDetailAuthenticationHandlers.accessDeniedHandler(objectMapper)))
+                        .authenticationEntryPoint(
+                                ProblemDetailAuthenticationHandlers.entryPoint(objectMapper, securityMetrics))
+                        .accessDeniedHandler(ProblemDetailAuthenticationHandlers
+                                .accessDeniedHandler(objectMapper, securityMetrics)))
                 .exceptionHandling(handling -> handling
-                        .authenticationEntryPoint(ProblemDetailAuthenticationHandlers.entryPoint(objectMapper))
-                        .accessDeniedHandler(
-                                ProblemDetailAuthenticationHandlers.accessDeniedHandler(objectMapper)))
+                        .authenticationEntryPoint(
+                                ProblemDetailAuthenticationHandlers.entryPoint(objectMapper, securityMetrics))
+                        .accessDeniedHandler(ProblemDetailAuthenticationHandlers
+                                .accessDeniedHandler(objectMapper, securityMetrics)))
                 // Después de la autenticación: así la cuota se cuenta por
                 // identidad cuando la hay, y recién cae a la IP cuando no.
-                .addFilterAfter(new RateLimitFilter(properties.rateLimit(), objectMapper, clock),
+                .addFilterAfter(new RateLimitFilter(properties.rateLimit(), objectMapper, clock, securityMetrics),
                         BasicAuthenticationFilter.class);
 
         return http.build();
@@ -165,12 +214,20 @@ public class SecurityConfiguration {
     /**
      * El filtro del correlation id, fuera de la cadena de seguridad y antes que
      * ella: un 401 también tiene que poder rastrearse.
+     *
+     * <p>{@code DispatcherType.ERROR} además de {@code REQUEST}: sin eso, un
+     * 400 de parseo del contenedor o un 404 sin handler pasan por
+     * {@code /error} —otro dispatch, con el MDC ya limpio— y salen sin id y
+     * sin el header de respuesta (hallazgo 13). {@code OncePerRequestFilter}
+     * no filtra el dispatch de error por defecto, y el registro no lo pedía.
      */
     @Bean
     public FilterRegistrationBean<CorrelationIdFilter> correlationIdFilter() {
         FilterRegistrationBean<CorrelationIdFilter> registration =
                 new FilterRegistrationBean<>(new CorrelationIdFilter());
         registration.setOrder(Integer.MIN_VALUE);
+        registration.setDispatcherTypes(java.util.EnumSet.of(jakarta.servlet.DispatcherType.REQUEST,
+                jakarta.servlet.DispatcherType.ASYNC, jakarta.servlet.DispatcherType.ERROR));
         return registration;
     }
 

@@ -1,6 +1,9 @@
 package com.edteam.reservations.infrastructure.security;
 
 import com.edteam.reservations.infrastructure.adapter.in.rest.dto.ApiErrorCode;
+import com.edteam.reservations.infrastructure.logging.LogFields;
+import com.edteam.reservations.infrastructure.logging.RequestLogFilter;
+import com.edteam.reservations.infrastructure.observability.SecurityMetrics;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -70,13 +73,18 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private final SecurityProperties.RateLimit properties;
     private final ObjectMapper objectMapper;
     private final Clock clock;
+    private final SecurityMetrics metrics;
 
     private final Map<String, Window> windows = new ConcurrentHashMap<>();
 
-    public RateLimitFilter(SecurityProperties.RateLimit properties, ObjectMapper objectMapper, Clock clock) {
+    public RateLimitFilter(SecurityProperties.RateLimit properties,
+                           ObjectMapper objectMapper,
+                           Clock clock,
+                           SecurityMetrics metrics) {
         this.properties = Objects.requireNonNull(properties);
         this.objectMapper = Objects.requireNonNull(objectMapper);
         this.clock = Objects.requireNonNull(clock);
+        this.metrics = Objects.requireNonNull(metrics, "Las métricas de seguridad son obligatorias");
     }
 
     @Override
@@ -134,8 +142,14 @@ public class RateLimitFilter extends OncePerRequestFilter {
             // El mapa lo llena quien ataca desde muchas IPs: si crece de más se
             // descarta entero. Se pierde la cuenta en curso de los legítimos —a
             // lo sumo les regala una ventana— y no se pierde el proceso.
-            log.warn("Se superaron {} clientes con cuota en seguimiento: se reinicia el registro",
-                    MAX_TRACKED_CLIENTS);
+            // Con contador propio: cada vaciado le regala una ventana a todos
+            // los clientes legítimos, y sin métrica la única señal era este
+            // WARN suelto en medio de un ataque, que es cuando nadie lo lee.
+            metrics.quotaRegistryReset();
+            log.atWarn()
+                    .addKeyValue(LogFields.EVENT, "rate.registry_reset")
+                    .addKeyValue("tracked", MAX_TRACKED_CLIENTS)
+                    .log("Se superó el tope de clientes con cuota en seguimiento: se reinicia el registro");
             windows.clear();
         }
 
@@ -150,9 +164,21 @@ public class RateLimitFilter extends OncePerRequestFilter {
         long retryAfter = Math.max(1, Duration.ofMillis(
                 properties.window().toMillis() - clock.millis() % properties.window().toMillis()).toSeconds());
 
-        // Sin el path completo ni la identidad: es un log de alto volumen
-        // durante un abuso, y es el propio abuso el que elige qué escribe.
-        log.warn("Cuota superada en {} (método {})", request.getRequestURI(), request.getMethod());
+        // Sigue sin la identidad, y ahora tampoco con la URI cruda: es un log
+        // de alto volumen durante un abuso y es el propio abuso el que elige
+        // qué escribe. Lo que cambia es que el pivote hacia el cliente ahora
+        // existe: el clientIp está en el MDC desde CorrelationIdFilter y el
+        // correlationId une esta línea con la de acceso del mismo pedido.
+        String route = routeOf(request);
+        metrics.rateLimited(request.getMethod(), route);
+        request.setAttribute(RequestLogFilter.ERROR_CODE_ATTRIBUTE, ApiErrorCode.RATE_LIMIT_EXCEEDED.name());
+        log.atWarn()
+                .addKeyValue(LogFields.EVENT, LogFields.RATE_LIMITED)
+                .addKeyValue(LogFields.HTTP_METHOD, request.getMethod())
+                .addKeyValue(LogFields.HTTP_ROUTE, route)
+                .addKeyValue(LogFields.HTTP_STATUS, HttpStatus.TOO_MANY_REQUESTS.value())
+                .addKeyValue("retryAfterSeconds", retryAfter)
+                .log("Cuota de pedidos superada");
 
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.TOO_MANY_REQUESTS,
                 "Se superó la cuota de pedidos. Reintentá en %d segundo(s).".formatted(retryAfter));
@@ -166,6 +192,26 @@ public class RateLimitFilter extends OncePerRequestFilter {
         response.setHeader(HttpHeaders.RETRY_AFTER, String.valueOf(retryAfter));
         response.setHeader(HttpHeaders.CACHE_CONTROL, "no-store, private");
         objectMapper.writeValue(response.getOutputStream(), problem);
+    }
+
+    /**
+     * La plantilla del handler, o un centinela.
+     *
+     * <p>Este filtro corre <b>antes</b> del {@code DispatcherServlet}, así que
+     * el atributo de la plantilla todavía no está. Se derivan a mano los dos
+     * prefijos de negocio y todo lo demás cae en {@code other}: la URI cruda
+     * no puede entrar a una etiqueta —la elige quien ataca, que es justo el
+     * caso en el que este contador se incrementa— y una bomba de cardinalidad
+     * disparable desde afuera es peor que no tener la métrica.
+     */
+    private static String routeOf(HttpServletRequest request) {
+        String uri = request.getRequestURI();
+        if (uri == null || !uri.startsWith("/v1/reservations")) {
+            return "other";
+        }
+        return "/v1/reservations".equals(uri) || "/v1/reservations/".equals(uri)
+                ? "/v1/reservations"
+                : "/v1/reservations/{reservationId}";
     }
 
     /** Contador de una ventana. Se reemplaza entero cuando la ventana cambia. */

@@ -1,0 +1,16 @@
+# Los paneles se cargan desde /var/lib/grafana/dashboards, que el compose monta
+# vacío a propósito: un dashboard JSON exportado a mano envejece mal y nadie lo
+# revisa en un diff. Lo que este repositorio versiona son las ALERTAS, que sí
+# son una decisión, y las consultas que las alimentan.
+apiVersion: 1
+
+providers:
+  - name: reservations
+    orgId: 1
+    folder: Reservations
+    type: file
+    disableDeletion: false
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

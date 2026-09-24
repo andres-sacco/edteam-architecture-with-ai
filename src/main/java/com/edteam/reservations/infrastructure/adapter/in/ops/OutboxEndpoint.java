@@ -4,6 +4,10 @@ import com.edteam.reservations.application.outbox.OutboxDispatchResult;
 import com.edteam.reservations.application.port.in.DispatchPendingNotificationsUseCase;
 import com.edteam.reservations.infrastructure.adapter.out.outbox.OutboxAdmin;
 import com.edteam.reservations.infrastructure.adapter.out.outbox.OutboxStats;
+import com.edteam.reservations.infrastructure.logging.LogFields;
+import com.edteam.reservations.infrastructure.security.OpsActor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.actuate.endpoint.annotation.DeleteOperation;
 import org.springframework.boot.actuate.endpoint.annotation.Endpoint;
 import org.springframework.boot.actuate.endpoint.annotation.ReadOperation;
@@ -45,6 +49,8 @@ import java.util.Objects;
  */
 @Endpoint(id = "outbox")
 public class OutboxEndpoint {
+
+    private static final Logger log = LoggerFactory.getLogger(OutboxEndpoint.class);
 
     private final OutboxAdmin outbox;
     private final DispatchPendingNotificationsUseCase dispatchNotifications;
@@ -115,6 +121,15 @@ public class OutboxEndpoint {
         int days = olderThanDays == null || olderThanDays < 0 ? 7 : olderThanDays;
         int purged = outbox.purgeDispatchedBefore(
                 java.time.Instant.now().minus(java.time.Duration.ofDays(days)));
+        // Esta operación BORRA filas de producción y no dejaba ninguna huella
+        // (hallazgo 25). Ahora deja la suya, con el actor y con el
+        // correlationId que el filtro del contexto de gestión pone.
+        log.atInfo()
+                .addKeyValue(LogFields.EVENT, LogFields.OUTBOX_PURGED)
+                .addKeyValue(LogFields.PURGED, purged)
+                .addKeyValue("olderThanDays", days)
+                .addKeyValue(LogFields.ACTOR, OpsActor.current())
+                .log("Purga manual del outbox");
         return Map.of("purged", purged, "olderThanDays", days);
     }
 }
