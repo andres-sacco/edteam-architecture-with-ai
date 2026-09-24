@@ -98,6 +98,13 @@ public final class MeteredEventOutbox implements EventOutboxPort {
     }
 
     @Override
+    public List<OutboxMessage> pollProbe() {
+        List<OutboxMessage> messages = delegate.pollProbe();
+        claimed.increment(messages.size());
+        return messages;
+    }
+
+    @Override
     public void markDispatched(String messageId) {
         delegate.markDispatched(messageId);
         dispatched.increment();

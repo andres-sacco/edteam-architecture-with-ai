@@ -6,19 +6,23 @@ import com.edteam.reservations.domain.model.AirportCode;
 import com.edteam.reservations.domain.model.Itinerary;
 import org.springframework.stereotype.Component;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 
 /**
- * Valida contra el maestro que los aeropuertos del itinerario existan.
+ * Verifica que todos los aeropuertos del itinerario existan en el maestro.
  *
- * <p>La regla se comparte entre la creación y la modificación, así que se
- * extrae en un colaborador propio en lugar de duplicarla en cada caso de uso.
+ * <p>Vive en la aplicación y no en el dominio porque necesita el maestro, que
+ * es una dependencia externa: el dominio valida la <em>forma</em> de un código
+ * ({@link AirportCode}), la aplicación valida su <em>existencia</em>.
  *
- * <p>Con itinerarios de varios tramos hay que validar todos los aeropuertos que
- * toca el viaje, no sólo el origen y el destino finales: una escala en un
- * aeropuerto inexistente también invalida la reserva.
+ * <p>Delega el conjunto completo en una sola llamada al puerto. Antes recorría
+ * los aeropuertos uno por uno, y ese bucle era la razón estructural por la que
+ * un itinerario de once ciudades contra un catálogo degradado costaba la suma
+ * de once peores casos. Cómo se resuelve el conjunto —en paralelo, con cache,
+ * con circuito, con presupuesto— es problema del adaptador; acá no se sabe ni
+ * hace falta saberlo.
  */
 @Component
 public class AirportExistenceValidator {
@@ -30,20 +34,21 @@ public class AirportExistenceValidator {
     }
 
     /**
-     * @throws UnknownAirportException con todos los códigos desconocidos encontrados,
-     *                                 para que el cliente los corrija de una sola vez
+     * @throws UnknownAirportException si alguno de los códigos no existe
+     * @throws com.edteam.reservations.application.exception.AirportCatalogUnavailableException
+     *         si no se pudo averiguar
      */
     public void validate(Itinerary itinerary) {
         Objects.requireNonNull(itinerary, "El itinerario es obligatorio");
 
-        List<AirportCode> unknown = new ArrayList<>();
-        for (AirportCode airport : itinerary.airports()) {
-            if (!airportCatalog.exists(airport)) {
-                unknown.add(airport);
-            }
+        Set<AirportCode> airports = itinerary.airports();
+        Set<AirportCode> unknown = airportCatalog.unknown(airports);
+        if (unknown == null || unknown.isEmpty()) {
+            return;
         }
-        if (!unknown.isEmpty()) {
-            throw new UnknownAirportException(unknown);
-        }
+        // Se reordena según el itinerario para que el mensaje de error nombre
+        // las ciudades en el orden en que el usuario las escribió.
+        List<AirportCode> ordered = airports.stream().filter(unknown::contains).toList();
+        throw new UnknownAirportException(ordered.isEmpty() ? List.copyOf(unknown) : ordered);
     }
 }

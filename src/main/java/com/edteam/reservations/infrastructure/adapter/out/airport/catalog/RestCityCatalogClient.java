@@ -1,6 +1,7 @@
 package com.edteam.reservations.infrastructure.adapter.out.airport.catalog;
 
 import com.edteam.reservations.application.exception.AirportCatalogIntegrationException;
+import com.edteam.reservations.application.exception.AirportCatalogThrottledException;
 import com.edteam.reservations.application.exception.AirportCatalogUnavailableException;
 import com.edteam.reservations.infrastructure.logging.LogSanitizer;
 import org.slf4j.Logger;
@@ -155,10 +156,15 @@ public class RestCityCatalogClient implements CityCatalogClient {
 
         String body = errorBody(response);
 
-        // 429 es 4xx, pero no es un defecto nuestro: es el proveedor pidiendo que bajemos el ritmo.
+        // 429 es 4xx, pero no es un defecto nuestro: es el proveedor pidiendo
+        // que bajemos el ritmo. Se lanza un tipo propio para que el
+        // clasificador pueda decidir lo que la tabla del diseño dice y antes
+        // no se podía expresar: SÍ cuenta para el circuito —que es lo que de
+        // verdad frena el tráfico— y NO se reintenta, porque insistir es
+        // desobedecer al proveedor y empeorar su saturación.
         if (status.value() == HttpStatus.TOO_MANY_REQUESTS.value()) {
             log.warn("El catálogo nos está limitando (429) al consultar {}: {}", code, body);
-            throw new AirportCatalogUnavailableException(
+            throw new AirportCatalogThrottledException(
                     "El catálogo rechazó la consulta de '%s' por exceso de pedidos".formatted(code));
         }
 

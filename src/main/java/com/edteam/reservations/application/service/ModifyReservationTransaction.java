@@ -52,7 +52,10 @@ class ModifyReservationTransaction {
         this.auditTrail = Objects.requireNonNull(auditTrail);
     }
 
-    @Transactional
+    // timeout = 1: ver CreateReservationTransaction. El techo del conjunto,
+    // que el statement_timeout por sentencia no cubre, y el renglón de
+    // persistencia del presupuesto del pedido.
+    @Transactional(timeout = 1)
     Reservation apply(ModifyReservationCommand command, Itinerary newItinerary, Instant now) {
         ReservationId reservationId = ReservationId.of(command.reservationId());
 

@@ -7,38 +7,14 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import java.time.Duration;
 
 /**
- * Parámetros del maestro de aeropuertos.
+ * Todo lo configurable del maestro de aeropuertos: plazos del cache, timeouts
+ * del proveedor, reintentos, bulkhead, circuito y el presupuesto del
+ * itinerario.
  *
- * <p>La URL base es la que decide qué implementación se cablea: sin ella, el
- * maestro sigue siendo el stub en memoria; con ella, se usa el cliente REST
- * contra la API de catálogo. Así el entorno elige el origen sin recompilar y
- * los tests no dependen de que haya un proveedor arriba.
- *
- * <p>Los tres tiempos del cache son distintos a propósito, y el porqué de cada
- * uno está en {@link CachingAirportCatalog}: el negativo es más corto porque
- * servir un "no existe" viejo es rechazar una reserva válida, y la ventana de
- * gracia es larga porque su razón de ser es cubrir una caída del proveedor,
- * que puede durar bastante más que un TTL.
- *
- * <h2>Timeouts y reintentos</h2>
- * Los timeouts van acá y no en {@code spring.http.client} porque son de
- * <em>este</em> proveedor: el read timeout que tolera el catálogo no tiene por
- * qué ser el que tolere el próximo servicio que se integre, y un valor global
- * los ataría. Los reintentos siguen la misma lógica y sólo aplican a
- * {@code GET /city/{code}}, que es una lectura idempotente; el detalle de por
- * qué se puede reintentar esto y no una escritura está en
- * {@link RetryingCityCatalogClient}.
- *
- * @param cacheTtl         vigencia de un "existe"
- * @param negativeCacheTtl vigencia de un "no existe"; más corto a propósito
- * @param staleWhileError  cuánto se conserva una entrada vencida para poder
- *                         servirla si el catálogo no responde
- * @param connectTimeout   tope para establecer la conexión
- * @param readTimeout      tope para que el catálogo termine de responder
- * @param retry            política de reintentos ante fallos transitorios
- * @param baseUrl          raíz de la API de catálogo; vacío para usar el stub en memoria
- * @param apiKey           credencial que se manda en cada llamada; vacío para no enviar header
- * @param apiKeyHeader     header en el que viaja la credencial
+ * <p>Cada valor por defecto está acá y su motivo en {@code application.yml}.
+ * Ninguno es el default de la librería: el tráfico, el costo de la llamada y
+ * el valor del fallback son distintos para cada dependencia, y eso es
+ * justamente lo que fija los umbrales.
  */
 @ConfigurationProperties(prefix = "reservations.airport-catalog")
 public record AirportCatalogProperties(Duration cacheTtl,
@@ -46,10 +22,29 @@ public record AirportCatalogProperties(Duration cacheTtl,
                                        Duration staleWhileError,
                                        Duration connectTimeout,
                                        Duration readTimeout,
+                                       Duration itineraryBudget,
                                        RetryProperties retry,
+                                       BulkheadProperties bulkhead,
+                                       CircuitBreakerProperties circuitBreaker,
                                        String baseUrl,
                                        String apiKey,
                                        String apiKeyHeader) {
+
+    /**
+     * Umbrales por defecto del circuito del catálogo.
+     *
+     * <p>Ventana 50 / mínimo 20: un itinerario típico son cuatro ciudades y
+     * uno complejo once, así que 20 llamadas son unos pocos itinerarios —
+     * suficiente para que una ráfaga desafortunada de un solo pedido no abra
+     * el circuito, y poco como para detectar una caída en segundos.
+     *
+     * <p>Abierto 5 s, que es el número que más se aparta del default de 60 s
+     * de la librería: el fallback sirve datos que envejecen, así que cada
+     * segundo abierto cuesta frescura, y probar es barato (4 llamadas de ≤ 1 s).
+     */
+    private static final CircuitBreakerProperties CIRCUIT_DEFAULTS = new CircuitBreakerProperties(
+            true, 50, 20, 50, Duration.ofMillis(900), 60,
+            Duration.ofSeconds(5), 4, true, Duration.ofMinutes(10));
 
     public AirportCatalogProperties {
         if (cacheTtl == null) {
@@ -62,69 +57,106 @@ public record AirportCatalogProperties(Duration cacheTtl,
             staleWhileError = Duration.ofHours(2);
         }
         if (connectTimeout == null) {
-            connectTimeout = Duration.ofMillis(500);
+            connectTimeout = Duration.ofMillis(300);
         }
         if (readTimeout == null) {
-            readTimeout = Duration.ofSeconds(2);
+            readTimeout = Duration.ofMillis(700);
+        }
+        if (itineraryBudget == null || itineraryBudget.isNegative() || itineraryBudget.isZero()) {
+            itineraryBudget = Duration.ofMillis(1600);
         }
         if (retry == null) {
             retry = new RetryProperties(null, null, null);
         }
+        if (bulkhead == null) {
+            bulkhead = new BulkheadProperties(null);
+        }
+        circuitBreaker = CircuitBreakerProperties.merge(circuitBreaker, CIRCUIT_DEFAULTS);
         if (apiKeyHeader == null || apiKeyHeader.isBlank()) {
             apiKeyHeader = "X-API-Key";
         }
     }
 
     /**
-     * Reintentos ante fallos transitorios del catálogo.
-     *
-     * @param maxAttempts    intentos totales, el primero incluido; 1 los apaga
-     * @param initialBackoff espera después del primer fallo
-     * @param maxBackoff     techo de la espera
+     * Reintentos de {@code GET /city/{code}}, la única llamada del sistema que
+     * se reintenta y sólo porque es una lectura idempotente.
      */
     public record RetryProperties(Integer maxAttempts, Duration initialBackoff, Duration maxBackoff) {
 
         public RetryProperties {
             if (maxAttempts == null || maxAttempts < 1) {
-                maxAttempts = 3;
+                maxAttempts = 2;
             }
             if (initialBackoff == null) {
                 initialBackoff = Duration.ofMillis(100);
             }
             if (maxBackoff == null) {
-                maxBackoff = Duration.ofMillis(500);
+                maxBackoff = Duration.ofMillis(200);
             }
         }
     }
 
-    /** Política de vencimiento que espera el decorador con cache. */
+    /** Llamadas simultáneas contra el proveedor, con espera cero. */
+    public record BulkheadProperties(Integer maxConcurrentCalls) {
+
+        public BulkheadProperties {
+            if (maxConcurrentCalls == null || maxConcurrentCalls < 1) {
+                maxConcurrentCalls = 50;
+            }
+        }
+    }
+
     public CachingAirportCatalog.Ttl cacheTtlPolicy() {
         return new CachingAirportCatalog.Ttl(cacheTtl, negativeCacheTtl, staleWhileError);
     }
 
-    /** Política de reintentos que espera el decorador que reintenta. */
     public RetryingCityCatalogClient.Retry retryPolicy() {
         return new RetryingCityCatalogClient.Retry(
                 retry.maxAttempts(), retry.initialBackoff(), retry.maxBackoff());
     }
 
-    /** {@code true} si hay un proveedor configurado al que llamar. */
+    /**
+     * Techo de un intento contra el proveedor: la conexión más la lectura.
+     *
+     * <p>Es el número con el que el retry decide si arrancar otro intento
+     * entra en lo que queda del presupuesto. Que se derive de los timeouts y
+     * no sea una constante es lo que impide que los dos se desincronicen — el
+     * javadoc anterior declaraba un peor caso que omitía el connect timeout y
+     * quedaba un 17 % corto.
+     */
+    public Duration attemptCost() {
+        return connectTimeout.plus(readTimeout);
+    }
+
+    /**
+     * Peor caso de resolver <strong>una</strong> ciudad contra el origen, con
+     * todos los intentos y todas las esperas en su techo. Derivado, no
+     * escrito: un test lo compara con el presupuesto y falla el día que
+     * alguien cambie un timeout sin rehacer la cuenta.
+     */
+    public Duration worstCasePerCity() {
+        return attemptCost().multipliedBy(retry.maxAttempts()).plus(retryPolicy().worstCaseBackoff());
+    }
+
+    /**
+     * Peor caso de validar un itinerario completo. Es el presupuesto, no la
+     * suma: con el fan-out en paralelo, N ciudades cuestan la más lenta, y el
+     * corte duro lo pone el presupuesto — que siempre es menor o igual que el
+     * peor caso de una ciudad sola.
+     */
+    public Duration worstCaseItinerary() {
+        Duration perCity = worstCasePerCity();
+        return itineraryBudget.compareTo(perCity) < 0 ? itineraryBudget : perCity;
+    }
+
     public boolean hasRemoteCatalog() {
         return baseUrl != null && !baseUrl.isBlank();
     }
 
     /**
-     * Si la integración sale por un canal cifrado.
-     *
-     * <p>La API key viaja en un header, así que por {@code http://} se lee y
-     * se roba con sólo estar en el camino —y con ella, se consulta el catálogo
-     * en nuestro nombre hasta que alguien note la factura—. El tráfico de
-     * respuesta tampoco es inocuo: es el maestro que decide qué reservas se
-     * aceptan.
-     *
-     * <p>{@code localhost} queda exento: es el contenedor de al lado en la
-     * máquina de desarrollo, y exigirle un certificado sólo lograría que
-     * alguien apague la verificación entera.
+     * La API key viaja en un header: sin TLS se lee en el camino. Se permite
+     * {@code http://} sólo contra localhost, que es el contenedor de al lado
+     * en la máquina de desarrollo.
      */
     public boolean usesSecureTransport() {
         return !hasRemoteCatalog()

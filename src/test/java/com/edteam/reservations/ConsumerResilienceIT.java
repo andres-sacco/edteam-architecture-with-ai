@@ -83,6 +83,40 @@ class ConsumerResilienceIT extends AbstractRabbitIT {
     }
 
     // =================================================================
+    // La cola de espera tiene cota
+    // =================================================================
+
+    @Test
+    @DisplayName("la cola de espera declara cota y política de rebalse, igual que la principal")
+    void theRetryQueueIsBounded() {
+        // Sin cota, con el destino caído esta cola crece sin límite en el
+        // broker y la alarma de disco de RabbitMQ termina frenando LAS
+        // PUBLICACIONES DEL RELAY: la falta de un límite en una cola interna
+        // se convierte en la caída del broker entero, y se lleva puesto el
+        // camino que sí tenía protección. Con reject-publish el rebalse es
+        // visible en lugar de silencioso.
+        java.util.Properties properties = rabbitAdmin.getQueueProperties(MessagingTopology.RETRY_QUEUE);
+
+        assertThat(properties).isNotNull();
+        assertThat(properties.toString())
+                .as("la cola declarada tiene que llevar x-max-length y x-overflow")
+                .isNotEmpty();
+        assertThat(queueArguments(MessagingTopology.RETRY_QUEUE))
+                .containsKeys("x-max-length", "x-overflow", "x-message-ttl");
+    }
+
+    @Autowired
+    private java.util.List<org.springframework.amqp.core.Queue> declaredQueues;
+
+    private java.util.Map<String, Object> queueArguments(String queue) {
+        return declaredQueues.stream()
+                .filter(candidate -> candidate.getName().equals(queue))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("No se declaró la cola " + queue))
+                .getArguments();
+    }
+
+    // =================================================================
     // Reintentos acotados y dead letter
     // =================================================================
 

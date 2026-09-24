@@ -77,7 +77,18 @@ class CreateReservationTransaction {
      * {@code UNIQUE}, un conflicto optimista, la conexión que se corta— el
      * evento se va con el rollback.
      */
-    @Transactional
+    // timeout = 1: el techo del CONJUNTO, no de cada sentencia. El
+    // statement_timeout del driver acota cada una; sin este, seis sentencias
+    // de 1,9 s cada una siguen sumando doce segundos con una conexión del pool
+    // retenida.
+    //
+    // Un segundo y no dos porque este número ES el renglón de persistencia del
+    // presupuesto del pedido: seis lecturas y escrituras por índice único no
+    // tienen derecho a tardar más, y un techo más alto que lo presupuestado
+    // convierte al presupuesto en una declaración de intenciones. El
+    // statement_timeout de 2 s del driver queda como red por si alguna
+    // sentencia se sale de lo previsto.
+    @Transactional(timeout = 1)
     CreateReservationResult apply(CreateReservationCommand command,
                                   Itinerary itinerary,
                                   List<Passenger> passengers,

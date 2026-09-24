@@ -52,7 +52,7 @@ public class CancelReservationService implements CancelReservationUseCase {
     }
 
     @Override
-    @Transactional
+    @Transactional(timeout = 2)
     public Reservation cancel(CancelReservationCommand command) {
         Objects.requireNonNull(command, "El comando es obligatorio");
         ReservationId reservationId = ReservationId.of(command.reservationId());

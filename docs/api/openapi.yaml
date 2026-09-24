@@ -944,6 +944,8 @@ components:
           - FORBIDDEN
           - RATE_LIMIT_EXCEEDED
           - AIRPORT_CATALOG_UNAVAILABLE
+          - AIRPORT_CATALOG_ERROR
+          - DATABASE_UNAVAILABLE
           - UNSUPPORTED_REQUEST
           - INTERNAL_ERROR
           example: RESERVATION_NOT_FOUND

@@ -1,6 +1,7 @@
 package com.edteam.reservations.application.service;
 
 import com.edteam.reservations.application.exception.EventPublishException;
+import com.edteam.reservations.application.exception.EventPublisherUnavailableException;
 import com.edteam.reservations.application.outbox.OutboxDispatchResult;
 import com.edteam.reservations.application.outbox.OutboxFailure;
 import com.edteam.reservations.application.outbox.OutboxMessage;
@@ -53,6 +54,93 @@ class OutboxDispatcherServiceTest {
     private static OutboxMessage message(String id, String type, String subject, long sequence) {
         return new OutboxMessage(id, type, 1, subject, sequence, "{}", "corr-1",
                 TestFixtures.NOW, TestFixtures.NOW, 0, OutboxStatus.IN_FLIGHT);
+    }
+
+    // =================================================================
+    // El circuito del broker visto desde el relay
+    // =================================================================
+
+    @Test
+    @DisplayName("si el publicador avisa que el destino esta caido, el mensaje NO gasta su intento")
+    void anUnavailablePublisherDoesNotSpendTheAttempt() {
+        // Es todo el valor del circuito sobre el outbox. Sin esta distincion,
+        // una caida larga del broker consume el tope de reintentos de mensajes
+        // perfectamente recuperables y los manda a la dead letter, donde
+        // alguien tiene que drenarlos a mano: es la diferencia entre "la
+        // notificacion llego tarde" y "la notificacion se perdio".
+        when(eventOutbox.pollPending(10)).thenReturn(List.of(
+                message("m1", "reservation.created", "10", 1L),
+                message("m2", "reservation.created", "11", 2L)));
+        doThrow(new EventPublisherUnavailableException("circuito abierto"))
+                .when(eventPublisher).publish(any(OutboxMessage.class));
+
+        OutboxDispatchResult result = service.dispatchPending(10);
+
+        assertThat(result.dispatched()).isZero();
+        assertThat(result.failed()).as("no fallaron: nunca se intentaron").isZero();
+        verify(eventOutbox, never()).markFailed(anyString(), anyString(), any(OutboxFailure.class));
+        verify(eventOutbox).release(List.of("m1", "m2"));
+    }
+
+    @Test
+    @DisplayName("con el destino caido corta el lote entero en el primer aviso")
+    void stopsTheWholeBatchOnTheFirstUnavailableAnswer() {
+        when(eventOutbox.pollPending(10)).thenReturn(List.of(
+                message("m1", "reservation.created", "10", 1L),
+                message("m2", "reservation.created", "11", 2L),
+                message("m3", "reservation.created", "12", 3L)));
+        doThrow(new EventPublisherUnavailableException("circuito abierto"))
+                .when(eventPublisher).publish(any(OutboxMessage.class));
+
+        service.dispatchPending(10);
+
+        // Una sola llamada al publicador: los que faltaban iban a recibir la
+        // misma respuesta, y preguntar tres veces lo mismo es trabajo tirado.
+        verify(eventPublisher, org.mockito.Mockito.times(1)).publish(any(OutboxMessage.class));
+    }
+
+    @Test
+    @DisplayName("una sonda que no prospera libera el mensaje sin contarle el intento")
+    void aFailedProbeReleasesTheMessage() {
+        // La sonda del circuito semiabierto se dispara una y otra vez durante
+        // toda la caida. Cobrarle el intento al mensaje que tuvo la mala
+        // suerte de ser elegido lo acerca a la dead letter por un problema que
+        // no es suyo: con cinco mensajes pendientes una madrugada, cada uno
+        // agotaba su tope en menos de una hora y moria igual, que es
+        // exactamente lo que el circuito venia a evitar.
+        when(eventOutbox.pollProbe()).thenReturn(List.of(message("m1", "reservation.created", "10", 1L)));
+        doThrow(new EventPublishException("el broker no confirmo"))
+                .when(eventPublisher).publish(any(OutboxMessage.class));
+
+        OutboxDispatchResult result = service.dispatchProbe();
+
+        assertThat(result.dispatched()).isZero();
+        verify(eventOutbox, never()).markFailed(anyString(), anyString(), any(OutboxFailure.class));
+        verify(eventOutbox).release(List.of("m1"));
+    }
+
+    @Test
+    @DisplayName("una sonda que prospera SI despacha el mensaje: no es una llamada de mentira")
+    void aSuccessfulProbeActuallyDelivers() {
+        when(eventOutbox.pollProbe()).thenReturn(List.of(message("m1", "reservation.created", "10", 1L)));
+
+        OutboxDispatchResult result = service.dispatchProbe();
+
+        assertThat(result.dispatched()).isEqualTo(1);
+        verify(eventOutbox).markDispatched("m1");
+    }
+
+    @Test
+    @DisplayName("un fallo de publicacion comun SI gasta el intento: el circuito no cambia eso")
+    void anOrdinaryFailureStillSpendsTheAttempt() {
+        when(eventOutbox.pollPending(10)).thenReturn(List.of(message("m1", "reservation.created", "10", 1L)));
+        doThrow(new EventPublishException("el broker no confirmo"))
+                .when(eventPublisher).publish(any(OutboxMessage.class));
+
+        OutboxDispatchResult result = service.dispatchPending(10);
+
+        assertThat(result.failed()).isEqualTo(1);
+        verify(eventOutbox).markFailed(eq("m1"), anyString(), eq(OutboxFailure.TRANSIENT));
     }
 
     @Test

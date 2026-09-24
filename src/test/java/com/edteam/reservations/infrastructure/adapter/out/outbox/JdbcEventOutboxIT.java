@@ -48,6 +48,9 @@ class JdbcEventOutboxIT extends AbstractPostgresIT {
     @Autowired
     private EventOutboxPort eventOutbox;
 
+    @Autowired
+    private com.edteam.reservations.infrastructure.config.OutboxProperties outboxProperties;
+
     private DomainEvent created() {
         return ReservationCreated.of(TestFixtures.storedReservation(0L));
     }
@@ -58,6 +61,104 @@ class JdbcEventOutboxIT extends AbstractPostgresIT {
 
     private DomainEvent cancelled() {
         return ReservationCancelled.of(TestFixtures.storedReservation(2L).cancel(TestFixtures.NOW));
+    }
+
+    // =================================================================
+    // El reclamo es de quien lo tomó
+    // =================================================================
+
+    @Nested
+    @DisplayName("La propiedad del reclamo")
+    class ClaimOwnership {
+
+        @Test
+        @DisplayName("un markFailed tardío no revive un mensaje que otro ya despachó")
+        void aLateMarkFailedDoesNotRevertADispatchedMessage() {
+            // El hallazgo: markDispatched y markFailed no verificaban que el
+            // reclamo siguiera siendo suyo. Con un lease que puede vencer en
+            // medio de un lote, otra instancia re-reclama un mensaje todavía
+            // en vuelo; la publicación doble la absorbe la deduplicación del
+            // consumidor, pero el markFailed tardío del primero devolvía a
+            // PENDING un mensaje YA ENTREGADO —reenvío indefinido— y contaba
+            // el intento dos veces, acelerando su llegada a la dead letter.
+            inTransaction(() -> eventOutbox.enqueue(List.of(created())));
+            String messageId = outbox.pollPending(1).getFirst().id();
+
+            // La instancia B lo despacha.
+            outbox.markDispatched(messageId);
+
+            // La instancia A, que lo tenía reclamado desde antes, llega tarde.
+            outbox.markFailed(messageId, "el broker no confirmó", OutboxFailure.TRANSIENT);
+
+            assertThat(statusOf(messageId)).isEqualTo("DISPATCHED");
+            assertThat(attemptsOf(messageId))
+                    .as("un solo intento: el tardío no cuenta")
+                    .isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("un markDispatched tardío tampoco pisa el estado de quien lo tenía")
+        void aLateMarkDispatchedIsIgnored() {
+            inTransaction(() -> eventOutbox.enqueue(List.of(created())));
+            String messageId = outbox.pollPending(1).getFirst().id();
+
+            outbox.markFailed(messageId, "el broker no confirmó", OutboxFailure.TRANSIENT);
+            outbox.markDispatched(messageId);
+
+            assertThat(statusOf(messageId)).isEqualTo("PENDING");
+            assertThat(attemptsOf(messageId)).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("la sonda reclama uno solo y liberarlo no le cuesta el intento")
+        void theProbeClaimsOneAndReleasingItCostsNothing() {
+            inTransaction(() -> eventOutbox.enqueue(List.of(created(), confirmed(), cancelled())));
+
+            List<OutboxMessage> probe = outbox.pollProbe();
+
+            assertThat(probe).hasSize(1);
+            outbox.release(List.of(probe.getFirst().id()));
+
+            assertThat(statusOf(probe.getFirst().id())).isEqualTo("PENDING");
+            assertThat(attemptsOf(probe.getFirst().id()))
+                    .as("una sonda no es un intento de entrega")
+                    .isZero();
+        }
+
+        @Test
+        @DisplayName("la sonda no toma siempre el mismo mensaje: reparte el riesgo")
+        void theProbeSpreadsTheRisk() {
+            // Con un backlog chico, la sonda se dispara una y otra vez durante
+            // toda la caída. Si tomara siempre el más viejo, sería siempre el
+            // mismo el que arriesga —y con el orden natural ése es el
+            // reservation.created de la reserva más antigua, que es el que más
+            // importa—.
+            inTransaction(() -> eventOutbox.enqueue(List.of(created(), confirmed(), cancelled())));
+
+            Set<String> picked = new java.util.HashSet<>();
+            for (int i = 0; i < 40; i++) {
+                List<OutboxMessage> probe = outbox.pollProbe();
+                if (!probe.isEmpty()) {
+                    picked.add(probe.getFirst().id());
+                    outbox.release(List.of(probe.getFirst().id()));
+                }
+            }
+
+            assertThat(picked)
+                    .as("cuarenta sondas sobre tres mensajes tocaron más de uno")
+                    .hasSizeGreaterThan(1);
+        }
+
+        private String statusOf(String messageId) {
+            return jdbcTemplate.queryForObject(
+                    "SELECT status FROM outbox_message WHERE id = ?::uuid", String.class, messageId);
+        }
+
+        private int attemptsOf(String messageId) {
+            Integer attempts = jdbcTemplate.queryForObject(
+                    "SELECT attempts FROM outbox_message WHERE id = ?::uuid", Integer.class, messageId);
+            return attempts == null ? -1 : attempts;
+        }
     }
 
     // =================================================================
@@ -367,7 +468,10 @@ class JdbcEventOutboxIT extends AbstractPostgresIT {
             inTransaction(() -> eventOutbox.enqueue(List.of(created())));
             String id = outbox.pollPending(10).getFirst().id();
 
-            for (int i = 0; i < 12; i++) {
+            // El tope se lee de la configuración y no se escribe: subió de 10
+            // a 80 para que el techo de seis horas sea el corte que manda, y
+            // un número literal acá habría quedado viejo en silencio.
+            for (int i = 0; i < outboxProperties.maxAttempts() + 2; i++) {
                 outbox.markFailed(id, "destino caído", OutboxFailure.TRANSIENT);
                 jdbcTemplate.update("UPDATE outbox_message SET next_attempt_at = " + NOW_UTC
                         + ", claimed_at = NULL WHERE id = ?::uuid", id);

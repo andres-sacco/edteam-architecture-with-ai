@@ -82,7 +82,7 @@ public class ProcessReservationEventService implements ProcessReservationEventUs
     }
 
     @Override
-    @Transactional
+    @Transactional(timeout = 2)
     public EventProcessingOutcome process(InboundEvent event) {
         Objects.requireNonNull(event, "El evento es obligatorio");
 

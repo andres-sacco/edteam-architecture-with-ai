@@ -45,7 +45,7 @@ public class GetReservationService implements GetReservationUseCase {
      * pueda perderse la evidencia del intento mientras la respuesta sí sale.
      */
     @Override
-    @Transactional
+    @Transactional(timeout = 2)
     public Reservation get(GetReservationQuery query) {
         Objects.requireNonNull(query, "El pedido es obligatorio");
         ReservationId reservationId = query.reservationId();

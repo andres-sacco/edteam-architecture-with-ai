@@ -33,7 +33,7 @@ public class ListReservationsService implements ListReservationsUseCase {
     }
 
     @Override
-    @Transactional(readOnly = true)
+    @Transactional(readOnly = true, timeout = 2)
     public ResultPage<Reservation> list(ListReservationsQuery query) {
         Objects.requireNonNull(query, "El pedido es obligatorio");
 

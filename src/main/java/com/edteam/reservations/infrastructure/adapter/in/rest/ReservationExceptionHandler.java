@@ -17,6 +17,9 @@ import com.edteam.reservations.domain.exception.ReservationAlreadyCancelledExcep
 import com.edteam.reservations.domain.exception.ReservationNotModifiableException;
 import com.edteam.reservations.infrastructure.adapter.in.rest.dto.ApiErrorCode;
 import com.edteam.reservations.infrastructure.adapter.in.rest.dto.FieldErrorResponse;
+import org.springframework.dao.QueryTimeoutException;
+import org.springframework.dao.TransientDataAccessException;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
@@ -83,6 +86,13 @@ public class ReservationExceptionHandler extends ResponseEntityExceptionHandler 
 
     /** Ventana sugerida al cliente cuando el maestro de aeropuertos no responde. */
     private static final int CATALOG_RETRY_AFTER_SECONDS = 5;
+
+    /**
+     * Un segundo. La saturación del pool se absorbe o se hace visible en ese
+     * orden de tiempo; decirle al cliente que vuelva en cinco sería mantenerlo
+     * esperando por algo que, o se resolvió ya, o no se va a resolver solo.
+     */
+    private static final int DATABASE_RETRY_AFTER_SECONDS = 1;
 
     // ------------------------------------------------------------------
     // 404
@@ -284,8 +294,34 @@ public class ReservationExceptionHandler extends ResponseEntityExceptionHandler 
     @ExceptionHandler(AirportCatalogIntegrationException.class)
     public ProblemDetail handleCatalogIntegration(AirportCatalogIntegrationException e, WebRequest request) {
         log.error("Integración con el maestro de aeropuertos rota procesando {}", pathOf(request), e);
-        return problem(HttpStatus.INTERNAL_SERVER_ERROR, ApiErrorCode.INTERNAL_ERROR,
+        return problem(HttpStatus.INTERNAL_SERVER_ERROR, ApiErrorCode.AIRPORT_CATALOG_ERROR,
                 "Ocurrió un error inesperado procesando el pedido.", request);
+    }
+
+    /**
+     * La base no dio una conexión a tiempo, o la consulta superó su techo.
+     *
+     * <p>Antes caía en el {@code 500} genérico, y eso es tres veces
+     * equivocado: el pedido no tiene nada de malo, el problema es transitorio
+     * y volver a intentarlo en un segundo tiene todo el sentido. Un
+     * {@code 500} le dice al cliente «no insistas» exactamente cuando
+     * insistir es lo correcto, y de paso mezcla la saturación de la base con
+     * los defectos del código en la misma serie de métricas.
+     *
+     * <p>Va en WARN y sin stack trace: es saturación, no un bug. El stack de
+     * un {@code SQLTransientConnectionException} no dice nada que el mensaje
+     * no diga ya.
+     */
+    @ExceptionHandler({TransientDataAccessException.class, CannotCreateTransactionException.class,
+            QueryTimeoutException.class})
+    public ResponseEntity<ProblemDetail> handleDatabaseUnavailable(Exception e, WebRequest request) {
+        log.warn("La base no respondió a tiempo procesando {}: {}", pathOf(request), e.getMessage());
+        ProblemDetail problem = problem(HttpStatus.SERVICE_UNAVAILABLE, ApiErrorCode.DATABASE_UNAVAILABLE,
+                "El servicio está saturado y no pudo procesar el pedido. Reintentá en unos segundos.",
+                request);
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .header(HttpHeaders.RETRY_AFTER, String.valueOf(DATABASE_RETRY_AFTER_SECONDS))
+                .body(problem);
     }
 
     // ------------------------------------------------------------------

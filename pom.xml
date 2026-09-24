@@ -25,6 +25,14 @@
           Boot 4 / Spring Framework 7 y no arranca con este parent.
         -->
         <springdoc.version>2.8.17</springdoc.version>
+        <!--
+          Resilience4j 2.2.0: última de la línea 2.x, compilada para Java 17+ y
+          sin dependencias de Spring. Versión fija y no un rango: el umbral de
+          un circuito es una decisión de diseño y no puede cambiar de semántica
+          en un build reproducible. Licencia Apache 2.0, sin servicio externo
+          ni plan pago.
+        -->
+        <resilience4j.version>2.2.0</resilience4j.version>
     </properties>
 
     <dependencies>
@@ -145,6 +153,49 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-amqp</artifactId>
+        </dependency>
+
+        <!--
+          Resiliencia: SÓLO los módulos base. No se agrega
+          'resilience4j-spring-boot3' a propósito: ese módulo trae AOP y las
+          anotaciones @CircuitBreaker/@Retry, y una anotación de resiliencia en
+          un servicio de aplicación es exactamente lo que este diseño no quiere
+          que pueda existir. Con los módulos base los circuitos se cablean a
+          mano en 'infrastructure.config', igual que los decoradores de cache y
+          de reintentos, y HexagonalArchitectureTest verifica que la librería no
+          se filtre hacia adentro.
+        -->
+        <dependency>
+            <groupId>io.github.resilience4j</groupId>
+            <artifactId>resilience4j-circuitbreaker</artifactId>
+            <version>${resilience4j.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.github.resilience4j</groupId>
+            <artifactId>resilience4j-bulkhead</artifactId>
+            <version>${resilience4j.version}</version>
+        </dependency>
+        <!--
+          Publica el estado y las transiciones de cada circuito como series de
+          Micrometer. Sin esto, un circuito abierto sólo se ve en los logs, que
+          es lo mismo que no verlo.
+        -->
+        <dependency>
+            <groupId>io.github.resilience4j</groupId>
+            <artifactId>resilience4j-micrometer</artifactId>
+            <version>${resilience4j.version}</version>
+        </dependency>
+
+        <!--
+          Registro de Prometheus. '/actuator/metrics' devuelve un medidor por
+          vez en JSON: sirve para mirar, no para alertar. El scrape se publica
+          en el puerto de gestión, que sigue sin exponerse hacia afuera: lo que
+          se abre es la lectura de métricas, no la superficie de la API.
+          La versión la fija el BOM de Spring Boot.
+        -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
         </dependency>
 
         <dependency>

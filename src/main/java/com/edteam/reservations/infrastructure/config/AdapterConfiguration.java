@@ -2,39 +2,47 @@ package com.edteam.reservations.infrastructure.config;
 
 import com.edteam.reservations.application.port.out.AirportCatalogPort;
 import com.edteam.reservations.application.port.out.EventOutboxPort;
+import com.edteam.reservations.infrastructure.adapter.out.airport.BudgetedCityCatalogFanout;
 import com.edteam.reservations.infrastructure.adapter.out.airport.CachingAirportCatalog;
+import com.edteam.reservations.infrastructure.adapter.out.airport.CityResolver;
 import com.edteam.reservations.infrastructure.adapter.out.airport.StaticAirportCatalog;
-import com.edteam.reservations.infrastructure.adapter.out.airport.catalog.CatalogAirportCatalog;
+import com.edteam.reservations.infrastructure.adapter.out.airport.catalog.BulkheadCityCatalogClient;
+import com.edteam.reservations.infrastructure.adapter.out.airport.catalog.CatalogCityResolver;
+import com.edteam.reservations.infrastructure.adapter.out.airport.catalog.CircuitBreakingCityCatalogClient;
 import com.edteam.reservations.infrastructure.adapter.out.airport.catalog.CityCatalogClient;
 import com.edteam.reservations.infrastructure.adapter.out.airport.catalog.RestCityCatalogClient;
 import com.edteam.reservations.infrastructure.adapter.out.airport.catalog.RetryingCityCatalogClient;
 import com.edteam.reservations.infrastructure.adapter.out.messaging.DomainEventPayloadMapper;
 import com.edteam.reservations.infrastructure.adapter.out.outbox.JdbcEventOutbox;
 import com.edteam.reservations.infrastructure.adapter.out.outbox.MeteredEventOutbox;
-import com.edteam.reservations.infrastructure.adapter.out.outbox.OutboxAdmin;
 import com.edteam.reservations.infrastructure.cache.CacheStore;
+import com.edteam.reservations.infrastructure.resilience.Circuit;
+import com.edteam.reservations.infrastructure.resilience.DegradationRecorder;
+import io.github.resilience4j.bulkhead.Bulkhead;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.http.client.ClientHttpRequestFactoryBuilder;
 import org.springframework.boot.http.client.ClientHttpRequestFactorySettings;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
-import org.springframework.jdbc.core.JdbcTemplate;
-import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.client.RestClient;
 
 import java.time.Clock;
+import java.time.Duration;
 
 /**
  * Cableado de los adaptadores de salida.
  *
- * <p>Los adaptadores que necesitan configuración se declaran acá en lugar de
- * anotarlos con {@code @Component}: así la composición queda visible en un solo
- * archivo. Es lo que permite, por ejemplo, envolver el maestro de aeropuertos
- * con un cache sin que ni el caso de uso ni el adaptador de origen se enteren.
+ * <p>Acá está escrito, y explícito, el <strong>orden de los decoradores</strong>
+ * del catálogo. No es el orden en que Spring encuentra los beans ni el que
+ * trae por defecto la librería: cada frontera está elegida y justificada en el
+ * javadoc de la clase que la ocupa.
  */
 @Configuration
 public class AdapterConfiguration {
@@ -42,73 +50,97 @@ public class AdapterConfiguration {
     private static final Logger log = LoggerFactory.getLogger(AdapterConfiguration.class);
 
     /**
-     * Reloj inyectable. Los casos de uso no llaman a {@code Instant.now()}: lo
-     * piden a este bean, y así en los tests se puede fijar el tiempo y verificar
-     * reglas como "no se puede reservar un vuelo que ya partió".
+     * El reloj del sistema. Un bean y no {@code Instant.now()} disperso: es lo
+     * que hace testeable todo lo que depende del tiempo, que en resiliencia es
+     * casi todo.
      */
     @Bean
     public Clock clock() {
         return Clock.systemUTC();
     }
 
+    // -----------------------------------------------------------------
+    // Maestro de aeropuertos
+    // -----------------------------------------------------------------
+
     /**
-     * Maestro de aeropuertos: origen + cache, en ese orden.
+     * La cadena completa, de afuera hacia adentro:
      *
-     * <p>El origen depende de la configuración. Con {@code base-url} definida
-     * se llama a la API de catálogo; sin ella queda el stub en memoria, que es
-     * lo que permite levantar la aplicación y correr los tests sin depender de
-     * un proveedor externo.
+     * <pre>
+     * AirportExistenceValidator          (aplicación: sólo conoce el puerto)
+     * └── CachingAirportCatalog          hit → 0 llamadas; stale-while-error; marca la degradación
+     *     └── BudgetedCityCatalogFanout  presupuesto del itinerario + fan-out en hilos virtuales
+     *         └── CatalogCityResolver    traduce el rechazo de la librería a un resultado por ciudad
+     *             └── CircuitBreaking…   circuito
+     *                 └── Bulkhead…      ≤ N llamadas en vuelo, sin cola de espera
+     *                     └── Retrying…  2 intentos, consciente del presupuesto
+     *                         └── Rest…  connect + read; clasifica la respuesta
+     * </pre>
      *
-     * <p>La decisión de envolver con cache no cambia según el origen: es
-     * todavía más necesaria con el cliente REST, porque es la que hace que la
-     * mayoría de las reservas no toquen la red.
+     * <p>Las tres fronteras que importan y por qué están donde están:
      *
-     * <p>El almacén del cache llega inyectado y ya no lo arma el decorador:
-     * eso es lo que permite que la misma composición corra con Redis o con el
-     * fallback en memoria según la configuración. Es exactamente el reemplazo
-     * por un cache distribuido que este decorador estaba pensado para
-     * permitir, y no toca ni a {@code CatalogAirportCatalog} ni al caso de uso.
+     * <ul>
+     *   <li><strong>El cache va afuera de todo.</strong> Un hit no consume una
+     *       llamada del circuito ni un permiso del bulkhead porque no toca la
+     *       red. Con el circuito por encima, un circuito abierto dejaría sin
+     *       servir datos guardados y frescos. Y el <em>stale-while-error</em>
+     *       necesita estar por encima del circuito para poder reaccionar a su
+     *       rechazo.</li>
+     *   <li><strong>El circuito va por fuera del retry</strong>, para que la
+     *       unidad que cuenta sea «resolver una ciudad» y para que un circuito
+     *       abierto cortocircuite el bucle de reintentos en lugar de hacerlo
+     *       girar sobre su propio rechazo.</li>
+     *   <li><strong>El bulkhead va entre los dos</strong>, para que un rechazo
+     *       por saturación propia no se reintente.</li>
+     * </ul>
+     *
+     * <p>Sin {@code base-url} la cadena es sólo el cache sobre el stub en
+     * memoria: no hay red que proteger, y montar circuitos sobre un
+     * {@code Set} sería ceremonia.
      */
     @Bean
     public AirportCatalogPort airportCatalogPort(AirportCatalogProperties properties,
-                                                 CacheStore cityCatalogCacheStore,
+                                                 @Qualifier("cityCatalogCacheStore") CacheStore cityCatalogCacheStore,
                                                  RestClient.Builder restClientBuilder,
+                                                 Circuit catalogCircuit,
+                                                 Bulkhead catalogBulkhead,
+                                                 DegradationRecorder degradation,
+                                                 MeterRegistry registry,
                                                  Clock clock) {
-        AirportCatalogPort origin;
-        if (properties.hasRemoteCatalog()) {
-            requireSecureTransport(properties);
-            origin = new CatalogAirportCatalog(catalogClient(restClientBuilder, properties));
-            log.info("Maestro de aeropuertos: API de catálogo en {} (connect {} ms, read {} ms, {} intentos)",
-                    properties.baseUrl(),
-                    properties.connectTimeout().toMillis(),
-                    properties.readTimeout().toMillis(),
-                    properties.retry().maxAttempts());
-        } else {
-            origin = StaticAirportCatalog.withDefaults();
+        if (!properties.hasRemoteCatalog()) {
             log.info("Maestro de aeropuertos: stub en memoria (no hay 'reservations.airport-catalog.base-url')");
+            return new CachingAirportCatalog(StaticAirportCatalog.withDefaults(), cityCatalogCacheStore,
+                    properties.cacheTtlPolicy(), clock, degradation, () -> true);
         }
-        return new CachingAirportCatalog(origin, cityCatalogCacheStore, properties.cacheTtlPolicy(), clock);
+
+        requireSecureTransport(properties);
+
+        CityCatalogClient http = new RestCityCatalogClient(catalogRestClient(restClientBuilder, properties));
+        CityCatalogClient retrying = new RetryingCityCatalogClient(http, properties.retryPolicy(),
+                RetryingCityCatalogClient.Sleeper.real(), properties.attemptCost(), clock, registry);
+        CityCatalogClient bulkheaded = new BulkheadCityCatalogClient(retrying, catalogBulkhead);
+        CityCatalogClient guarded = new CircuitBreakingCityCatalogClient(bulkheaded, catalogCircuit);
+
+        CityResolver resolver = new CatalogCityResolver(guarded, registry);
+        CityResolver fanout = new BudgetedCityCatalogFanout(
+                resolver, properties.itineraryBudget(), clock, registry);
+
+        log.info("Maestro de aeropuertos: API de catálogo en {} (connect {} ms, read {} ms, {} intentos, "
+                        + "presupuesto del itinerario {} ms, peor caso por ciudad {} ms)",
+                properties.baseUrl(),
+                properties.connectTimeout().toMillis(),
+                properties.readTimeout().toMillis(),
+                properties.retry().maxAttempts(),
+                properties.itineraryBudget().toMillis(),
+                properties.worstCasePerCity().toMillis());
+
+        // La sonda del origen: con el circuito abierto, el cache ni baja por
+        // la cadena. Es la memoria de «el origen está caído» que el fallback
+        // no tenía, y la que evita que cada ciudad vuelva a pagar el viaje.
+        return new CachingAirportCatalog(fanout, cityCatalogCacheStore, properties.cacheTtlPolicy(),
+                clock, degradation, () -> !catalogCircuit.isOpen());
     }
 
-    /**
-     * Cliente del catálogo: transporte, traducción HTTP y reintentos.
-     *
-     * <p>El orden de las capas es el que importa. De adentro hacia afuera:
-     * {@code RestCityCatalogClient} clasifica la respuesta —404 es "no
-     * existe", 5xx y 429 son transitorios, el resto es integración rota— y
-     * {@link RetryingCityCatalogClient} se apoya en esa clasificación para
-     * reintentar sólo lo que tiene sentido reintentar. Más arriba,
-     * {@code CachingAirportCatalog} hace que la mayoría de las consultas ni
-     * lleguen hasta acá.
-     */
-    /**
-     * Corta el arranque si la integración saliente no va cifrada.
-     *
-     * <p>Es una verificación en el arranque y no una advertencia a propósito:
-     * una advertencia en el log de una aplicación que igual levantó es una
-     * advertencia que nadie lee. Acá el despliegue falla, que es lo único que
-     * garantiza que la API key no salga en claro por la red.
-     */
     private static void requireSecureTransport(AirportCatalogProperties properties) {
         if (!properties.usesSecureTransport()) {
             throw new IllegalStateException(
@@ -118,36 +150,10 @@ public class AdapterConfiguration {
         }
     }
 
-    private static CityCatalogClient catalogClient(RestClient.Builder builder, AirportCatalogProperties properties) {
-        return new RetryingCityCatalogClient(
-                new RestCityCatalogClient(catalogRestClient(builder, properties)),
-                properties.retryPolicy());
-    }
-
     /**
-     * Transporte HTTP del catálogo.
-     *
-     * <p>Se parte del {@code RestClient.Builder} de Spring Boot para heredar
-     * los converters y la instrumentación (métricas, trazas) ya configurados;
-     * acá sólo se agrega lo propio de este proveedor: la URL base, la
-     * credencial y los timeouts.
-     *
-     * <p><strong>Los timeouts no son opcionales.</strong> Sin read timeout,
-     * una llamada contra un proveedor que acepta la conexión y no contesta
-     * queda colgada hasta que corte el sistema operativo, y el pedido de
-     * reserva que la disparó queda colgado con ella; con
-     * {@code maximum-pool-size: 20}, unas pocas de esas agotan el pool y la
-     * degradación del catálogo se transforma en una caída nuestra. El caché
-     * baja la cantidad de llamadas expuestas, pero no acota el daño de la que
-     * sí sale: eso sólo lo hace el timeout.
-     *
-     * <p>Se separan connect y read a propósito: establecer la conexión es
-     * rápido o no va a pasar (500 ms alcanzan de sobra), mientras que
-     * responder una consulta puede legítimamente tardar más (2 s). Un valor
-     * único obligaría a elegir el más permisivo para los dos.
-     *
-     * <p>La credencial se manda como header por defecto: nunca en la query
-     * string, donde quedaría escrita en logs de acceso y proxies.
+     * El {@code RestClient} del catálogo, con los timeouts de <em>este</em>
+     * proveedor. Sale del {@code Builder} autoconfigurado, así que hereda los
+     * interceptores de observabilidad y publica {@code http.client.requests}.
      */
     private static RestClient catalogRestClient(RestClient.Builder builder, AirportCatalogProperties properties) {
         ClientHttpRequestFactorySettings timeouts = ClientHttpRequestFactorySettings.defaults()
@@ -164,31 +170,44 @@ public class AdapterConfiguration {
         return configured.build();
     }
 
+    // -----------------------------------------------------------------
+    // Outbox
+    // -----------------------------------------------------------------
+
     /**
-     * Outbox durable sobre PostgreSQL.
+     * El relay durable.
      *
-     * <p>Se declara con el tipo concreto porque cumple dos papeles: es el
-     * {@link EventOutboxPort} que usan los casos de uso y el
-     * {@link OutboxAdmin} que usa el endpoint de gestión. Son dos vistas de la
-     * misma tabla y no tiene sentido duplicar el adaptador para separarlas.
+     * <p>El lease del reclamo se deriva del peor caso de un tick
+     * —{@code batch-size × confirm-timeout}— en lugar de ser una constante
+     * suelta: con lotes de 50 y confirms de 5 s, un tick contra un broker que
+     * acepta y no confirma dura más de cuatro minutos, y un lease de dos
+     * dejaba que otra instancia re-reclamara mensajes todavía en vuelo.
      */
     @Bean
     public JdbcEventOutbox jdbcEventOutbox(JdbcTemplate jdbcTemplate,
                                            DomainEventPayloadMapper payloadMapper,
                                            OutboxProperties properties,
+                                           MessagingProperties messaging,
                                            Clock clock) {
-        return new JdbcEventOutbox(jdbcTemplate, payloadMapper, properties, clock);
+        Duration worstCaseTick = messaging.confirmTimeout()
+                .multipliedBy(properties.batchSize())
+                .plusSeconds(30);
+        OutboxProperties effective = properties.withClaimLeaseAtLeast(worstCaseTick);
+        if (!effective.claimLease().equals(properties.claimLease())) {
+            log.info("Lease del reclamo del outbox elevado de {} s a {} s: es el peor caso de un tick "
+                            + "({} mensajes × {} s de confirm)",
+                    properties.claimLease().toSeconds(), effective.claimLease().toSeconds(),
+                    properties.batchSize(), messaging.confirmTimeout().toSeconds());
+        }
+        if (properties.worstCaseRetryWindow().compareTo(properties.retryCeiling()) < 0) {
+            log.warn("Los dos cortes del outbox dicen cosas distintas: {} intentos cubren {} min de reloj, "
+                            + "menos que el techo de {} min. El techo no va a actuar nunca.",
+                    properties.maxAttempts(), properties.worstCaseRetryWindow().toMinutes(),
+                    properties.retryCeiling().toMinutes());
+        }
+        return new JdbcEventOutbox(jdbcTemplate, payloadMapper, effective, clock);
     }
 
-    /**
-     * El puerto que ven los casos de uso: el outbox instrumentado.
-     *
-     * <p>{@code @Primary} porque el bean de arriba también satisface el puerto
-     * —es el delegado— y sin esto la inyección quedaría ambigua. Es el mismo
-     * patrón de decorador con el que el cache se instrumenta y el maestro de
-     * aeropuertos se envuelve: la composición queda visible en el cableado y
-     * cada pieza se testea sin la otra.
-     */
     @Bean
     @Primary
     public EventOutboxPort eventOutboxPort(JdbcEventOutbox outbox, MeterRegistry registry) {

@@ -63,6 +63,31 @@ public enum ApiErrorCode {
     RATE_LIMIT_EXCEEDED("Demasiados pedidos"),
 
     AIRPORT_CATALOG_UNAVAILABLE("Maestro de aeropuertos no disponible"),
+
+    /**
+     * La integración con el maestro está rota: credencial vencida, permisos o
+     * un cuerpo que no cumple el contrato.
+     *
+     * <p>Tiene código propio y no cae en {@code INTERNAL_ERROR} porque es el
+     * único fallo del sistema que <strong>ningún mecanismo automático
+     * resuelve</strong>: no hay reintento ni fallback que arregle una API key
+     * vencida, hace falta una persona. Un código genérico lo dejaba
+     * indistinguible de cualquier otro defecto y retrasaba el diagnóstico
+     * justo en el caso donde el diagnóstico es todo.
+     *
+     * <p>Sigue siendo {@code 500} y no {@code 503}: no es reintentable, y
+     * decirle al cliente que reintente sería mandarlo a chocar contra la
+     * misma pared.
+     */
+    AIRPORT_CATALOG_ERROR("Integración con el maestro de aeropuertos rota"),
+
+    /**
+     * La base de datos no dio una conexión a tiempo o la consulta superó su
+     * techo. Sale como {@code 503} con {@code Retry-After}: es reintentable y
+     * el pedido no tenía nada de malo.
+     */
+    DATABASE_UNAVAILABLE("Base de datos no disponible"),
+
     UNSUPPORTED_REQUEST("Pedido no soportado"),
     INTERNAL_ERROR("Error interno");
 

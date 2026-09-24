@@ -4,10 +4,13 @@ import com.edteam.reservations.infrastructure.adapter.in.rest.ReservationVersion
 import com.edteam.reservations.infrastructure.adapter.out.persistence.CachingReservationSearchQuery;
 import com.edteam.reservations.infrastructure.adapter.out.persistence.ReservationSearchJpaQuery;
 import com.edteam.reservations.infrastructure.adapter.out.persistence.ReservationSearchQuery;
+import com.edteam.reservations.infrastructure.cache.CacheKeys;
 import com.edteam.reservations.infrastructure.cache.CacheStore;
+import com.edteam.reservations.infrastructure.cache.CircuitBreakingCacheStore;
 import com.edteam.reservations.infrastructure.cache.InMemoryCacheStore;
 import com.edteam.reservations.infrastructure.cache.MeteredCacheStore;
 import com.edteam.reservations.infrastructure.cache.RedisCacheStore;
+import com.edteam.reservations.infrastructure.resilience.Circuit;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -64,8 +67,16 @@ public class CacheConfiguration {
     public CacheStore cityCatalogCacheStore(CacheProperties properties,
                                             ObjectProvider<StringRedisTemplate> redis,
                                             MeterRegistry registry,
+                                            Circuit redisCircuit,
                                             Clock clock) {
-        return cacheStore(CITY_CATALOG_CACHE, properties, redis, registry, clock);
+        // El único cache con fallback local en caliente, y sólo para el
+        // prefijo 'catalog:city:'. Ver CircuitBreakingCacheStore: las claves
+        // de versión NO pueden caer a memoria porque se invalidan
+        // activamente, y una copia por instancia daría ETags incoherentes.
+        InMemoryCacheStore cityFallback =
+                new InMemoryCacheStore(clock, properties.cityFallbackMaxEntries());
+        return cacheStore(CITY_CATALOG_CACHE, properties, redis, registry, redisCircuit, clock,
+                cityFallback, CacheKeys.CITY_PREFIX);
     }
 
     /** Almacén del total del listado (P1). */
@@ -73,8 +84,9 @@ public class CacheConfiguration {
     public CacheStore reservationCountCacheStore(CacheProperties properties,
                                                  ObjectProvider<StringRedisTemplate> redis,
                                                  MeterRegistry registry,
+                                                 Circuit redisCircuit,
                                                  Clock clock) {
-        return cacheStore(RESERVATION_COUNT_CACHE, properties, redis, registry, clock);
+        return cacheStore(RESERVATION_COUNT_CACHE, properties, redis, registry, redisCircuit, clock, null, null);
     }
 
     /** Almacén de la versión de una reserva (P2). */
@@ -82,8 +94,9 @@ public class CacheConfiguration {
     public CacheStore reservationVersionCacheStore(CacheProperties properties,
                                                    ObjectProvider<StringRedisTemplate> redis,
                                                    MeterRegistry registry,
+                                                   Circuit redisCircuit,
                                                    Clock clock) {
-        return cacheStore(RESERVATION_VERSION_CACHE, properties, redis, registry, clock);
+        return cacheStore(RESERVATION_VERSION_CACHE, properties, redis, registry, redisCircuit, clock, null, null);
     }
 
     /**
@@ -108,20 +121,40 @@ public class CacheConfiguration {
         return new ReservationVersionCache(reservationVersionCacheStore, properties.reservationVersionTtl());
     }
 
+    /**
+     * El orden de los decoradores del cache, y por qué:
+     *
+     * <pre>
+     * MeteredCacheStore              las métricas se siguen viendo con el circuito abierto
+     * └── CircuitBreakingCacheStore  circuito + degradación + L1 por prefijo
+     *     └── RedisCacheStore        habla con Redis y relanza
+     * </pre>
+     *
+     * <p>El medidor queda <strong>por fuera</strong> del circuito a propósito:
+     * adentro, con el circuito abierto dejaríamos de publicar
+     * {@code reservations.cache.gets} y el panel mostraría silencio en lugar
+     * de degradación — que es la diferencia entre «no pasa nada» y «no nos
+     * estamos enterando».
+     */
     private static CacheStore cacheStore(String name,
                                          CacheProperties properties,
                                          ObjectProvider<StringRedisTemplate> redis,
                                          MeterRegistry registry,
-                                         Clock clock) {
+                                         Circuit redisCircuit,
+                                         Clock clock,
+                                         CacheStore localFallback,
+                                         String localPrefix) {
         Consumer<String> failures = MeteredCacheStore.failureMeter(name, registry);
-        CacheStore store = backingStore(name, properties, redis, failures, clock);
+        CacheStore store = backingStore(name, properties, redis, clock);
+        if (store instanceof RedisCacheStore) {
+            store = new CircuitBreakingCacheStore(store, redisCircuit, failures, localFallback, localPrefix);
+        }
         return new MeteredCacheStore(store, name, registry);
     }
 
     private static CacheStore backingStore(String name,
                                            CacheProperties properties,
                                            ObjectProvider<StringRedisTemplate> redis,
-                                           Consumer<String> failures,
                                            Clock clock) {
         if (!properties.redis().enabled()) {
             log.info("Cache '{}': en memoria, hasta {} entradas "
@@ -137,7 +170,7 @@ public class CacheConfiguration {
             return new InMemoryCacheStore(clock, properties.maxEntries());
         }
 
-        log.info("Cache '{}': Redis", name);
-        return new RedisCacheStore(template, failures);
+        log.info("Cache '{}': Redis, con circuito", name);
+        return new RedisCacheStore(template);
     }
 }

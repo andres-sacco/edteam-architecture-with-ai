@@ -249,6 +249,97 @@ class HexagonalArchitectureTest {
     }
 
     @Test
+    @DisplayName("la resiliencia es un detalle de infraestructura y no se filtra hacia adentro")
+    void resilienceStaysInInfrastructure() {
+        // La regla que este paso agrega, y la que el enunciado pide convertir
+        // en test. Es tambien la razon por la que 'resilience4j-spring-boot3'
+        // NO esta en el pom: ese modulo trae AOP y las anotaciones
+        // @CircuitBreaker/@Retry, y el lugar mas comodo para escribirlas es
+        // justamente un servicio de aplicacion.
+        //
+        // Con una anotacion de resiliencia adentro, el umbral de un circuito
+        // pasaria a ser parte de la logica de negocio: no se podria cambiar
+        // sin tocar el caso de uso, no se podria probar sin la libreria, y el
+        // proximo adaptador de salida heredaria la politica del anterior por
+        // accidente. Los umbrales son configuracion de despliegue.
+        //
+        // El vocabulario que SI cruza es el de la aplicacion:
+        // AirportCatalogThrottledException y EventPublisherUnavailableException
+        // son excepciones propias que el clasificador de infraestructura lee,
+        // no tipos de la libreria.
+        noClasses().that().resideInAnyPackage(BASE + ".domain..", BASE + ".application..")
+                .should().dependOnClassesThat().resideInAnyPackage(
+                        "io.github.resilience4j..",
+                        BASE + ".infrastructure.resilience..")
+                .because("los umbrales de un circuito son configuracion de despliegue, no logica de negocio")
+                .check(productionClasses);
+    }
+
+    @Test
+    @DisplayName("todo metodo transaccional declara un techo de tiempo")
+    void transactionalMethodsDeclareATimeout() {
+        // El connection-timeout acota la espera POR una conexion, no el uso de
+        // la que ya se tomo. Sin un techo del conjunto, una base lenta retiene
+        // las 20 conexiones del pool y toda la API cae, incluidos los GET que
+        // no tocan la tabla lenta. El statement_timeout del driver acota cada
+        // sentencia; esto acota la transaccion entera, que es el hueco que
+        // deja una transaccion con seis sentencias de 1,9 s cada una.
+        //
+        // Se excluye REQUIRES_NEW del outbox: esas son operaciones de una sola
+        // sentencia sobre indice unico, y su techo es el statement_timeout.
+        List<String> offenders = productionClasses.stream()
+                .flatMap(javaClass -> javaClass.getMethods().stream())
+                .filter(method -> method.isAnnotatedWith(Transactional.class))
+                .filter(method -> method.getOwner().getPackageName().startsWith(BASE + ".application"))
+                .filter(method -> method.getAnnotationOfType(Transactional.class).timeout() < 0)
+                .map(method -> method.getOwner().getName() + "#" + method.getName())
+                .sorted()
+                .toList();
+
+        assertThat(offenders)
+                .withFailMessage("Estos metodos transaccionales no declaran timeout: %s. "
+                        + "Una transaccion sin techo retiene una conexion del pool mientras la base este "
+                        + "lenta; con maximum-pool-size 20, unas pocas asi tumban la API entera.", offenders)
+                .isEmpty();
+    }
+
+    @Test
+    @DisplayName("solo se reintenta una lectura idempotente")
+    void onlyIdempotentReadsAreRetried() {
+        // La restriccion es "no se reintentan operaciones no idempotentes".
+        // Un reintento en proceso sobre una escritura sin clave que la proteja
+        // duplica reservas o notificaciones, y el sintoma aparece lejos del
+        // reintento que lo causo.
+        //
+        // La regla es estructural: la unica clase de este sistema que reintenta
+        // en proceso decora CityCatalogClient, cuyo unico metodo es un
+        // GET /city/{code}. Todo lo demas se reintenta por un mecanismo durable
+        // y con clave: el outbox (por messageId, con release cuando no hubo
+        // intento) y el consumidor (deduplicado por messageId antes del efecto).
+        List<String> retriers = productionClasses.stream()
+                .filter(javaClass -> javaClass.getSimpleName().startsWith("Retrying"))
+                .map(JavaClass::getName)
+                .sorted()
+                .toList();
+
+        assertThat(retriers)
+                .withFailMessage("Clases que reintentan en proceso: %s. Solo puede haber una, y sobre "
+                        + "una lectura idempotente.", retriers)
+                .containsExactly(BASE + ".infrastructure.adapter.out.airport.catalog.RetryingCityCatalogClient");
+
+        List<String> implemented = productionClasses.stream()
+                .filter(javaClass -> javaClass.getName().equals(retriers.get(0)))
+                .flatMap(javaClass -> javaClass.getInterfaces().stream())
+                .map(type -> type.toErasure().getName())
+                .toList();
+
+        assertThat(implemented)
+                .withFailMessage("El decorador de reintentos solo puede envolver el puerto de LECTURA "
+                        + "del catalogo: %s", implemented)
+                .containsExactly(BASE + ".infrastructure.adapter.out.airport.catalog.CityCatalogClient");
+    }
+
+    @Test
     @DisplayName("los puertos son interfaces")
     void portsAreInterfaces() {
         classes().that().resideInAPackage(BASE + ".application.port.out..")

@@ -1,32 +1,25 @@
 package com.edteam.reservations.infrastructure.adapter.out.airport;
 
-import com.edteam.reservations.application.port.out.AirportCatalogPort;
-import com.edteam.reservations.domain.model.AirportCode;
-
 import java.util.Arrays;
+import java.util.Collection;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * Maestro en memoria, con un set fijo de códigos.
+ * Maestro de aeropuertos en memoria: el camino de «arrancar sin catálogo».
  *
- * <p>Es el <strong>fallback</strong> del catálogo de ciudades: se usa cuando no
- * hay {@code reservations.airport-catalog.base-url} configurada, es decir en
- * los tests y en un arranque local sin el servicio de catálogo levantado. El
- * origen real es {@code CatalogAirportCatalog}, que consulta la API.
+ * <p>Se usa cuando no hay {@code reservations.airport-catalog.base-url}, que
+ * es el modo de los tests y del arranque local. Es el mismo criterio que con
+ * Redis y con el broker: la aplicación tiene que levantar y poder probarse sin
+ * las dependencias externas.
  *
- * <p>El set por defecto incluye las ciudades que resuelve esa API —para que
- * levantar sin el servicio no cambie qué pedidos se aceptan— más los códigos
- * que venían de antes. Ojo con eso: acá hay códigos que el catálogo real no
- * conoce, así que un pedido que pasa con el stub puede fallar con el servicio
- * prendido. Es la razón por la que el stub es fallback y no el modo normal de
- * trabajo.
- *
- * <p>En cualquiera de los dos casos se mantiene el decorador
- * {@link CachingAirportCatalog}: el maestro cambia muy poco y se consulta en
- * cada creación y modificación.
+ * <p>Resuelve el conjunto entero de una vez, igual que el resolutor real: así
+ * la cadena de arriba —cache, presupuesto, fallback— es la misma en los dos
+ * modos y lo que se prueba en local es lo que corre en producción.
  */
-public class StaticAirportCatalog implements AirportCatalogPort {
+public class StaticAirportCatalog implements CityResolver {
 
     private final Set<String> codes;
 
@@ -34,7 +27,7 @@ public class StaticAirportCatalog implements AirportCatalogPort {
         this.codes = codes.stream().map(String::toUpperCase).collect(Collectors.toUnmodifiableSet());
     }
 
-    /** Set mínimo para poder levantar y probar la aplicación sin el catálogo. */
+    /** Los códigos que resuelve la API de catálogo más los previos a ella. */
     public static StaticAirportCatalog withDefaults() {
         return new StaticAirportCatalog(Set.copyOf(Arrays.asList(
                 // Ciudades que resuelve la API de catálogo.
@@ -46,7 +39,11 @@ public class StaticAirportCatalog implements AirportCatalogPort {
     }
 
     @Override
-    public boolean exists(AirportCode code) {
-        return code != null && codes.contains(code.value());
+    public Map<String, CityResolution> resolve(Collection<String> requested) {
+        Map<String, CityResolution> resolutions = new LinkedHashMap<>();
+        for (String code : requested) {
+            resolutions.put(code, CityResolution.of(code != null && codes.contains(code.toUpperCase())));
+        }
+        return resolutions;
     }
 }

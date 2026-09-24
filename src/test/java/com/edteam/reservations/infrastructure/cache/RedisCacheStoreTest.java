@@ -12,17 +12,33 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 
 import java.time.Duration;
-import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+/**
+ * El almacén de Redis después de sacarle la política de degradación.
+ *
+ * <p>Los tres tests que verificaban «degrada a un miss» cambiaron de signo, y
+ * el cambio es el arreglo de un hallazgo, no una regresión. Mientras esta
+ * clase se tragaba los errores, el circuito que va encima veía el 100 % de las
+ * llamadas como exitosas: con Redis caído duro —conexión rechazada, que
+ * responde rápido— no era ni un fallo contado ni una llamada lenta, así que el
+ * circuito quedaba {@code CLOSED} para siempre mientras se seguía pagando el
+ * viaje en cada operación.
+ *
+ * <p>Ahora esta clase relanza y la degradación la aplica
+ * {@link CircuitBreakingCacheStore}, que es quien necesita ver el fallo para
+ * contarlo. El contrato de «un cache caído no tumba el servicio» no se perdió:
+ * se mudó, y {@code CircuitBreakingCacheStoreTest} lo verifica ahí.
+ */
 @ExtendWith(MockitoExtension.class)
 @DisplayName("RedisCacheStore")
 class RedisCacheStoreTest {
@@ -35,13 +51,11 @@ class RedisCacheStoreTest {
     @Mock
     private ValueOperations<String, String> values;
 
-    private List<String> failures;
     private RedisCacheStore store;
 
     @BeforeEach
     void setUp() {
-        failures = new ArrayList<>();
-        store = new RedisCacheStore(redis, failures::add);
+        store = new RedisCacheStore(redis);
     }
 
     @Test
@@ -66,31 +80,43 @@ class RedisCacheStoreTest {
     }
 
     @Test
-    @DisplayName("si Redis no responde al leer, degrada a un miss en lugar de propagar el error")
-    void degradesToMissOnReadFailure() {
-        when(redis.opsForValue()).thenThrow(new RedisConnectionFailureException("Redis caído"));
+    @DisplayName("lee varias claves con un solo MGET: once ciudades son una espera, no once")
+    void readsManyKeysInOneRoundTrip() {
+        when(redis.opsForValue()).thenReturn(values);
+        List<String> keys = List.of("a", "b", "c");
+        when(values.multiGet(keys)).thenReturn(Arrays.asList("1", null, "3"));
 
-        assertThat(store.get("k")).isEmpty();
-        assertThat(failures).containsExactly("get");
+        assertThat(store.getAll(keys))
+                .containsExactly(java.util.Map.entry("a", "1"), java.util.Map.entry("c", "3"));
+        verify(values).multiGet(keys);
     }
 
     @Test
-    @DisplayName("si Redis no responde al escribir, el pedido sigue igual")
-    void swallowsWriteFailure() {
+    @DisplayName("relanza si Redis no responde al leer: quien decide qué hacer es el circuito de arriba")
+    void rethrowsOnReadFailure() {
+        when(redis.opsForValue()).thenThrow(new RedisConnectionFailureException("Redis caído"));
+
+        assertThatThrownBy(() -> store.get("k"))
+                .isInstanceOf(RedisConnectionFailureException.class);
+    }
+
+    @Test
+    @DisplayName("relanza si Redis no responde al escribir")
+    void rethrowsOnWriteFailure() {
         when(redis.opsForValue()).thenReturn(values);
         doThrow(new QueryTimeoutException("timeout")).when(values).set(anyString(), anyString(), any(Duration.class));
 
-        assertThatCode(() -> store.put("k", "v", TTL)).doesNotThrowAnyException();
-        assertThat(failures).containsExactly("put");
+        assertThatThrownBy(() -> store.put("k", "v", TTL))
+                .isInstanceOf(QueryTimeoutException.class);
     }
 
     @Test
-    @DisplayName("si Redis no responde al invalidar, tampoco propaga: el TTL corto acota el daño")
-    void swallowsEvictFailure() {
+    @DisplayName("relanza si Redis no responde al invalidar")
+    void rethrowsOnEvictFailure() {
         when(redis.delete(anyString())).thenThrow(new RedisConnectionFailureException("Redis caído"));
 
-        assertThatCode(() -> store.evict("k")).doesNotThrowAnyException();
-        assertThat(failures).containsExactly("evict");
+        assertThatThrownBy(() -> store.evict("k"))
+                .isInstanceOf(RedisConnectionFailureException.class);
     }
 
     @Test

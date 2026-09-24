@@ -1,6 +1,8 @@
 package com.edteam.reservations.infrastructure.adapter.out.airport.catalog;
 
 import com.edteam.reservations.application.exception.AirportCatalogIntegrationException;
+import com.edteam.reservations.application.exception.AirportCatalogThrottledException;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import com.edteam.reservations.application.exception.AirportCatalogUnavailableException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -10,7 +12,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -215,6 +219,133 @@ class RetryingCityCatalogClientTest {
                     .hasSizeGreaterThan(10);
             assertThat(sample).allSatisfy(wait -> assertThat(wait)
                     .isBetween(Duration.ofMillis(500), Duration.ofSeconds(1)));
+        }
+    }
+
+    @Nested
+    @DisplayName("El presupuesto del itinerario")
+    class Budget {
+
+        /** Lo que cuesta un intento completo: connect 300 ms + read 700 ms. */
+        private static final Duration ATTEMPT_COST = Duration.ofSeconds(1);
+
+        @Test
+        @DisplayName("no arranca un reintento que no entra en lo que queda del presupuesto")
+        void doesNotRetryWhenTheBudgetIsAlmostGone() {
+            when(delegate.findByCode("BUE"))
+                    .thenThrow(new AirportCatalogUnavailableException("503"));
+            Clock clock = Clock.systemUTC();
+            RetryingCityCatalogClient budgeted = new RetryingCityCatalogClient(
+                    delegate, RETRY, duration -> {
+                        waits.add(duration);
+                        return true;
+                    }, ATTEMPT_COST, clock, new SimpleMeterRegistry());
+
+            // Quedan 200 ms y un intento completo cuesta 1 s: el reintento
+            // llegaría tarde para este pedido y sólo le sacaría tiempo a las
+            // ciudades que faltan.
+            Instant deadline = clock.instant().plusMillis(200);
+            assertThatThrownBy(() -> CatalogDeadline.within(deadline, () -> budgeted.findByCode("BUE")))
+                    .isInstanceOf(AirportCatalogUnavailableException.class);
+
+            verify(delegate, times(1)).findByCode("BUE");
+            assertThat(waits).isEmpty();
+        }
+
+        @Test
+        @DisplayName("con presupuesto de sobra reintenta normalmente")
+        void retriesWhenTheBudgetAllowsIt() {
+            when(delegate.findByCode("BUE"))
+                    .thenThrow(new AirportCatalogUnavailableException("503"))
+                    .thenReturn(Optional.of(BUENOS_AIRES));
+            Clock clock = Clock.systemUTC();
+            RetryingCityCatalogClient budgeted = new RetryingCityCatalogClient(
+                    delegate, RETRY, duration -> {
+                        waits.add(duration);
+                        return true;
+                    }, ATTEMPT_COST, clock, new SimpleMeterRegistry());
+
+            Instant deadline = clock.instant().plusSeconds(30);
+            assertThat(CatalogDeadline.within(deadline, () -> budgeted.findByCode("BUE")))
+                    .contains(BUENOS_AIRES);
+
+            verify(delegate, times(2)).findByCode("BUE");
+            assertThat(waits).hasSize(1);
+        }
+
+        @Test
+        @DisplayName("sin presupuesto instalado el corte no existe: el retry se comporta como siempre")
+        void withoutABudgetNothingIsCut() {
+            when(delegate.findByCode("BUE"))
+                    .thenThrow(new AirportCatalogUnavailableException("503"))
+                    .thenReturn(Optional.of(BUENOS_AIRES));
+            RetryingCityCatalogClient budgeted = new RetryingCityCatalogClient(
+                    delegate, RETRY, duration -> {
+                        waits.add(duration);
+                        return true;
+                    }, ATTEMPT_COST, Clock.systemUTC(), new SimpleMeterRegistry());
+
+            assertThat(budgeted.findByCode("BUE")).contains(BUENOS_AIRES);
+            assertThat(waits).hasSize(1);
+        }
+    }
+
+    @Nested
+    @DisplayName("Lo que cambió respecto de la política anterior")
+    class PolicyChanges {
+
+        @Test
+        @DisplayName("un 429 NO se reintenta: insistir es desobedecer al proveedor que pidió aire")
+        void doesNotRetryThrottling() {
+            // Antes se reintentaba. El cambio es deliberado: el 429 sí cuenta
+            // para el circuito —que es lo que de verdad frena el tráfico— pero
+            // repetir el pedido empeora la saturación del proveedor justo
+            // cuando está pidiendo aire.
+            when(delegate.findByCode("BUE"))
+                    .thenThrow(new AirportCatalogThrottledException("429 del catálogo"));
+
+            assertThatThrownBy(() -> client.findByCode("BUE"))
+                    .isInstanceOf(AirportCatalogThrottledException.class);
+
+            verify(delegate, times(1)).findByCode("BUE");
+            assertThat(waits).isEmpty();
+        }
+
+        @Test
+        @DisplayName("publica la métrica de reintentos, que antes no existía")
+        void publishesRetryMetrics() {
+            // «Revisar la métrica de reintentos bajo carga con la dependencia
+            // caída» era imposible: sólo había dos log.warn.
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
+            when(delegate.findByCode("BUE"))
+                    .thenThrow(new AirportCatalogUnavailableException("503"))
+                    .thenReturn(Optional.of(BUENOS_AIRES));
+            RetryingCityCatalogClient metered = new RetryingCityCatalogClient(
+                    delegate, RETRY, duration -> true, Duration.ZERO, Clock.systemUTC(), registry);
+
+            metered.findByCode("BUE");
+
+            assertThat(registry.find(RetryingCityCatalogClient.RETRIES)
+                    .tag("result", "attempted").counter().count()).isEqualTo(1);
+            assertThat(registry.find(RetryingCityCatalogClient.RETRIES)
+                    .tag("result", "recovered").counter().count()).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("el peor caso que declara la política coincide con el que se calcula de sus números")
+        void worstCaseBackoffIsDerivedAndNotWritten() {
+            // Los números documentados se generan a partir de la configuración
+            // en lugar de escribirse: el javadoc anterior declaraba 6,5 s
+            // porque omitía el connect timeout, y el real era 7,8 s. Todo
+            // cálculo derivado quedaba 17 % corto.
+            RetryingCityCatalogClient.Retry twoAttempts =
+                    new RetryingCityCatalogClient.Retry(2, Duration.ofMillis(100), Duration.ofMillis(200));
+
+            assertThat(twoAttempts.worstCaseBackoff()).isEqualTo(Duration.ofMillis(100));
+
+            RetryingCityCatalogClient.Retry threeAttempts =
+                    new RetryingCityCatalogClient.Retry(3, Duration.ofMillis(100), Duration.ofMillis(200));
+            assertThat(threeAttempts.worstCaseBackoff()).isEqualTo(Duration.ofMillis(300));
         }
     }
 

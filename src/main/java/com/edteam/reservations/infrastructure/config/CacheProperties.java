@@ -45,13 +45,37 @@ import java.time.Duration;
  */
 @ConfigurationProperties(prefix = "reservations.cache")
 public record CacheProperties(Integer maxEntries,
+                              Integer cityFallbackMaxEntries,
                               Duration reservationCountTtl,
                               Duration reservationVersionTtl,
-                              Redis redis) {
+                              Redis redis,
+                              CircuitBreakerProperties circuitBreaker) {
+
+    /**
+     * Umbrales por defecto del circuito de Redis.
+     *
+     * <p>Ventana 100 / mínimo 30: es la dependencia con más llamadas por
+     * pedido, así que 30 llamadas son un par de pedidos y la ventana de 100
+     * sigue representando pocos segundos de tráfico.
+     *
+     * <p>Llamada lenta a los 150 ms contra un timeout de 200 ms: una lectura
+     * sana de Redis en la misma red es de un dígito en milisegundos, así que
+     * 150 ms ya es la zona donde el cache dejó de ser un atajo.
+     *
+     * <p>Abierto 10 s: un failover de Redis o un reinicio de contenedor tarda
+     * del orden de 5 a 15 s. Menos sería probar contra algo que todavía no
+     * volvió, y cada ronda de prueba cuesta cinco timeouts.
+     */
+    private static final CircuitBreakerProperties CIRCUIT_DEFAULTS = new CircuitBreakerProperties(
+            true, 100, 30, 50, Duration.ofMillis(150), 60,
+            Duration.ofSeconds(10), 5, true, Duration.ofMinutes(10));
 
     public CacheProperties {
         if (maxEntries == null || maxEntries <= 0) {
             maxEntries = 50_000;
+        }
+        if (cityFallbackMaxEntries == null || cityFallbackMaxEntries <= 0) {
+            cityFallbackMaxEntries = 10_000;
         }
         if (reservationCountTtl == null) {
             reservationCountTtl = Duration.ofSeconds(45);
@@ -62,6 +86,7 @@ public record CacheProperties(Integer maxEntries,
         if (redis == null) {
             redis = new Redis(false);
         }
+        circuitBreaker = CircuitBreakerProperties.merge(circuitBreaker, CIRCUIT_DEFAULTS);
     }
 
     /** @param enabled {@code true} para usar Redis; {@code false} deja el cache en memoria */

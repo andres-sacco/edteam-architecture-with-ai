@@ -100,6 +100,30 @@ public class JdbcEventOutbox implements EventOutboxPort, OutboxAdmin {
                       correlation_id, occurred_at, enqueued_at, attempts, status
             """;
 
+    /**
+     * El reclamo de la sonda: uno solo, <strong>al azar</strong>.
+     *
+     * <p>{@code ORDER BY random()} y no {@code ORDER BY sequence} a propósito.
+     * La sonda del circuito semiabierto se dispara una y otra vez durante toda
+     * la caída; con el orden natural sería siempre el mismo mensaje el que
+     * arriesga, y con un backlog chico ese mensaje es el más viejo y el más
+     * importante. Repartir el riesgo entre los pendientes es lo que evita que
+     * la recuperación del circuito se pague con una notificación concreta.
+     */
+    private static final String CLAIM_PROBE = """
+            UPDATE outbox_message SET status = 'IN_FLIGHT', claimed_at = ?
+            WHERE id = (
+                SELECT id FROM outbox_message
+                WHERE next_attempt_at <= ?
+                  AND (status = 'PENDING' OR (status = 'IN_FLIGHT' AND claimed_at < ?))
+                ORDER BY random()
+                LIMIT 1
+                FOR UPDATE SKIP LOCKED
+            )
+            RETURNING id, type, schema_version, subject, sequence, payload,
+                      correlation_id, occurred_at, enqueued_at, attempts, status
+            """;
+
     private static final RowMapper<OutboxMessage> MESSAGE_MAPPER = (rs, row) -> new OutboxMessage(
             rs.getString("id"),
             rs.getString("type"),
@@ -184,14 +208,39 @@ public class JdbcEventOutbox implements EventOutboxPort, OutboxAdmin {
 
     @Override
     @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public List<OutboxMessage> pollProbe() {
+        Instant now = clock.instant();
+        java.time.LocalDateTime nowUtc = Utc.param(now);
+        java.time.LocalDateTime leaseLimit = Utc.param(now.minus(properties.claimLease()));
+        return jdbcTemplate.query(CLAIM_PROBE, MESSAGE_MAPPER, nowUtc, nowUtc, leaseLimit);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>El {@code AND status = 'IN_FLIGHT'} no es defensivo, es correctivo.
+     * Sin él —como estaba— la marca no verifica que el reclamo siga siendo
+     * nuestro, y con un lease que puede vencer en medio de un lote, otra
+     * instancia re-reclama un mensaje todavía en vuelo. La publicación doble
+     * la absorbe la deduplicación del consumidor; lo que no se absorbe es que
+     * el {@code markFailed} tardío de la primera instancia devuelva a
+     * {@code PENDING} un mensaje que la segunda ya despachó —reenvío
+     * indefinido— y que {@code attempts} se cuente dos veces, acelerando su
+     * llegada a la dead letter.
+     */
+    @Override
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void markDispatched(String messageId) {
         Objects.requireNonNull(messageId, "messageId es obligatorio");
-        jdbcTemplate.update("""
+        int updated = jdbcTemplate.update("""
                 UPDATE outbox_message
                    SET status = 'DISPATCHED', attempts = attempts + 1,
                        claimed_at = NULL, last_error = NULL
-                 WHERE id = ?::uuid
+                 WHERE id = ?::uuid AND status = 'IN_FLIGHT'
                 """, messageId);
+        if (updated == 0) {
+            log.warn("El mensaje {} ya no estaba reclamado por este relay: no se marca como despachado", messageId);
+        }
     }
 
     @Override
@@ -206,6 +255,13 @@ public class JdbcEventOutbox implements EventOutboxPort, OutboxAdmin {
             log.warn("Se intentó marcar como fallido el mensaje {}, que ya no está en el outbox", messageId);
             return;
         }
+        if (attempt.status() != OutboxStatus.IN_FLIGHT) {
+            // El reclamo venció y otro lo tomó —o ya lo despachó—. Contarle el
+            // intento ahora sería contarlo dos veces.
+            log.warn("El mensaje {} está en {} y no en IN_FLIGHT: el reclamo ya no es nuestro",
+                    messageId, attempt.status());
+            return;
+        }
         int attempts = attempt.attempts() + 1;
 
         String reason = deadLetterReason(failure, attempts, attempt.enqueuedAt(), now);
@@ -216,18 +272,22 @@ public class JdbcEventOutbox implements EventOutboxPort, OutboxAdmin {
                     UPDATE outbox_message
                        SET status = 'FAILED', attempts = ?, claimed_at = NULL,
                            failed_at = ?, last_error = ?
-                     WHERE id = ?::uuid
+                     WHERE id = ?::uuid AND status = 'IN_FLIGHT'
                     """, attempts, Utc.param(now), trim(error), messageId);
             return;
         }
 
         Instant nextAttempt = now.plus(backoff(attempts));
-        jdbcTemplate.update("""
+        int updated = jdbcTemplate.update("""
                 UPDATE outbox_message
                    SET status = 'PENDING', attempts = ?, claimed_at = NULL,
                        next_attempt_at = ?, last_error = ?
-                 WHERE id = ?::uuid
+                 WHERE id = ?::uuid AND status = 'IN_FLIGHT'
                 """, attempts, Utc.param(nextAttempt), trim(error), messageId);
+        if (updated == 0) {
+            log.warn("El mensaje {} ya no estaba reclamado por este relay: no se le cuenta el intento fallido",
+                    messageId);
+        }
     }
 
     @Override
@@ -376,9 +436,10 @@ public class JdbcEventOutbox implements EventOutboxPort, OutboxAdmin {
 
     private Attempt currentAttempt(String messageId) {
         return DataAccessUtils.singleResult(jdbcTemplate.query("""
-                SELECT type, attempts, enqueued_at FROM outbox_message WHERE id = ?::uuid
+                SELECT type, attempts, enqueued_at, status FROM outbox_message WHERE id = ?::uuid
                 """, (rs, row) -> new Attempt(
-                rs.getString("type"), rs.getInt("attempts"), Utc.read(rs, "enqueued_at")),
+                rs.getString("type"), rs.getInt("attempts"), Utc.read(rs, "enqueued_at"),
+                OutboxStatus.valueOf(rs.getString("status"))),
                 messageId));
     }
 
@@ -390,6 +451,6 @@ public class JdbcEventOutbox implements EventOutboxPort, OutboxAdmin {
         return error.length() <= 500 ? error : error.substring(0, 497) + "...";
     }
 
-    private record Attempt(String type, int attempts, Instant enqueuedAt) {
+    private record Attempt(String type, int attempts, Instant enqueuedAt, OutboxStatus status) {
     }
 }

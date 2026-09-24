@@ -1,61 +1,69 @@
 package com.edteam.reservations.infrastructure.cache;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
 import java.time.Duration;
+import java.util.Collection;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.function.Consumer;
 
 /**
- * Almacén sobre Redis: el cache compartido entre instancias.
+ * El almacén contra Redis. Sólo eso: habla con Redis y
+ * <strong>relanza</strong> lo que Redis le tire.
  *
- * <p>Es lo que resuelve el límite del fallback en memoria. Con N instancias,
- * un cache local significa N caches fríos y N estampidas contra el origen en
- * cada deploy; con Redis hay uno solo, que además sobrevive a los reinicios.
+ * <p>Antes atrapaba toda {@code RuntimeException} y devolvía vacío, y eso
+ * mezclaba dos responsabilidades en una clase: <em>clasificar</em> el error y
+ * <em>decidir</em> qué hacer con él. La consecuencia concreta era que el
+ * circuito que va encima no podía abrirse nunca por fallo: Redis caído duro
+ * —conexión rechazada— responde rápido, así que no era ni un fallo contado ni
+ * una llamada lenta, y el circuito quedaba {@code CLOSED} para siempre
+ * mientras se seguían pagando 200 ms por operación. El circuito más caro de
+ * construir era el que menos servía.
  *
- * <h2>Un Redis caído no puede tumbar el servicio</h2>
- * Toda operación está envuelta: cualquier excepción del cliente se loguea y se
- * traga. Una lectura fallida es indistinguible de un miss, y una escritura
- * fallida es un miss futuro. En los dos casos el pedido sigue contra el
- * origen, que es como funcionaba el sistema antes de que existiera el cache.
- *
- * <p>Esto es también el motivo por el que {@code management.health.redis} está
- * apagado: el cache es opcional por diseño, así que su caída no debe marcar la
- * aplicación como {@code DOWN} y sacarla de rotación.
- *
- * <p>No define timeouts propios: los del transporte se configuran en
- * {@code spring.data.redis.timeout}, en un solo lugar, igual que se decidió
- * para el cliente del catálogo.
+ * <p>Ahora la degradación al origen la aplica
+ * {@link CircuitBreakingCacheStore}, que es quien necesita ver el fallo para
+ * contarlo. Esta clase nunca se usa suelta: siempre va envuelta por ese
+ * decorador, y el contrato de «nunca falla» se cumple ahí.
  */
 public final class RedisCacheStore implements CacheStore {
 
-    private static final Logger log = LoggerFactory.getLogger(RedisCacheStore.class);
-
     private final StringRedisTemplate redis;
-    private final Consumer<String> onFailure;
 
-    /**
-     * @param onFailure qué hacer cuando Redis no responde; recibe el nombre de
-     *                  la operación. Se inyecta para que la métrica de errores
-     *                  la lleve el decorador instrumentado y este almacén no
-     *                  dependa de Micrometer.
-     */
-    public RedisCacheStore(StringRedisTemplate redis, Consumer<String> onFailure) {
+    public RedisCacheStore(StringRedisTemplate redis) {
         this.redis = Objects.requireNonNull(redis, "El template de Redis es obligatorio");
-        this.onFailure = Objects.requireNonNull(onFailure, "El callback de fallo es obligatorio");
     }
 
     @Override
     public Optional<String> get(String key) {
-        try {
-            return Optional.ofNullable(redis.opsForValue().get(key));
-        } catch (RuntimeException e) {
-            degrade("get", key, e);
-            return Optional.empty();
+        return Optional.ofNullable(redis.opsForValue().get(key));
+    }
+
+    /**
+     * Una sola ida y vuelta para todas las claves ({@code MGET}). Es lo que
+     * hace que leer las once ciudades de un itinerario cueste un timeout y no
+     * once.
+     */
+    @Override
+    public Map<String, String> getAll(Collection<String> keys) {
+        if (keys.isEmpty()) {
+            return Map.of();
         }
+        List<String> ordered = List.copyOf(keys);
+        List<String> values = redis.opsForValue().multiGet(ordered);
+        Map<String, String> found = new LinkedHashMap<>();
+        if (values == null) {
+            return found;
+        }
+        for (int i = 0; i < ordered.size() && i < values.size(); i++) {
+            String value = values.get(i);
+            if (value != null) {
+                found.put(ordered.get(i), value);
+            }
+        }
+        return found;
     }
 
     @Override
@@ -63,28 +71,11 @@ public final class RedisCacheStore implements CacheStore {
         if (ttl == null || ttl.isNegative() || ttl.isZero()) {
             return;
         }
-        try {
-            redis.opsForValue().set(key, value, ttl);
-        } catch (RuntimeException e) {
-            degrade("put", key, e);
-        }
+        redis.opsForValue().set(key, value, ttl);
     }
 
     @Override
     public void evict(String key) {
-        try {
-            redis.delete(key);
-        } catch (RuntimeException e) {
-            // Es el caso más incómodo: una invalidación perdida deja una
-            // entrada vieja hasta que venza. Por eso toda clave invalidable
-            // tiene además un TTL corto, que acota el daño a esa ventana.
-            degrade("evict", key, e);
-        }
-    }
-
-    private void degrade(String operation, String key, RuntimeException e) {
-        log.warn("Redis no respondió al {} de '{}': se sigue contra el origen ({})",
-                operation, key, e.getMessage());
-        onFailure.accept(operation);
+        redis.delete(key);
     }
 }

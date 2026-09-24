@@ -45,7 +45,7 @@ public class ConfirmReservationService implements ConfirmReservationUseCase {
     }
 
     @Override
-    @Transactional
+    @Transactional(timeout = 2)
     public Reservation confirm(ConfirmReservationCommand command) {
         Objects.requireNonNull(command, "El comando es obligatorio");
         ReservationId reservationId = ReservationId.of(command.reservationId());

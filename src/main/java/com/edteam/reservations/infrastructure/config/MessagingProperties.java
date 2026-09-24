@@ -56,8 +56,30 @@ public record MessagingProperties(boolean enabled,
                                   boolean declareConsumerTopology,
                                   boolean consumerEnabled,
                                   Duration retryDelay,
+                                  Duration maxRetryDelay,
                                   int maxRetryRounds,
-                                  int queueMaxLength) {
+                                  int queueMaxLength,
+                                  int retryQueueMaxLength,
+                                  CircuitBreakerProperties circuitBreaker) {
+
+    /**
+     * Umbrales por defecto del circuito del broker.
+     *
+     * <p>Mínimo 5 y ventana 20, mucho más bajos que los del catálogo: el relay
+     * publica poco y en lotes, así que pedir veinte llamadas mínimas
+     * retrasaría la apertura hasta la mitad del primer lote. Cinco fallos
+     * consecutivos de publicación contra un broker no son ambiguos.
+     *
+     * <p>Fallo 60 %, más alto que el resto, porque un fallo aislado puede ser
+     * una cola llena de un solo routing key y no el broker entero.
+     *
+     * <p>Abierto 60 s, el único caso donde el default largo es el correcto:
+     * nadie espera, el mensaje está a salvo en el outbox y <em>probar es
+     * caro</em> (connect más confirm por cada prueba).
+     */
+    private static final CircuitBreakerProperties CIRCUIT_DEFAULTS = new CircuitBreakerProperties(
+            true, 20, 5, 60, Duration.ofSeconds(2), 60,
+            Duration.ofSeconds(60), 2, true, Duration.ofMinutes(30));
 
     public MessagingProperties {
         if (exchange == null || exchange.isBlank()) {
@@ -72,11 +94,21 @@ public record MessagingProperties(boolean enabled,
         if (retryDelay == null || retryDelay.isNegative() || retryDelay.isZero()) {
             retryDelay = Duration.ofSeconds(30);
         }
+        if (maxRetryDelay == null || maxRetryDelay.compareTo(retryDelay) < 0) {
+            maxRetryDelay = Duration.ofMinutes(10);
+        }
         if (maxRetryRounds < 1) {
             maxRetryRounds = 5;
         }
         if (queueMaxLength < 1) {
             queueMaxLength = 100_000;
         }
+        if (retryQueueMaxLength < 1) {
+            // Un orden de magnitud menos que la principal: la cola de espera
+            // es un buffer de reintentos, no un backlog. Si llega a llenarse,
+            // el problema no es de tamaño.
+            retryQueueMaxLength = 10_000;
+        }
+        circuitBreaker = CircuitBreakerProperties.merge(circuitBreaker, CIRCUIT_DEFAULTS);
     }
 }

@@ -3,14 +3,17 @@ package com.edteam.reservations.application.service;
 import com.edteam.reservations.application.port.in.CreateReservationCommand;
 import com.edteam.reservations.application.port.in.CreateReservationResult;
 import com.edteam.reservations.application.port.in.CreateReservationUseCase;
+import com.edteam.reservations.domain.model.IdempotencyKey;
 import com.edteam.reservations.domain.model.Itinerary;
 import com.edteam.reservations.domain.model.Passenger;
+import com.edteam.reservations.domain.model.Reservation;
 import org.springframework.stereotype.Service;
 
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Alta de una reserva, o recuperación de la que ya existe para esa clave de
@@ -45,15 +48,18 @@ public class CreateReservationService implements CreateReservationUseCase {
 
     private final ItineraryAssembler itineraryAssembler;
     private final AirportExistenceValidator airportValidator;
+    private final ReservationIdempotencyLookup idempotencyLookup;
     private final CreateReservationTransaction transaction;
     private final Clock clock;
 
     CreateReservationService(ItineraryAssembler itineraryAssembler,
                              AirportExistenceValidator airportValidator,
+                             ReservationIdempotencyLookup idempotencyLookup,
                              CreateReservationTransaction transaction,
                              Clock clock) {
         this.itineraryAssembler = Objects.requireNonNull(itineraryAssembler);
         this.airportValidator = Objects.requireNonNull(airportValidator);
+        this.idempotencyLookup = Objects.requireNonNull(idempotencyLookup);
         this.transaction = Objects.requireNonNull(transaction);
         this.clock = Objects.requireNonNull(clock);
     }
@@ -63,11 +69,27 @@ public class CreateReservationService implements CreateReservationUseCase {
         Objects.requireNonNull(command, "El comando es obligatorio");
         Instant now = clock.instant();
 
+        // La clave de idempotencia PRIMERO. Si esta reserva ya existe no hay
+        // nada que validar, y el reintento del usuario —que con el catálogo
+        // degradado es lo más probable que pase— cuesta una lectura por índice
+        // en lugar de otra tanda entera de consultas contra un proveedor que
+        // ya está sufriendo. La clave protegía la base; esto protege también
+        // al tercero.
+        Optional<Reservation> existing = idempotencyLookup.findExisting(
+                command.actor().email(), IdempotencyKey.of(command.idempotencyKey()));
+        if (existing.isPresent()) {
+            return CreateReservationResult.alreadyExisted(existing.get());
+        }
+
         // Fuera de la transacción, a propósito: acá está la red.
         Itinerary itinerary = itineraryAssembler.toItinerary(command.itinerary());
         airportValidator.validate(itinerary);
         List<Passenger> passengers = itineraryAssembler.toPassengers(command.passengers());
 
+        // La transacción vuelve a chequear la clave: entre la lectura de
+        // arriba y la escritura pueden haber pasado segundos, y la carrera de
+        // dos pedidos simultáneos con la misma clave sólo la resuelve el
+        // UNIQUE de la base.
         return transaction.apply(command, itinerary, passengers, now);
     }
 }

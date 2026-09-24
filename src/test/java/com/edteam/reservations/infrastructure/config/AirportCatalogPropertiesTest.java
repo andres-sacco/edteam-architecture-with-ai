@@ -9,7 +9,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 class AirportCatalogPropertiesTest {
 
     private static AirportCatalogProperties withBaseUrl(String baseUrl) {
-        return new AirportCatalogProperties(null, null, null, null, null, null, baseUrl, null, null);
+        return new AirportCatalogProperties(null, null, null, null, null, null, null, null, null,
+                baseUrl, null, null);
     }
 
     @Test

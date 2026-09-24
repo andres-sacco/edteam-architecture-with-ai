@@ -16,7 +16,9 @@ import org.springframework.amqp.core.MessageProperties;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 
+import java.time.Duration;
 import java.util.Objects;
+import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * Adaptador de entrada: consume la cola de trabajo y delega en el caso de uso.
@@ -65,16 +67,22 @@ public class ReservationEventListener {
     private final InboundEnvelopeParser parser;
     private final RabbitTemplate rabbitTemplate;
     private final int maxAttempts;
+    private final Duration initialDelay;
+    private final Duration maxDelay;
     private final MeterRegistry registry;
 
     public ReservationEventListener(ProcessReservationEventUseCase processEvent,
                                     InboundEnvelopeParser parser,
                                     RabbitTemplate rabbitTemplate,
                                     int maxAttempts,
+                                    Duration initialDelay,
+                                    Duration maxDelay,
                                     MeterRegistry registry) {
         this.processEvent = Objects.requireNonNull(processEvent);
         this.parser = Objects.requireNonNull(parser);
         this.rabbitTemplate = Objects.requireNonNull(rabbitTemplate);
+        this.initialDelay = Objects.requireNonNull(initialDelay);
+        this.maxDelay = Objects.requireNonNull(maxDelay);
         this.registry = Objects.requireNonNull(registry);
         if (maxAttempts < 1) {
             throw new IllegalArgumentException("maxAttempts debe ser al menos 1");
@@ -140,6 +148,21 @@ public class ReservationEventListener {
     private void toRetry(Message message, int attempt) {
         MessageProperties properties = message.getMessageProperties();
         properties.setHeader(MessagingTopology.ATTEMPT_HEADER, attempt + 1);
+        // La espera va por vencimiento del mensaje y no por TTL fija de la
+        // cola, y eso arregla dos cosas a la vez.
+        //
+        // Crece: con una espera fija de 30 s, cinco vueltas son 150 s y la
+        // caída de un consumidor de más de dos minutos y medio vacía la cola
+        // hacia la dead letter en bloque. Con backoff exponencial, las mismas
+        // cinco vueltas cubren minutos.
+        //
+        // Y tiene jitter: sin él, todos los mensajes que fallaron juntos
+        // vuelven JUNTOS, exactamente 30 s después, contra un destino que
+        // sigue caído. El sorteo sobre el cuarto superior los reparte sin
+        // que ninguno espere mucho más de lo que le toca — que es lo que
+        // acota el bloqueo de cabeza de cola propio de una sola cola de
+        // espera.
+        properties.setExpiration(String.valueOf(retryDelay(attempt).toMillis()));
         // 'x-death' se saca antes de reinyectar: si queda, el
         // x-delivery-limit de la cola quorum cuenta las entregas de vueltas
         // anteriores y el mensaje muere antes de agotar sus reintentos.
@@ -152,8 +175,26 @@ public class ReservationEventListener {
         properties.setHeader(MessagingTopology.ATTEMPT_HEADER, attempt);
         properties.setHeader(MessagingTopology.DEAD_LETTER_REASON_HEADER, truncate(reason));
         properties.getHeaders().remove("x-death");
+        // Sin esto, el mensaje llega a la dead letter con el vencimiento de su
+        // última vuelta de reintento y desaparece de ahí solo: la dead letter
+        // es para inspeccionar y reenviar, no para caducar.
+        properties.setExpiration(null);
         rabbitTemplate.send(MessagingTopology.DLQ_EXCHANGE, "", message);
         count(DEAD_LETTERED, properties.getType() == null ? "desconocido" : properties.getType(), "consumer");
+    }
+
+    /**
+     * Espera antes de la vuelta {@code attempt + 1}: exponencial con techo y
+     * con jitter sobre el último cuarto.
+     */
+    Duration retryDelay(int attempt) {
+        long millis = initialDelay.toMillis();
+        for (int i = 0; i < attempt && millis < maxDelay.toMillis(); i++) {
+            millis *= 2;
+        }
+        long capped = Math.min(millis, maxDelay.toMillis());
+        long floor = Math.max(1L, capped * 3 / 4);
+        return Duration.ofMillis(floor + ThreadLocalRandom.current().nextLong(capped - floor + 1));
     }
 
     private static int attemptOf(Message message) {

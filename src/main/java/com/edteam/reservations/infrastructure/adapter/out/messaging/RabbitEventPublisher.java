@@ -1,6 +1,7 @@
 package com.edteam.reservations.infrastructure.adapter.out.messaging;
 
 import com.edteam.reservations.application.exception.EventPublishException;
+import com.edteam.reservations.application.exception.EventRoutingException;
 import com.edteam.reservations.application.outbox.OutboxMessage;
 import com.edteam.reservations.application.port.out.EventPublisherPort;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -119,6 +120,7 @@ public class RabbitEventPublisher implements EventPublisherPort {
         try {
             ack = confirm.getFuture().get(confirmTimeout.toMillis(), TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
+            reapAbandonedConfirms();
             throw new EventPublishException(
                     "El broker no confirmó el mensaje %s en %d ms".formatted(message.id(), confirmTimeout.toMillis()), e);
         } catch (ExecutionException e) {
@@ -129,17 +131,47 @@ public class RabbitEventPublisher implements EventPublisherPort {
             throw new EventPublishException("Interrumpido esperando la confirmación de " + message.id(), e);
         }
 
+        // El orden importa: un mensaje devuelto por falta de binding llega
+        // ADEMÁS como nack, así que si se mirara el ack primero, un error de
+        // topología nuestro se reportaría como una falla del broker y abriría
+        // su circuito — frenando la entrega de todos los demás eventos, que
+        // estaban saliendo bien. Se mira el return antes.
+        if (confirm.getReturned() != null) {
+            throw new EventRoutingException(
+                    ("El exchange '%s' devolvió el mensaje %s con routing key '%s': no hay ninguna cola atada. "
+                            + "Se reintenta; hay que revisar los bindings.")
+                            .formatted(exchange, message.id(), message.type()));
+        }
         if (ack == null || !ack.isAck()) {
             throw new EventPublishException(
                     ("El broker rechazó el mensaje %s (%s): con 'mandatory' un mensaje sin binding es un error, "
                             + "no un descarte silencioso")
                             .formatted(message.id(), ack == null ? "sin respuesta" : ack.getReason()));
         }
-        if (confirm.getReturned() != null) {
-            throw new EventPublishException(
-                    ("El exchange '%s' devolvió el mensaje %s con routing key '%s': no hay ninguna cola atada. "
-                            + "Se reintenta; hay que revisar los bindings.")
-                            .formatted(exchange, message.id(), message.type()));
+    }
+
+    /**
+     * Saca del template los confirms abandonados.
+     *
+     * <p>Al vencer el {@code confirm-timeout} se lanza y se abandona el
+     * {@code CorrelationData}, que sigue en el mapa de <em>pending confirms</em>
+     * del template. Con el broker aceptando conexiones y sin confirmar —el
+     * modo de falla más incómodo— ese mapa crece un objeto por mensaje durante
+     * toda la caída: una dependencia lenta consumiendo memoria sin cota.
+     *
+     * <p>Se limpia acá, en el mismo camino que lo produce, y no en una tarea
+     * programada: el barrido ocurre exactamente cuando hay algo que barrer, y
+     * no hay un scheduler más que mantener.
+     */
+    private void reapAbandonedConfirms() {
+        int pending = rabbitTemplate.getUnconfirmedCount();
+        if (pending == 0) {
+            return;
+        }
+        int reaped = rabbitTemplate.getUnconfirmed(confirmTimeout.toMillis()).size();
+        if (reaped > 0) {
+            log.warn("[mensajería] {} confirmaciones abandonadas descartadas del template ({} pendientes antes)",
+                    reaped, pending);
         }
     }
 

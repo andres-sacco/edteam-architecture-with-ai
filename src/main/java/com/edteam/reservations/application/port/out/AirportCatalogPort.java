@@ -2,23 +2,39 @@ package com.edteam.reservations.application.port.out;
 
 import com.edteam.reservations.domain.model.AirportCode;
 
+import java.util.Collection;
+import java.util.Set;
+
 /**
- * Puerto de salida hacia el maestro de aeropuertos.
+ * Maestro de aeropuertos: la fuente de verdad de qué códigos existen.
  *
- * <p>Este puerto existe justamente porque la decisión está abierta: puede
- * resolverse con una tabla propia o con un proveedor externo. Los casos de uso
- * dependen de esta interfaz, así que la decisión se puede tomar —o cambiar—
- * sin modificar la lógica de negocio.
+ * <p>El puerto pregunta por el <strong>conjunto entero</strong> del itinerario
+ * y no de a un código por vez, y eso no es un detalle de comodidad. Mientras
+ * la pregunta fue {@code boolean exists(AirportCode)}, el adaptador no podía
+ * hacer nada mejor que un bucle en serie: el peor caso de un itinerario era la
+ * <em>suma</em> del peor caso de cada ciudad, y no había ningún lugar donde
+ * poner un techo de tiempo para el pedido completo. Con la pregunta en bloque,
+ * el adaptador puede agrupar la lectura de cache, resolver en paralelo lo que
+ * falta y cortar por presupuesto — sin que el caso de uso se entere de nada de
+ * eso.
  *
- * <p>La operación se define por código individual (en lugar de "traer todos
- * los aeropuertos") para que la implementación pueda ser un {@code SELECT}
- * puntual o una llamada HTTP, y para poder decorarla con cache: ver
- * {@code CachingAirportCatalog}.
+ * <p>Devuelve los códigos que <strong>no existen</strong>, no los que existen:
+ * es la respuesta que el validador necesita y evita que el llamador tenga que
+ * calcular una diferencia de conjuntos para descubrirlo.
+ *
+ * <p>Si el maestro no se puede consultar y no hay nada con qué responder, el
+ * adaptador lanza {@code AirportCatalogUnavailableException}. Nunca devuelve
+ * un código como inexistente por no haber podido averiguarlo: eso rechazaría
+ * una reserva válida con un error que el cliente no puede corregir.
  */
 public interface AirportCatalogPort {
 
     /**
-     * @return {@code true} si el aeropuerto existe y está operativo en el maestro
+     * @param codes los códigos a verificar; puede venir vacío
+     * @return el subconjunto de {@code codes} que el maestro no conoce
+     * @throws com.edteam.reservations.application.exception.AirportCatalogUnavailableException
+     *         si alguno de los códigos no se pudo resolver ni contra el origen
+     *         ni contra el último valor conocido
      */
-    boolean exists(AirportCode code);
+    Set<AirportCode> unknown(Collection<AirportCode> codes);
 }

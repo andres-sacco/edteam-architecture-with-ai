@@ -38,10 +38,12 @@ import java.time.LocalDate;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
@@ -81,6 +83,7 @@ class CreateReservationServiceTest {
         service = new CreateReservationService(
                 assembler,
                 new AirportExistenceValidator(airportCatalog),
+                new ReservationIdempotencyLookup(userRepository, reservationRepository),
                 new CreateReservationTransaction(
                         reservationRepository, userRepository, assembler, eventOutbox, auditTrail),
                 TestFixtures.fixedClock());
@@ -88,7 +91,7 @@ class CreateReservationServiceTest {
         // Camino feliz por defecto; cada test lo sobreescribe si necesita otro.
         // Se declara lenient porque varios tests fallan antes de llegar a usarlo,
         // que es justamente lo que verifican.
-        lenient().when(airportCatalog.exists(any(AirportCode.class))).thenReturn(true);
+        lenient().when(airportCatalog.unknown(anyCollection())).thenReturn(Set.of());
         lenient().when(userRepository.findByEmail(any()))
                 .thenReturn(Optional.of(TestFixtures.storedUser()));
         lenient().when(reservationRepository.findByIdempotencyKey(
@@ -182,15 +185,18 @@ class CreateReservationServiceTest {
 
         service.create(conEscala);
 
-        verify(airportCatalog).exists(TestFixtures.EZE);
-        verify(airportCatalog).exists(TestFixtures.SCL);
-        verify(airportCatalog).exists(TestFixtures.MAD);
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<java.util.Collection<AirportCode>> captor =
+                ArgumentCaptor.forClass(java.util.Collection.class);
+        verify(airportCatalog).unknown(captor.capture());
+        assertThat(captor.getValue())
+                .containsExactlyInAnyOrder(TestFixtures.EZE, TestFixtures.SCL, TestFixtures.MAD);
     }
 
     @Test
     @DisplayName("si un aeropuerto no existe, no persiste ni notifica")
     void rejectsUnknownAirport() {
-        when(airportCatalog.exists(TestFixtures.SCL)).thenReturn(false);
+        when(airportCatalog.unknown(anyCollection())).thenReturn(Set.of(TestFixtures.SCL));
 
         assertThatThrownBy(() -> service.create(TestFixtures.createCommand()))
                 .isInstanceOf(UnknownAirportException.class)
@@ -273,16 +279,22 @@ class CreateReservationServiceTest {
         CreateReservationTransaction transaction = new CreateReservationTransaction(
                 reservationRepository, userRepository, assembler, eventOutbox, auditTrail);
 
-        assertThatThrownBy(() -> new CreateReservationService(null, validator, transaction,
+        ReservationIdempotencyLookup lookup =
+                new ReservationIdempotencyLookup(userRepository, reservationRepository);
+
+        assertThatThrownBy(() -> new CreateReservationService(null, validator, lookup, transaction,
                 TestFixtures.fixedClock()))
                 .isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() -> new CreateReservationService(assembler, null, transaction,
+        assertThatThrownBy(() -> new CreateReservationService(assembler, null, lookup, transaction,
                 TestFixtures.fixedClock()))
                 .isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() -> new CreateReservationService(assembler, validator, null,
+        assertThatThrownBy(() -> new CreateReservationService(assembler, validator, null, transaction,
                 TestFixtures.fixedClock()))
                 .isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() -> new CreateReservationService(assembler, validator, transaction, null))
+        assertThatThrownBy(() -> new CreateReservationService(assembler, validator, lookup, null,
+                TestFixtures.fixedClock()))
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> new CreateReservationService(assembler, validator, lookup, transaction, null))
                 .isInstanceOf(NullPointerException.class);
         assertThatThrownBy(() -> new CreateReservationTransaction(
                 null, userRepository, assembler, eventOutbox, auditTrail))
@@ -317,7 +329,7 @@ class CreateReservationServiceTest {
     @Test
     @DisplayName("no da de alta al usuario si el pedido se va a rechazar igual")
     void doesNotRegisterTheUserWhenTheRequestIsRejected() {
-        when(airportCatalog.exists(TestFixtures.SCL)).thenReturn(false);
+        when(airportCatalog.unknown(anyCollection())).thenReturn(Set.of(TestFixtures.SCL));
 
         assertThatThrownBy(() -> service.create(TestFixtures.createCommand()))
                 .isInstanceOf(UnknownAirportException.class);

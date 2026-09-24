@@ -25,10 +25,12 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.Collection;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
@@ -67,7 +69,7 @@ class ModifyReservationServiceTest {
                 new ModifyReservationTransaction(reservationRepository, eventOutbox, auditTrail),
                 auditTrail,
                 TestFixtures.fixedClock());
-        lenient().when(airportCatalog.exists(any(AirportCode.class))).thenReturn(true);
+        lenient().when(airportCatalog.unknown(anyCollection())).thenReturn(Set.of());
         lenient().when(reservationRepository.save(any(Reservation.class)))
                 .thenAnswer(invocation -> invocation.<Reservation>getArgument(0).withVersion(3L));
     }
@@ -148,7 +150,7 @@ class ModifyReservationServiceTest {
     void rejectsUnknownAirport() {
         when(reservationRepository.findById(TestFixtures.RESERVATION_ID))
                 .thenReturn(Optional.of(TestFixtures.storedReservation(0L)));
-        when(airportCatalog.exists(TestFixtures.MAD)).thenReturn(false);
+        when(airportCatalog.unknown(anyCollection())).thenReturn(Set.of(TestFixtures.MAD));
 
         assertThatThrownBy(() -> service.modify(command(0L)))
                 .isInstanceOf(UnknownAirportException.class)

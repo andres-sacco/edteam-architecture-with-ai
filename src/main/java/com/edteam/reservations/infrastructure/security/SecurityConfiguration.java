@@ -197,8 +197,11 @@ public class SecurityConfiguration {
                 CorrelationIdFilter.HEADER));
         // Sin esto el frontend no ve el ETag y no puede mandar If-Match: el
         // navegador sólo expone seis headers de respuesta por defecto.
+        // X-Degraded incluido: si el frontend no lo ve, no puede avisar que los
+        // datos de catálogo están desactualizados, y el header no sirve de nada.
         configuration.setExposedHeaders(List.of(HttpHeaders.ETAG, HttpHeaders.LOCATION,
-                HttpHeaders.RETRY_AFTER, CorrelationIdFilter.HEADER));
+                HttpHeaders.RETRY_AFTER, CorrelationIdFilter.HEADER,
+                com.edteam.reservations.infrastructure.adapter.in.rest.DegradationHeaderFilter.HEADER));
         configuration.setAllowCredentials(true);
         configuration.setMaxAge(properties.maxAge());
 

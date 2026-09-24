@@ -4,6 +4,7 @@ import com.edteam.reservations.application.exception.AirportCatalogIntegrationEx
 import com.edteam.reservations.application.exception.AirportCatalogUnavailableException;
 import com.edteam.reservations.application.exception.UnknownAirportException;
 import com.edteam.reservations.application.port.out.AirportCatalogPort;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import com.edteam.reservations.application.service.AirportExistenceValidator;
 import com.edteam.reservations.domain.model.AirportCode;
 import com.edteam.reservations.domain.model.Itinerary;
@@ -67,7 +68,7 @@ class CityCatalogValidationTest {
                 new RestCityCatalogClient(builder.build()), RETRY, duration -> true);
 
         AirportCatalogPort catalog = new CachingAirportCatalog(
-                new CatalogAirportCatalog(client),
+                new CatalogCityResolver(client, new SimpleMeterRegistry()),
                 new InMemoryCacheStore(TestFixtures.fixedClock(), 100),
                 new CachingAirportCatalog.Ttl(
                         Duration.ofMinutes(30), Duration.ofMinutes(5), Duration.ofHours(2)),
@@ -108,7 +109,14 @@ class CityCatalogValidationTest {
     @Test
     @DisplayName("el catálogo está caído: no se rechaza el pedido, se propaga la falla")
     void propagatesCatalogOutageInsteadOfRejecting() {
+        // Las dos ciudades se declaran porque el resolutor pregunta por el
+        // itinerario ENTERO y ya no corta en la primera que falla. Es
+        // deliberado: en producción las ciudades se resuelven en paralelo, y
+        // un fallo de una no puede invalidar a las que sí se resolvieron —de
+        // eso depende que el fallback tenga a qué agarrarse—.
         server.expect(ExpectedCount.manyTimes(), requestTo(BASE_URL + "/city/BUE"))
+                .andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE));
+        server.expect(ExpectedCount.manyTimes(), requestTo(BASE_URL + "/city/SCL"))
                 .andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE));
 
         assertThatThrownBy(() -> validator.validate(directItinerary()))
@@ -180,15 +188,28 @@ class CityCatalogValidationTest {
         server.verify();
     }
 
+    /**
+     * Este test verificaba lo contrario, y el cambio es deliberado.
+     *
+     * <p>Reintentar un {@code 429} es desobedecer al proveedor que acaba de
+     * pedirnos explícitamente que bajemos el ritmo, y empeora su saturación
+     * justo cuando está pidiendo aire. Lo correcto es no insistir y
+     * <strong>sí contarlo para el circuito</strong>, que es lo que de verdad
+     * frena el tráfico, y caer al valor guardado. Las dos mitades de esa
+     * decisión viven en el clasificador de fallos: el tipo propio
+     * {@code AirportCatalogThrottledException} es lo que permite que
+     * «cuenta» y «se reintenta» dejen de ser el mismo booleano.
+     */
     @Test
-    @DisplayName("un 429 también se reintenta: nos están limitando, no nos equivocamos")
-    void retriesRateLimiting() {
-        server.expect(requestTo(BASE_URL + "/city/BUE"))
+    @DisplayName("un 429 NO se reintenta: insistir es desobedecer al proveedor que pidió aire")
+    void doesNotRetryRateLimiting() {
+        server.expect(ExpectedCount.once(), requestTo(BASE_URL + "/city/BUE"))
                 .andRespond(withStatus(HttpStatus.TOO_MANY_REQUESTS));
-        expectCity("BUE", "Buenos Aires");
-        expectCity("SCL", "Santiago");
+        server.expect(ExpectedCount.once(), requestTo(BASE_URL + "/city/SCL"))
+                .andRespond(withStatus(HttpStatus.TOO_MANY_REQUESTS));
 
-        assertThatCode(() -> validator.validate(directItinerary())).doesNotThrowAnyException();
+        assertThatThrownBy(() -> validator.validate(directItinerary()))
+                .isInstanceOf(AirportCatalogUnavailableException.class);
 
         server.verify();
     }

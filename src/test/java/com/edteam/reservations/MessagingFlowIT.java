@@ -8,7 +8,7 @@ import com.edteam.reservations.application.port.in.ItineraryData;
 import com.edteam.reservations.application.port.out.EventPublisherPort;
 import com.edteam.reservations.infrastructure.adapter.out.messaging.DeadLetterQueue;
 import com.edteam.reservations.infrastructure.adapter.out.messaging.MessagingTopology;
-import com.edteam.reservations.infrastructure.adapter.out.messaging.RabbitEventPublisher;
+import com.edteam.reservations.infrastructure.adapter.out.messaging.CircuitBreakingEventPublisher;
 import com.edteam.reservations.support.AbstractRabbitIT;
 import com.edteam.reservations.support.TestFixtures;
 import org.awaitility.Awaitility;
@@ -97,9 +97,18 @@ class MessagingFlowIT extends AbstractRabbitIT {
     // =================================================================
 
     @Test
-    @DisplayName("con broker se cablea el publicador real")
+    @DisplayName("con broker se cablea el publicador real, detrás de su circuito")
     void wiresTheRealPublisher() {
-        assertThat(context.getBean(EventPublisherPort.class)).isInstanceOf(RabbitEventPublisher.class);
+        // El publicador real sigue siendo el de siempre; lo que cambió es que
+        // ahora va envuelto. El circuito no reemplaza al publicador: le evita
+        // pagar connect + confirm por mensaje contra un broker que sabemos
+        // caído, y —lo que de verdad importa— que ese intento se le cuente al
+        // mensaje.
+        assertThat(context.getBean(EventPublisherPort.class))
+                .isInstanceOf(CircuitBreakingEventPublisher.class);
+        assertThat(context.getBeansOfType(EventPublisherPort.class).values())
+                .as("el que loguea y no publica sólo se cablea con la mensajería apagada")
+                .hasSize(1);
     }
 
     @Test

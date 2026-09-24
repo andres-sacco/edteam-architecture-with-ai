@@ -75,8 +75,8 @@ class CatalogOutsideTransactionIT extends AbstractPostgresIT {
         // Ahora el catálogo se degrada: cada consulta tarda 1,5 s.
         doAnswer(invocation -> {
             Thread.sleep(CATALOG_DELAY.toMillis());
-            return true;
-        }).when(airportCatalog).exists(any(AirportCode.class));
+            return java.util.Set.of();
+        }).when(airportCatalog).unknown(org.mockito.ArgumentMatchers.anyCollection());
 
         CountDownLatch start = new CountDownLatch(1);
         AtomicLong slowestRead = new AtomicLong();

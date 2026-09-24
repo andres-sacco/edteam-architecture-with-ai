@@ -4,12 +4,14 @@ import com.edteam.reservations.application.port.in.ProcessReservationEventUseCas
 import com.edteam.reservations.application.port.out.EventPublisherPort;
 import com.edteam.reservations.infrastructure.adapter.in.messaging.InboundEnvelopeParser;
 import com.edteam.reservations.infrastructure.adapter.in.messaging.ReservationEventListener;
+import com.edteam.reservations.infrastructure.adapter.out.messaging.CircuitBreakingEventPublisher;
 import com.edteam.reservations.infrastructure.adapter.out.messaging.DeadLetterQueue;
 import com.edteam.reservations.infrastructure.adapter.out.messaging.LoggingEventPublisher;
 import com.edteam.reservations.infrastructure.adapter.out.messaging.MessagingTopology;
 import com.edteam.reservations.infrastructure.adapter.out.messaging.RabbitDeadLetterQueue;
 import com.edteam.reservations.infrastructure.adapter.out.messaging.RabbitEventPublisher;
 import com.edteam.reservations.infrastructure.adapter.out.messaging.UnavailableDeadLetterQueue;
+import com.edteam.reservations.infrastructure.resilience.Circuit;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
@@ -80,11 +82,18 @@ public class MessagingConfiguration {
     public EventPublisherPort rabbitEventPublisher(RabbitTemplate rabbitTemplate,
                                                    ObjectMapper objectMapper,
                                                    MessagingProperties properties,
+                                                   Circuit brokerCircuit,
                                                    Clock clock) {
-        log.info("Mensajería: publicando a '{}' como '{}' (confirm {} ms)",
+        log.info("Mensajería: publicando a '{}' como '{}' (confirm {} ms, con circuito)",
                 properties.exchange(), properties.source(), properties.confirmTimeout().toMillis());
-        return new RabbitEventPublisher(rabbitTemplate, objectMapper, properties.exchange(),
-                properties.source(), properties.confirmTimeout(), clock);
+        // El circuito por fuera del publicador, y el gate del scheduler por
+        // fuera del caso de uso: el primero evita pagar connect + confirm por
+        // mensaje, el segundo evita reclamar el lote de la base para
+        // descartarlo. Los dos hacen falta.
+        return new CircuitBreakingEventPublisher(
+                new RabbitEventPublisher(rabbitTemplate, objectMapper, properties.exchange(),
+                        properties.source(), properties.confirmTimeout(), clock),
+                brokerCircuit);
     }
 
     /** Reemplazo sin broker. Ver {@link LoggingEventPublisher}. */
@@ -196,11 +205,35 @@ public class MessagingConfiguration {
          * Cola de espera del reintento: sin consumidor, con TTL y con DLX hacia
          * el exchange de reinyección. La TTL <b>es</b> el backoff.
          */
+        /**
+         * La cola de espera de los reintentos del consumidor.
+         *
+         * <p>Dos cambios respecto de la versión anterior:
+         *
+         * <p><strong>La TTL de la cola es el techo, no el plazo.</strong>
+         * Antes era {@code retry-delay} fija, así que todos los mensajes que
+         * fallaban juntos volvían juntos, exactamente 30 s después, contra un
+         * destino que seguía caído: cinco vueltas sincronizadas y a la dead
+         * letter en bloque. Ahora la espera real la pone cada mensaje con su
+         * propio vencimiento —exponencial y con jitter, lo calcula el
+         * listener— y la TTL de la cola es sólo el techo que ninguno puede
+         * superar.
+         *
+         * <p><strong>Tiene cota y política de rebalse</strong>, con el mismo
+         * criterio que la principal. Sin cota, con el destino caído esta cola
+         * crece sin límite en el broker y la alarma de disco de RabbitMQ
+         * termina frenando las publicaciones del relay: la falta de un límite
+         * en una cola interna se convierte en la caída del broker entero. Con
+         * {@code reject-publish}, el rebalse es visible en lugar de
+         * silencioso.
+         */
         @Bean
         public Queue reservationEventsRetryQueue() {
             return QueueBuilder.durable(MessagingTopology.RETRY_QUEUE)
-                    .ttl((int) properties.retryDelay().toMillis())
+                    .ttl((int) properties.maxRetryDelay().toMillis())
                     .deadLetterExchange(MessagingTopology.REQUEUE_EXCHANGE)
+                    .maxLength(properties.retryQueueMaxLength())
+                    .overflow(QueueBuilder.Overflow.rejectPublish)
                     .build();
         }
 
@@ -385,11 +418,12 @@ public class MessagingConfiguration {
             @Qualifier("consumerRabbitTemplate") RabbitTemplate rabbitTemplate,
             MessagingProperties properties,
             MeterRegistry registry) {
-        log.info("Mensajería: consumidor de referencia levantado sobre '{}' ({} vueltas de reintento de {} ms)",
+        log.info("Mensajería: consumidor de referencia levantado sobre '{}' ({} vueltas, backoff de {} ms a {} ms)",
                 MessagingTopology.CONSUMER_QUEUE, properties.maxRetryRounds(),
-                properties.retryDelay().toMillis());
+                properties.retryDelay().toMillis(), properties.maxRetryDelay().toMillis());
         return new ReservationEventListener(processEvent, new InboundEnvelopeParser(objectMapper),
-                rabbitTemplate, properties.maxRetryRounds(), registry);
+                rabbitTemplate, properties.maxRetryRounds(),
+                properties.retryDelay(), properties.maxRetryDelay(), registry);
     }
 
     // -----------------------------------------------------------------

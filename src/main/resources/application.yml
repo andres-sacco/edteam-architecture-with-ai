@@ -62,8 +62,28 @@ spring:
       # más que uno grande: cada conexión es un proceso del lado de PostgreSQL.
       maximum-pool-size: 20
       minimum-idle: 5
-      connection-timeout: 3000
+      # 1 s y no 3 s. Con 20 conexiones y consultas por índice de pocos
+      # milisegundos, esperar 3 s por una conexión significa que la cola tiene
+      # cientos de pedidos adelante: a partir de cierto punto, rechazar es la
+      # respuesta correcta y esperar más sólo agranda la cola. 1 s es el
+      # tiempo en el que un pico legítimo se absorbe y una saturación real se
+      # hace visible. El pedido rechazado sale como 503 + Retry-After: 1, no
+      # como 500.
+      connection-timeout: 1000
       pool-name: reservations-pool
+      data-source-properties:
+        # El corte duro, y va en el DRIVER a propósito.
+        # 'jakarta.persistence.query.timeout' acota las consultas de JPA pero
+        # NO cubre el flush ni el commit, que es justo donde pega una base
+        # lenta: sin esto, connection-timeout acota la espera POR una conexión
+        # y nada acota el uso de la que ya se tomó. Una base lenta retenía las
+        # 20 conexiones sin corte y toda la API caía, incluidos los GET que no
+        # tocaban la tabla lenta.
+        #
+        # 2 s: ninguna sentencia de este sistema tiene derecho a tardar más.
+        # El peor caso documentado es la paginación, que son tres consultas
+        # sobre índices.
+        options: "-c statement_timeout=2000"
 
   jpa:
     open-in-view: false
@@ -73,6 +93,15 @@ spring:
       # recién en la primera consulta.
       ddl-auto: validate
     properties:
+      jakarta:
+        persistence:
+          # Complemento del statement_timeout, no reemplazo: éste aborta la
+          # consulta desde el lado del cliente y produce un
+          # QueryTimeoutException que el manejador traduce a 503; el del
+          # driver es el que corta de verdad, del lado del servidor, y cubre
+          # además el flush y el commit.
+          query:
+            timeout: 1000
       hibernate:
         jdbc:
           # Las columnas son TIMESTAMP sin zona y guardan UTC. Esto fija la zona
@@ -148,6 +177,45 @@ reservations:
     # Cota del cache en memoria (el fallback). Contra Redis la cota la pone el
     # proveedor: en un free tier, 'allkeys-lru'.
     max-entries: 50000
+    # Cota del L1 en memoria de las ciudades, que se escribe SIEMPRE —no sólo
+    # cuando Redis se cae— para que esté caliente el día que haga falta.
+    # Diez mil entradas cubren de sobra un catálogo de ciudades de unos pocos
+    # miles, y a ~40 bytes por entrada son menos de un megabyte por instancia.
+    # Sólo aplica al prefijo 'catalog:city:': las claves de versión NO caen a
+    # memoria, porque se invalidan activamente y una copia por instancia daría
+    # ETags distintos según quién atienda.
+    city-fallback-max-entries: 10000
+    circuit-breaker:
+      # Por qué un circuito para un componente opcional: no es corrección, es
+      # latencia. Con Redis caído, un POST hace hasta once lecturas y once
+      # escrituras de ciudades más la versión, y cada una paga los 200 ms de
+      # 'spring.data.redis.timeout'. Son segundos de espera pura por un
+      # componente cuyo aporte es ahorrar tiempo. Con el circuito abierto
+      # cuestan cero.
+      enabled: ${CACHE_CIRCUIT_ENABLED:true}
+      # Es la dependencia con más llamadas por pedido: 30 llamadas son ~2
+      # pedidos, así que el mínimo se alcanza enseguida y la ventana de 100
+      # sigue representando pocos segundos de tráfico.
+      sliding-window-size: 100
+      minimum-number-of-calls: 30
+      failure-rate-threshold: 50
+      # El timeout es 200 ms: una operación que tardó 150 ms ya está en la
+      # zona donde el cache dejó de ser un atajo. Una lectura sana de Redis en
+      # la misma red es de un dígito en milisegundos; 150 ms es 20 veces eso.
+      slow-call-duration-threshold: 150ms
+      slow-call-rate-threshold: 60
+      # Un failover de Redis o un reinicio de contenedor tarda del orden de 5
+      # a 15 s. Menos de 10 s sería probar contra algo que todavía no volvió,
+      # y cada ronda de prueba cuesta 5 × 200 ms.
+      wait-duration-in-open-state: 10s
+      permitted-calls-in-half-open-state: 5
+      # La recuperación no puede depender de que llegue tráfico.
+      automatic-transition-from-open-to-half-open: true
+      # La ventana cuenta llamadas, pero además caduca. Contar sin caducar
+      # tiene el defecto inverso al de una ventana temporal: cien llamadas
+      # pueden abarcar horas de madrugada, y fallos de un incidente ya
+      # resuelto mantendrían el circuito al borde de abrir.
+      window-max-age: 10m
     # El total de una paginación es una pista para la interfaz, no un
     # invariante de negocio: que esté 45s desactualizado no rompe nada, y a
     # cambio hace innecesaria una invalidación que sería imposible de calcular.
@@ -190,27 +258,103 @@ reservations:
     # y no contesta queda colgada hasta que corte el sistema operativo, y con
     # ella el pedido de reserva. Con un pool de 20 conexiones, unas pocas de
     # esas convierten la degradación del catálogo en una caída nuestra.
-    connect-timeout: 500ms
-    read-timeout: 2s
+    # Establecer una conexión es rápido o no va a pasar: en la misma red el
+    # handshake TCP son microsegundos y 300 ms cubren un DNS lento. Bajó de
+    # 500 ms porque ahora forma parte del techo por intento —300 + 700 = 1 s
+    # exactos—, y un techo redondo es más fácil de razonar en el presupuesto.
+    connect-timeout: 300ms
+    # GET /city/{code} es un lookup por clave contra una tabla de unos pocos
+    # miles de ciudades: el tiempo de servicio esperado es de un dígito en
+    # milisegundos. 700 ms son ~20× el p99 esperado, que cubre una pausa de GC
+    # del proveedor y un salto de red, y no más. Los 2 s de antes eran ~200× y
+    # se eligieron cuando no había presupuesto de pedido que respetar.
+    #
+    # Es el primer valor que hay que reemplazar por el medido: en cuanto
+    # 'http.client.requests' publique el histograma del catálogo, este timeout
+    # pasa a ser p99 × 5.
+    read-timeout: 700ms
+    # EL TECHO DEL PEDIDO, y la pieza que faltaba.
+    #
+    # Sale del presupuesto del POST hacia atrás: 4 s de objetivo − 2 s de
+    # persistencia − 0,4 s de todo lo demás. Alcanza para un intento completo
+    # (1 s) más un reintento parcial.
+    #
+    # Es del ITINERARIO, no de la ciudad: las ciudades se resuelven en
+    # paralelo sobre hilos virtuales con un único vencimiento, así que once
+    # ciudades cuestan la más lenta y no la suma. Lo que no contestó cuando
+    # vence se trata como no disponible y entra al fallback; nunca se acepta
+    # una ciudad sin validar para ganar tiempo.
+    itinerary-budget: 1600ms
     retry:
       # Sólo aplican a GET /city/{code}, que es una lectura idempotente:
       # repetirla no puede duplicar ni cambiar nada. Las escrituras del sistema
-      # siguen sin reintentarse.
+      # siguen sin reintentarse; la única repetición admitida de un POST es la
+      # del cliente con la misma Idempotency-Key.
       #
-      # Se reintenta únicamente lo transitorio (5xx, 429, timeout, error de
-      # conexión). Un 4xx que no es 404 o un cuerpo que no cumple el contrato
-      # dan lo mismo por más que se insista.
+      # Qué se reintenta lo decide un único clasificador de fallos, el mismo
+      # que alimenta al circuito: transitorio (5xx, timeout, error de
+      # conexión) sí; 429, 4xx de integración y cuerpo fuera de contrato, no.
+      # El 429 SÍ cuenta para el circuito pero NO se reintenta: insistir es
+      # desobedecer al proveedor que acaba de pedir que bajemos el ritmo.
       #
-      # Peor caso por ciudad: 2s + 100ms + 2s + 200ms + 2s ≈ 6,5s. Es alto, y
-      # lo que lo hace tolerable es que el cache está por encima: sólo lo pagan
-      # las consultas que no están cacheadas.
-      max-attempts: 3
+      # DOS intentos y no tres. El primer reintento recupera el microcorte,
+      # que es el 90 % de los fallos transitorios de red; el tercero cuesta
+      # 1,2 s más de peor caso y sólo ayuda si el proveedor se cae y se
+      # recupera en menos de 400 ms. Peor caso por ciudad: 1 s + 200 ms + 1 s
+      # = 2,2 s, que el presupuesto del itinerario recorta a 1,6 s.
+      max-attempts: 2
       initial-backoff: 100ms
-      # Techo de la espera: sin él la progresión exponencial se vuelve absurda.
-      # El jitter se sortea sobre este valor, para que varias instancias no
-      # reintenten todas en el mismo instante contra un proveedor que ya está
-      # devolviendo 429.
-      max-backoff: 500ms
+      # Techo de la espera. Baja de 500 ms porque con dos intentos el tercer
+      # escalón no se usaría nunca, y 200 ms es lo que entra en el
+      # presupuesto. El jitter se sortea sobre la mitad superior del valor
+      # calculado: desincroniza N instancias sin hacer impredecible el techo,
+      # que es lo que el presupuesto necesita para poder calcularse.
+      max-backoff: 200ms
+    bulkhead:
+      # El reemplazo explícito del backpressure que los threads virtuales
+      # quitaron. El api-catalog es una aplicación con un pool a su base del
+      # orden de diez conexiones: más de ~50 pedidos nuestros en vuelo no se
+      # atienden más rápido, se encolan adentro de él, y ahí nuestro timeout
+      # se convierte en su saturación. 50 permisos con espera CERO hacen que
+      # la cola sea nuestra —y visible— en lugar de suya.
+      max-concurrent-calls: 50
+    circuit-breaker:
+      enabled: ${CATALOG_CIRCUIT_ENABLED:true}
+      # Un itinerario típico son 4 ciudades y uno complejo 11. 20 llamadas son
+      # unos pocos itinerarios: suficiente para que una ráfaga desafortunada
+      # de un solo pedido no abra el circuito, y poco como para detectar una
+      # caída en segundos. La ventana de 50 le da memoria de ~7 itinerarios.
+      sliding-window-size: 50
+      minimum-number-of-calls: 20
+      # Por encima de la mitad ya no hay duda de que el problema es del
+      # proveedor. Más bajo abriría ante un proveedor parcialmente degradado
+      # que todavía sirve la mitad de las consultas —y media validación buena
+      # vale más que ninguna—; más alto retrasaría la apertura hasta que casi
+      # todo falle.
+      failure-rate-threshold: 50
+      # Apenas por debajo del techo de un intento (1 s): si una resolución
+      # tardó eso, el primer intento ya agotó su timeout. Es el modo de falla
+      # «lento» detectado ANTES de que se convierta en errores, que es la
+      # única forma de que el circuito ayude con una dependencia lenta en
+      # lugar de caída.
+      slow-call-duration-threshold: 900ms
+      slow-call-rate-threshold: 60
+      # Corto a propósito, y el número que más se aparta del default de 60 s
+      # de la librería: el fallback sirve datos que envejecen, así que cada
+      # segundo abierto cuesta frescura, y probar es barato (4 llamadas de
+      # ≤ 1 s). Con 5 s, una caída de un minuto se paga con ~12 rondas de
+      # prueba y la recuperación se detecta en 5 s.
+      wait-duration-in-open-state: 5s
+      # Con 4 llamadas, el umbral del 50 % se decide con 2 fallos; y 4 es el
+      # tamaño de un itinerario típico, así que una sola reserva alcanza para
+      # decidir si el proveedor volvió.
+      permitted-calls-in-half-open-state: 4
+      # La restricción «un circuito abierto no puede ser permanente»: sin
+      # esto, la vuelta a semiabierto depende de que llegue una llamada, y un
+      # circuito que se abrió justo cuando el tráfico cayó se quedaría abierto
+      # hasta el próximo pedido.
+      automatic-transition-from-open-to-half-open: true
+      window-max-age: 10m
   security:
     jwt:
       # ---------------------------------------------------------------------
@@ -302,24 +446,85 @@ reservations:
     # Backoff del consumidor. Vive en la TTL de la cola de espera y no en un
     # sleep del handler: dormir adentro ocupa el canal y frena los mensajes
     # sanos que venían detrás del venenoso.
+    # Primer escalón del backoff del consumidor. Ya no es la espera fija de
+    # todas las vueltas: es el punto de partida de una progresión exponencial
+    # con jitter que el listener escribe como vencimiento de cada mensaje.
+    #
+    # Con la espera fija, todos los mensajes que fallaban juntos volvían
+    # JUNTOS, exactamente 30 s después, contra un destino que seguía caído:
+    # cinco vueltas sincronizadas en 150 s y una caída de más de dos minutos y
+    # medio vaciaba la cola hacia la dead letter en bloque.
     retry-delay: 30s
+    # Techo del backoff del consumidor, y TTL de la cola de espera. Con 5
+    # vueltas la progresión es 30 s, 1 m, 2 m, 4 m, 8 m: casi 16 minutos de
+    # tolerancia en lugar de 150 segundos.
+    max-retry-delay: 10m
     max-retry-rounds: 5
     # Al llenarse, la cola rechaza la publicación en lugar de descartar en
     # silencio: la fila se acumula en el outbox, que es donde se puede ver,
     # medir y drenar.
     queue-max-length: 100000
+    # La cola de ESPERA también tiene cota, con el mismo criterio. Sin ella,
+    # con el destino caído crece sin límite en el broker y la alarma de disco
+    # de RabbitMQ termina frenando las publicaciones del relay: la falta de un
+    # límite en una cola interna se convierte en la caída del broker entero.
+    # Un orden de magnitud menos que la principal, porque es un buffer de
+    # reintentos y no un backlog.
+    retry-queue-max-length: 10000
+    circuit-breaker:
+      # Este circuito NO protege latencia: nadie espera una publicación.
+      # Protege el presupuesto de reintentos del mensaje, que es lo que separa
+      # «la notificación llegó tarde» de «la notificación hay que reenviarla a
+      # mano». Con el circuito abierto el relay no gasta intentos.
+      enabled: ${BROKER_CIRCUIT_ENABLED:true}
+      # Mucho más bajos que los del catálogo: el relay publica poco y en
+      # lotes, así que pedir 20 llamadas mínimas retrasaría la apertura hasta
+      # la mitad del primer lote. Cinco fallos consecutivos de publicación
+      # contra un broker no son ambiguos.
+      sliding-window-size: 20
+      minimum-number-of-calls: 5
+      # Más alto que el resto porque un fallo aislado puede ser una cola llena
+      # por reject-publish de un solo routing key y no el broker entero. Con 5
+      # llamadas mínimas, 3 fallos abren.
+      failure-rate-threshold: 60
+      # Un publisher confirm contra un broker sano es de un dígito en
+      # milisegundos. Por encima de 2 s el broker está bajo control de flujo o
+      # con alarma de disco: sigue contestando, pero el relay no va a drenar
+      # la cola a ese ritmo. El confirm-timeout de 5 s queda como corte duro.
+      slow-call-duration-threshold: 2s
+      slow-call-rate-threshold: 60
+      # El único caso donde el default largo es el correcto: nadie espera, el
+      # mensaje está a salvo en el outbox y PROBAR ES CARO (2 s de connect +
+      # 5 s de confirm por prueba). Además el backoff del outbox ya trabaja en
+      # la escala de 5 s a 5 m, así que 60 s no atrasan nada.
+      wait-duration-in-open-state: 60s
+      # Una publicación de prueba por tick, dos ticks para decidir. La sonda
+      # toma un mensaje AL AZAR y no el más viejo, y no le gasta el intento.
+      permitted-calls-in-half-open-state: 2
+      automatic-transition-from-open-to-half-open: true
+      # Más larga que la de las otras dos: el relay publica poco, así que 20
+      # llamadas pueden abarcar bastante tiempo aun con tráfico normal.
+      window-max-age: 30m
 
   outbox:
     # Relay de los hechos hacia el broker.
     dispatch-enabled: ${OUTBOX_DISPATCH_ENABLED:true}
     dispatch-interval: 5s
     batch-size: 50
-    # Diez y no cinco: con backoff exponencial, cinco intentos se agotan en
-    # pocos minutos y una caída del broker de media hora mandaría a la dead
-    # letter mensajes cuyo fallo era 100% recuperable. El corte real es el
-    # techo de tiempo de abajo; esto es la red por si el backoff queda mal
-    # configurado.
-    max-attempts: 10
+    # Ochenta, y el número tiene una historia. Con diez, el par
+    # (initial-backoff 5s, max-backoff 5m, max-attempts 10) agotaba los diez
+    # intentos en 20 minutos de reloj: el techo de seis horas de abajo NO
+    # participaba nunca. Eran dos números que decían cosas distintas, y el que
+    # mandaba era el que no describía la intención — una caída del broker de
+    # más de 20 minutos mandaba TODO el outbox a FAILED y había que drenar la
+    # dead letter a mano.
+    #
+    # Con 80, los intentos cubren ~6,5 h de reloj y el corte vuelve a ser el
+    # techo de tiempo, que es el que expresa «seis horas reintentando es un
+    # problema que ya tiene dueño». max-attempts vuelve a ser lo que su
+    # comentario decía: la red por si el backoff queda mal configurado. La
+    # aplicación avisa al arrancar si los dos vuelven a divergir.
+    max-attempts: 80
     # El corte que describe de verdad un fallo transitorio largo: seis horas
     # reintentando es un problema que ya tiene dueño y alerta. Manda el que
     # llegue primero entre esto y max-attempts.
@@ -332,6 +537,13 @@ reservations:
     # Cuánto vale un reclamo del relay. Si el proceso muere entre el reclamo y
     # la publicación, al vencer esto el mensaje vuelve a ser elegible: es lo
     # que impide que una caída deje mensajes trabados para siempre.
+    #
+    # Es un PISO, no el valor final: la aplicación lo eleva al peor caso de un
+    # tick (batch-size × confirm-timeout + margen) si éste es mayor. Con lotes
+    # de 50 y confirms de 5 s, ese peor caso son más de cuatro minutos contra
+    # un broker que acepta y no confirma, así que dos minutos dejaban que otra
+    # instancia re-reclamara mensajes todavía en vuelo — y el markFailed
+    # tardío del primero devolvía a PENDING un mensaje ya despachado.
     claim-lease: 2m
     # Purga de los despachados. Sin esto la tabla crece indefinidamente. Los
     # ids deduplicados del consumidor se conservan MÁS que esto: mientras un
@@ -413,7 +625,15 @@ management:
         # dos dead letters. 'outbox' y 'messaging-dlq' son la contracara
         # obligatoria de la métrica que alerta: sin ellas se sabe que algo se
         # perdió y no hay forma de verlo ni de reenviarlo.
-        include: health,info,metrics,outbox,messaging-dlq
+        # 'prometheus' incluido: /actuator/metrics devuelve un medidor por vez
+        # en JSON, que sirve para mirar y no para alertar. Sin un endpoint
+        # raspable no hay forma de responder, sin entrar al servidor, si un
+        # circuito está abierto y hace cuánto — y las alertas con umbral que
+        # el diseño justifica no tienen de dónde salir.
+        #
+        # Lo que se abre es la LECTURA DE MÉTRICAS, no la superficie de la
+        # API: el puerto de gestión sigue sin publicarse hacia afuera.
+        include: health,info,metrics,prometheus,outbox,messaging-dlq
   endpoint:
     health:
       probes:

@@ -76,4 +76,23 @@ public interface EventOutboxPort {
      * ajeno.
      */
     void release(Collection<String> messageIds);
+
+    /**
+     * Reclama <strong>un</strong> mensaje pendiente, elegido al azar, para
+     * usarlo como llamada de prueba contra un destino que se cree caído.
+     *
+     * <p>Al azar y no el más viejo, que es lo que devolvería
+     * {@link #pollPending(int)}. La sonda de un circuito semiabierto se
+     * dispara una y otra vez durante toda la caída, y si siempre tomara el
+     * mismo mensaje —el más antiguo— sería siempre el mismo el que arriesga.
+     * Con un backlog chico, ese mensaje es además el que más importa: el
+     * {@code reservation.created} de la reserva más vieja.
+     *
+     * <p>Quien la use tiene que devolver el mensaje con {@link #release} si la
+     * prueba falla: una sonda no es un intento de entrega y no puede gastar
+     * uno.
+     *
+     * @return una lista de 0 o 1 mensajes
+     */
+    List<OutboxMessage> pollProbe();
 }
