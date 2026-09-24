@@ -702,6 +702,13 @@ management:
       # buckets: el read timeout del proveedor es 2 s, así que todo lo que
       # importa pasa antes.
         reservations.catalog.call: 100ms,250ms,500ms,1s,2s
+      # Y el del itinerario completo. Sin estos buckets, el fanout publica
+      # count/sum/max y NO se puede sacar su p95, que es justamente la mitad de
+      # la comparación que hace útil al medidor de arriba: «una ciudad tardó 6 s»
+      # contra «las ocho tardaron 700 ms» son dos problemas distintos —el
+      # proveedor y nuestro presupuesto— y sin el percentil del itinerario no se
+      # pueden contrastar. El último bucket es el presupuesto del itinerario.
+        reservations.catalog.fanout: 250ms,500ms,1s,2s,4s
   tracing:
     sampling:
       # Todo en local, para poder ver lo que se está construyendo; 10 % en

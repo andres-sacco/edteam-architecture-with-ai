@@ -3,10 +3,17 @@
 # Un Grafana que hay que configurar a mano después de cada 'docker compose
 # down -v' no lo usa nadie: se abre una vez, se ve vacío, y la próxima vez ya
 # no se abre. Esto hace que 'up -d' deje los tres enchufados.
+#
+# Los tres llevan un 'uid' FIJO, y eso no es cosmético: los dashboards de
+# docker/grafana/dashboards/ referencian el datasource por uid. Sin uid
+# explícito, Grafana genera uno aleatorio en cada instalación y los paneles
+# quedan apuntando a un datasource que no existe — que es la forma más común de
+# que un dashboard versionado se abra vacío en la máquina de otro.
 apiVersion: 1
 
 datasources:
   - name: Prometheus
+    uid: prometheus
     type: prometheus
     access: proxy
     url: http://prometheus:9090
@@ -15,6 +22,7 @@ datasources:
       timeInterval: 15s
 
   - name: Loki
+    uid: loki
     type: loki
     access: proxy
     url: http://loki:3100
@@ -34,3 +42,10 @@ datasources:
     type: tempo
     access: proxy
     url: http://tempo:3200
+    jsonData:
+      # El salto de vuelta: de un span a las líneas de log de ese mismo pedido.
+      tracesToLogsV2:
+        datasourceUid: loki
+        filterByTraceID: true
+        spanStartTimeShift: -5m
+        spanEndTimeShift: 5m

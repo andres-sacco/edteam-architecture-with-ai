@@ -170,7 +170,7 @@ public class BudgetedCityCatalogFanout implements CityResolver {
                 budgetExhausted.increment(outOfBudget);
                 log.atWarn()
                         .addKeyValue(LogFields.EVENT, LogFields.CATALOG_FANOUT)
-                        .addKeyValue(LogFields.DEPENDENCY, "api-catalog")
+                        .addKeyValue(LogFields.DEPENDENCY, CachingAirportCatalog.DEPENDENCY)
                         .addKeyValue(LogFields.OUTCOME, "budget_exhausted")
                         .addKeyValue("catalog.budget_ms", budget.toMillis())
                         .addKeyValue("catalog.out_of_budget", outOfBudget)

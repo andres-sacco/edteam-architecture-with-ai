@@ -1,0 +1,368 @@
+{
+  "uid": "reservas-pedido",
+  "title": "Reservas — camino del pedido",
+  "description": "Las seis preguntas del §4 del diseño de observabilidad, de afuera hacia adentro: cuántas reservas, qué porcentaje falla, cuánto tarda el POST, cuánto tarda el catálogo, cuántas respuestas salieron degradadas y cuánto lag tiene el outbox. Los paneles de la fila de arriba son los contadores de las alertas: si uno se pone rojo, hay una regla en docker/prometheus/rules/reservations.yml que dice qué hacer.",
+  "tags": ["reservas", "pedido"],
+  "timezone": "browser",
+  "editable": true,
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "env",
+        "label": "Entorno",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(reservations_operations_total, env)",
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    { "type": "row", "title": "Las seis preguntas", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }, "collapsed": false },
+
+    {
+      "type": "stat",
+      "title": "Reservas por minuto",
+      "description": "Altas que salieron bien, incluidas las degradadas: una reserva creada con un dato de catálogo viejo es una reserva creada.",
+      "gridPos": { "h": 5, "w": 4, "x": 0, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(reservations_operations_total{env=~\"$env\", operation=\"create\", outcome=~\"ok|degraded\"}[5m])) * 60",
+          "legendFormat": "altas/min"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "decimals": 1, "color": { "mode": "fixed", "fixedColor": "text" } },
+        "overrides": []
+      },
+      "options": { "graphMode": "area", "colorMode": "value", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+
+    {
+      "type": "stat",
+      "title": "Escrituras con error",
+      "description": "Alerta 2 (P1) a partir del 2 %. El denominador son sólo las escrituras: un GET que falla no dice lo mismo que un alta que falla.",
+      "gridPos": { "h": 5, "w": 4, "x": 4, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(sum(rate(reservations_operations_total{env=~\"$env\", operation=~\"create|modify|confirm|cancel\", outcome=\"error\"}[10m])) or vector(0)) / clamp_min(sum(rate(reservations_operations_total{env=~\"$env\", operation=~\"create|modify|confirm|cancel\"}[10m])), 0.001)",
+          "legendFormat": "tasa"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 2,
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "red", "value": 0.02 }
+          ] }
+        },
+        "overrides": []
+      },
+      "options": { "graphMode": "area", "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+
+    {
+      "type": "stat",
+      "title": "p95 del POST",
+      "description": "Alerta 3 (P1) a partir de 4 s, que es el objetivo del diseño de resiliencia. El bucket está justo en 4 s, así que esto es una lectura y no una interpolación.",
+      "gridPos": { "h": 5, "w": 4, "x": 8, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_server_requests_seconds_bucket{env=~\"$env\", uri=\"/v1/reservations\", method=\"POST\"}[10m])))",
+          "legendFormat": "p95"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 2,
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "orange", "value": 2 },
+            { "color": "red", "value": 4 }
+          ] }
+        },
+        "overrides": []
+      },
+      "options": { "graphMode": "area", "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+
+    {
+      "type": "stat",
+      "title": "Respuestas degradadas",
+      "description": "Respuestas —no eventos— que salieron con al menos un dato que no vino del origen. No dispara ninguna alerta: una respuesta degradada es una respuesta. Es el panel que se le muestra a producto para decidir si el fallback es aceptable.",
+      "gridPos": { "h": 5, "w": 4, "x": 12, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(sum(rate(reservations_requests_degraded_total{env=~\"$env\"}[10m])) or vector(0)) / clamp_min(sum(rate(reservations_operations_total{env=~\"$env\"}[10m])), 0.001)",
+          "legendFormat": "tasa"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 2,
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 0.05 }
+          ] }
+        },
+        "overrides": []
+      },
+      "options": { "graphMode": "area", "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+
+    {
+      "type": "stat",
+      "title": "Lag del outbox",
+      "description": "Cuánto hace que el hecho más viejo espera salir. Alerta 4 (P1) a los 5 minutos. El −1 no es un valor: es el gauge diciendo que no pudo leer la base, y eso tiene su propia alerta (la 9).",
+      "gridPos": { "h": 5, "w": 4, "x": 16, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "max(reservations_outbox_lag_seconds{env=~\"$env\"})", "legendFormat": "lag" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 0,
+          "mappings": [
+            { "type": "value", "options": { "-1": { "text": "sin dato", "color": "purple", "index": 0 } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "orange", "value": 60 },
+            { "color": "red", "value": 300 }
+          ] }
+        },
+        "overrides": []
+      },
+      "options": { "graphMode": "area", "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+
+    {
+      "type": "stat",
+      "title": "Notificaciones muertas",
+      "description": "Mensajes que NUNCA van a salir sin que alguien los reencole. Alerta 5 (P2) a partir de uno. Se inspeccionan y se reencolan con /actuator/outbox y /actuator/messaging-dlq.",
+      "gridPos": { "h": 5, "w": 4, "x": 20, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "max(reservations_outbox_dead{env=~\"$env\"})", "legendFormat": "productor" },
+        { "refId": "B", "expr": "max(reservations_messaging_dlq_depth{env=~\"$env\"})", "legendFormat": "consumidor" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "mappings": [
+            { "type": "value", "options": { "-1": { "text": "sin dato", "color": "purple", "index": 0 } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "red", "value": 1 }
+          ] }
+        },
+        "overrides": []
+      },
+      "options": { "graphMode": "none", "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+
+    { "type": "row", "title": "Operaciones de negocio", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 6 }, "collapsed": false },
+
+    {
+      "type": "timeseries",
+      "title": "Caudal por operación",
+      "description": "reservations.operations es la métrica en lenguaje de negocio: responde «cuántas altas» y no «cuántos POST a /v1/reservations».",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (operation) (rate(reservations_operations_total{env=~\"$env\"}[5m])) * 60",
+          "legendFormat": "{{operation}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "fillOpacity": 10, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "max"] } }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "Resultado por operación",
+      "description": "El panel que separa lo que http.server.requests mezcla: un 409 por If-Match viejo (conflict) del sistema funcionando, y un 409 por clave de idempotencia reusada (duplicate), que es un contrato roto con el integrador. Lo mismo con los dos 503.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (outcome) (rate(reservations_operations_total{env=~\"$env\"}[5m])) * 60",
+          "legendFormat": "{{outcome}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "fillOpacity": 30, "stacking": { "mode": "normal" }, "showPoints": "never" } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "ok" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }] },
+          { "matcher": { "id": "byName", "options": "error" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }] },
+          { "matcher": { "id": "byName", "options": "degraded" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "yellow" } }] },
+          { "matcher": { "id": "byName", "options": "unavailable" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "max"] } }
+    },
+
+    { "type": "row", "title": "Latencia", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 }, "collapsed": false },
+
+    {
+      "type": "timeseries",
+      "title": "Percentiles del POST y del PUT",
+      "description": "Las dos líneas punteadas son los objetivos del diseño de resiliencia: 4 s el POST y 4,5 s el PUT. No hay alerta para el PUT a propósito: el peor caso medido es 7,1 s y una alerta contra un techo que el sistema no cumple suena siempre.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, method) (rate(http_server_requests_seconds_bucket{env=~\"$env\", uri=~\"/v1/reservations.*\", method=~\"POST|PUT\"}[5m])))",
+          "legendFormat": "p95 {{method}}"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.50, sum by (le, method) (rate(http_server_requests_seconds_bucket{env=~\"$env\", uri=~\"/v1/reservations.*\", method=~\"POST|PUT\"}[5m])))",
+          "legendFormat": "p50 {{method}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "fillOpacity": 0, "showPoints": "never" },
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "red", "value": 4 }
+          ] }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "max"] } }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "Pedidos dentro del objetivo",
+      "description": "Porcentaje de altas que entraron en 4 s. Es una lectura directa del bucket, no una interpolación: por eso los SLO del histograma incluyen 4 s y 4,5 s, que son los objetivos y no números redondos.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(http_server_requests_seconds_bucket{env=~\"$env\", uri=\"/v1/reservations\", method=\"POST\", le=\"4.0\"}[10m])) / clamp_min(sum(rate(http_server_requests_seconds_count{env=~\"$env\", uri=\"/v1/reservations\", method=\"POST\"}[10m])), 0.001)",
+          "legendFormat": "dentro del SLO"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "max": 1,
+          "custom": { "fillOpacity": 20, "showPoints": "never" },
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "red", "value": null },
+            { "color": "green", "value": 0.95 }
+          ] }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+
+    { "type": "row", "title": "Catálogo de ciudades", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 24 }, "collapsed": false },
+
+    {
+      "type": "timeseries",
+      "title": "Latencia por llamada",
+      "description": "Por LLAMADA, no por itinerario. El fanout con 8 ciudades en paralelo esconde si una tardó 6 s o si las ocho tardaron 700 ms: son dos problemas distintos y este panel los separa. Si el p95 de acá sube, es el proveedor; si sube el del fanout y éste no, es nuestro presupuesto.",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 25 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(reservations_catalog_call_seconds_bucket{env=~\"$env\"}[5m])))",
+          "legendFormat": "p95 por ciudad"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(reservations_catalog_fanout_seconds_bucket{env=~\"$env\"}[5m])))",
+          "legendFormat": "p95 del itinerario"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "s", "custom": { "fillOpacity": 0, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "Qué le pasa al catálogo",
+      "description": "kind=integration es el único que NO tiene fallback y el único que necesita una persona ahora: es la alerta 1 (P1). Los demás los absorbe la resiliencia.",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 25 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (kind) (rate(reservations_catalog_errors_total{env=~\"$env\"}[5m])) * 60",
+          "legendFormat": "{{kind}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "fillOpacity": 30, "stacking": { "mode": "normal" }, "showPoints": "never" } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "integration" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["sum"] } }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "Degradación por dependencia",
+      "description": "reservations.degraded.responses cuenta EVENTOS: un POST con tres ciudades servidas del stale lo incrementa tres veces. El panel de arriba cuenta RESPUESTAS. Los dos hacen falta y dicen cosas distintas.",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 25 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (dependency, reason) (rate(reservations_degraded_responses_total{env=~\"$env\"}[5m])) * 60",
+          "legendFormat": "{{dependency}} · {{reason}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (dependency, reason) (rate(reservations_degraded_exhausted_total{env=~\"$env\"}[5m])) * 60",
+          "legendFormat": "SIN fallback · {{dependency}} · {{reason}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "fillOpacity": 20, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["sum"] } }
+    }
+  ]
+}

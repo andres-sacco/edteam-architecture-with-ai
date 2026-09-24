@@ -1,6 +1,7 @@
 package com.edteam.reservations.infrastructure.adapter.out.airport.catalog;
 
 import com.edteam.reservations.application.exception.AirportCatalogUnavailableException;
+import com.edteam.reservations.infrastructure.adapter.out.airport.CachingAirportCatalog;
 import com.edteam.reservations.infrastructure.logging.LogFields;
 import com.edteam.reservations.infrastructure.logging.Throwables;
 import com.edteam.reservations.infrastructure.resilience.FailureClassification;
@@ -69,8 +70,18 @@ public class RetryingCityCatalogClient implements CityCatalogClient {
      */
     public static final String RETRIES = "reservations.catalog.retries";
 
-    /** El valor de {@code dependency} en el log, igual al que sale en {@code X-Degraded}. */
-    private static final String DEPENDENCY = "api-catalog";
+    /**
+     * El valor de {@code dependency} en el log.
+     *
+     * <p>Se toma de {@code CachingAirportCatalog} y no se escribe a mano: es el
+     * mismo nombre que sale en el header {@code X-Degraded} y en las etiquetas
+     * de {@code reservations.degraded.*} y {@code reservations.requests.degraded}.
+     * Dos nombres para la misma dependencia rompen el cruce entre el panel y el
+     * log, que es justamente lo que el esquema viene a habilitar —y fue lo que
+     * pasó: el ejemplo del diseño decía {@code api-catalog} y el código ya venía
+     * publicando {@code airport-catalog}—.
+     */
+    private static final String DEPENDENCY = CachingAirportCatalog.DEPENDENCY;
 
     private final CityCatalogClient delegate;
     private final Retry retry;

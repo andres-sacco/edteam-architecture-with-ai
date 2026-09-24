@@ -16,7 +16,9 @@
 #     ./mvnw spring-boot:run > docker/logs/app.log
 #
 #   Prometheus  http://127.0.0.1:9091   métricas y la pestaña Alerts
-#   Grafana     http://127.0.0.1:3000   paneles (anónimo, sólo lectura, local)
+#   Grafana     http://127.0.0.1:3000   paneles. Se entra sin login como Viewer;
+#                                       para editar, admin / reservations-local
+#                                       (GRAFANA_USERNAME / GRAFANA_PASSWORD)
 #   Loki        http://127.0.0.1:3100   índice de logs
 #   Tempo       http://127.0.0.1:4318   OTLP/HTTP para las trazas
 #
@@ -222,18 +224,53 @@ services:
     ports:
       - "127.0.0.1:3000:3000"
     environment:
-      # Sin login y como Viewer. Es defendible SÓLO porque el puerto está en
-      # loopback: un Grafana sin contraseña alcanzable desde la red es una
-      # consola con acceso de lectura a todo. En cualquier entorno real esto va
-      # detrás del SSO de la organización.
-      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      # Usuario administrador. La credencial viene del entorno, como todas las
+      # demás de este archivo, con un default de desarrollo: rotarla no pide un
+      # commit y el valor no queda en el historial de git.
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USERNAME:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-reservations-local}
+      # Anónimo como Viewer ADEMÁS del login, no en lugar de él.
+      #
+      # Antes estaba con 'GF_AUTH_DISABLE_LOGIN_FORM: true', que saca el
+      # formulario entero: se entraba a mirar y no había forma de iniciar
+      # sesión para explorar, cambiar el rango o guardar una copia de un panel.
+      # Era el peor de los dos mundos — ni cerrado ni usable —.
+      #
+      # Se conserva el anónimo porque es lo que hace que 'up -d' y abrir el
+      # navegador muestre algo sin buscar una contraseña, y es defendible SÓLO
+      # porque el puerto está en loopback: un Grafana sin contraseña alcanzable
+      # desde la red es una consola con acceso de lectura a todo. En cualquier
+      # entorno real esto va detrás del SSO de la organización y el anónimo se
+      # apaga con GRAFANA_ANONYMOUS=false.
+      GF_AUTH_ANONYMOUS_ENABLED: ${GRAFANA_ANONYMOUS:-true}
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
-      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_AUTH_DISABLE_LOGIN_FORM: "false"
+      # Sin esto, cada pestaña nueva arranca en la lista de dashboards vacía.
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/10-camino-del-pedido.json
       GF_ANALYTICS_REPORTING_ENABLED: "false"
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_USERS_DEFAULT_THEME: light
     volumes:
       - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
-      - grafana-data:/var/lib/grafana
+      # Los paneles, versionados. De sólo lectura a propósito: un dashboard
+      # provisionado se cambia editando su JSON y no desde la UI, que es lo que
+      # permite revisar el cambio en un diff.
+      - ./docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      # SIN volumen para la base de Grafana, y es una decisión, no un olvido.
+      #
+      # `GF_SECURITY_ADMIN_PASSWORD` sólo se aplica cuando Grafana INICIALIZA su
+      # grafana.db. Con un volumen persistente, el usuario admin queda creado en
+      # el primer arranque con la contraseña de ese momento y cambiar la
+      # variable después no hace absolutamente nada: la credencial nueva es
+      # inerte y el login falla sin ningún mensaje que explique por qué. Es una
+      # trampa silenciosa, y la pagamos acá antes de que la pague otro.
+      #
+      # El volumen tampoco compraba casi nada: los datasources y los tres
+      # dashboards se provisionan desde archivos, así que lo único que se
+      # perdía eran las preferencias de UI y las copias hechas con «Save as»
+      # —que son justamente el artefacto que envejece mal y que nadie revisa en
+      # un diff—. El histórico de métricas vive en el volumen de Prometheus y
+      # el de logs en el de Loki: ninguno de los dos se toca.
     depends_on:
       - prometheus
       - loki
@@ -305,7 +342,6 @@ volumes:
   # perder el histórico de métricas en cada reinicio hace inútil mirar una
   # ventana de más de cinco minutos, que es cuando esto empieza a servir.
   prometheus-data:
-  grafana-data:
   loki-data:
   tempo-data:
   alloy-data:

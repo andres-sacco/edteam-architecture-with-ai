@@ -17,6 +17,7 @@ import com.edteam.reservations.domain.exception.ReservationAlreadyCancelledExcep
 import com.edteam.reservations.domain.exception.ReservationNotModifiableException;
 import com.edteam.reservations.infrastructure.adapter.in.rest.dto.ApiErrorCode;
 import com.edteam.reservations.infrastructure.adapter.in.rest.dto.FieldErrorResponse;
+import com.edteam.reservations.infrastructure.adapter.out.airport.CachingAirportCatalog;
 import com.edteam.reservations.infrastructure.logging.LogFields;
 import com.edteam.reservations.infrastructure.logging.RequestLogFilter;
 import com.edteam.reservations.infrastructure.logging.Throwables;
@@ -345,7 +346,7 @@ public class ReservationExceptionHandler extends ResponseEntityExceptionHandler 
                                                                   WebRequest request) {
         log.atWarn()
                 .addKeyValue(LogFields.EVENT, LogFields.DEGRADED_EXHAUSTED)
-                .addKeyValue(LogFields.DEPENDENCY, "api-catalog")
+                .addKeyValue(LogFields.DEPENDENCY, CachingAirportCatalog.DEPENDENCY)
                 .addKeyValue(LogFields.OUTCOME, "unavailable")
                 .addKeyValue(LogFields.REASON, Throwables.reasonOf(e))
                 .addKeyValue(LogFields.HTTP_STATUS, HttpStatus.SERVICE_UNAVAILABLE.value())
@@ -371,7 +372,7 @@ public class ReservationExceptionHandler extends ResponseEntityExceptionHandler 
     public ProblemDetail handleCatalogIntegration(AirportCatalogIntegrationException e, WebRequest request) {
         log.atError()
                 .addKeyValue(LogFields.EVENT, LogFields.DEGRADED_EXHAUSTED)
-                .addKeyValue(LogFields.DEPENDENCY, "api-catalog")
+                .addKeyValue(LogFields.DEPENDENCY, CachingAirportCatalog.DEPENDENCY)
                 .addKeyValue(LogFields.OUTCOME, "integration")
                 .addKeyValue(LogFields.EXCEPTION_CLASS, Throwables.rootClassOf(e))
                 .addKeyValue(LogFields.REASON, Throwables.reasonOf(e))

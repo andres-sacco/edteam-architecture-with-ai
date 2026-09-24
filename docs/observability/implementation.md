@@ -170,9 +170,33 @@ verificado por ArchUnit.
 ### `docker/` y `compose.yaml` — se agrega
 
 `prometheus/prometheus.yml`, `prometheus/rules/reservations.yml`,
-`grafana/provisioning/{datasources,dashboards}`, `loki/loki.yml`,
-`tempo/tempo.yml`, `alloy/config.alloy`, `logs/.gitignore`; y cinco servicios
-en el `compose.yaml` detrás del profile `observability`.
+`grafana/provisioning/{datasources,dashboards}`, `grafana/dashboards/*.json`,
+`loki/loki.yml`, `tempo/tempo.yml`, `alloy/config.alloy`, `logs/.gitignore`; y
+cinco servicios en el `compose.yaml` detrás del profile `observability`.
+
+**Tres dashboards provisionados desde archivo**, en la carpeta *Reservas*:
+
+| Archivo | Qué responde |
+|---|---|
+| `10-camino-del-pedido.json` | Las seis preguntas del §4 del diseño. La fila de arriba son los contadores de las alertas |
+| `20-mensajeria.json` | Las cuatro formas de perder una notificación, cada una con su alerta |
+| `30-seguridad-y-logs.json` | Credenciales rechazadas, cuota, secretos de desarrollo, y el buscador por `correlationId` sobre Loki |
+
+Tres decisiones sobre el Grafana local, todas aprendidas rompiéndolo:
+
+- **Los datasources llevan `uid` fijo** (`prometheus`, `loki`, `tempo`). Sin él,
+  Grafana genera uno aleatorio por instalación y los paneles versionados se
+  abren vacíos en la máquina de otro.
+- **La base de Grafana es efímera** (sin volumen). `GF_SECURITY_ADMIN_PASSWORD`
+  sólo se aplica cuando Grafana *inicializa* su `grafana.db`: con un volumen
+  persistente el admin queda creado con la contraseña del primer arranque y
+  cambiar la variable después no hace nada — el login falla sin ningún mensaje
+  que lo explique. Como los datasources y los dashboards se provisionan desde
+  archivos, el volumen sólo guardaba preferencias de UI.
+- **El formulario de login está encendido**, con el anónimo como *Viewer*
+  además. Antes estaba `GF_AUTH_DISABLE_LOGIN_FORM: true`, que saca el
+  formulario entero: se entraba a mirar y no había forma de iniciar sesión para
+  explorar o guardar una copia. Ni cerrado ni usable.
 
 ### `scripts/pii-log-gate.sh` — se agrega
 
@@ -190,9 +214,10 @@ El gate sobre la salida capturada de la suite, como paso de `verify`.
 | `OutboxMetricsTest` | La honestidad de los gauges |
 | `AlertRulesTest` | Que las alertas sean alertas |
 | `CorrelationIdPropagationTest` | El id saliendo del proceso |
+| `GrafanaDashboardsTest` | Que los dashboards carguen y consulten series que existen |
 | `HexagonalArchitectureTest` | +2 reglas: el dominio no loguea; ni el dominio ni la aplicación conocen el backend |
 | `OutboxDispatcherServiceTest` | +3 casos de MDC |
-| `WebSliceConfiguration`, `LogCapture`, `ForbiddenPatterns` | Andamiaje |
+| `WebSliceConfiguration`, `LogCapture`, `ForbiddenPatterns`, `PublishedMetrics` | Andamiaje |
 
 **Tests existentes adaptados** (dos, los dos justificados en el propio archivo):
 
@@ -391,7 +416,8 @@ Grafana. *Verificado: el `traceId` de una línea de log resuelve en
 | **El `DEBUG` de Spring y de Hibernate vuelca modelo y cuerpos de respuesta** (`Writing [ReservationResponse[…userId=ana.perez@example.com…]]`, entidades JPA enteras) | No se arregla escribiendo mejor nuestras líneas: es el framework logueando su propio trabajo. El contrato de la API expone el email como `userId`, así que el cuerpo de la respuesta **es** dato personal | Está mitigado por configuración —`logging.level` deja esos paquetes en su default, que no es `DEBUG`— y el gate lo excluye explícitamente. Cerrarlo de verdad pide o un filtro de Logback que redacte por patrón sobre todos los loggers, o cambiar el contrato para que `userId` sea el id interno |
 | **`reservations.security.metrics-scrape-open`** abre `/actuator/prometheus` sin token | El diseño asume que el scrape «alcanza el 9090 y listo» y la cadena de seguridad también cubre el contexto de gestión. Las alternativas eran un token de larga vida escrito en el repositorio o abrirlo sin condición | Apagado por defecto y defendible **sólo** mientras el puerto de gestión no se publique. En un entorno real, el scrape se autentica: `authorization.credentials_file` en `prometheus.yml` con un token de servicio rotado por el gestor de secretos |
 | **No hay `promtool test rules` con series sintéticas** | `promtool check rules` valida la sintaxis y `AlertRulesTest` el contrato; lo que falta es probar que cada alerta **dispara cuando debe** | Un `docker/prometheus/rules/reservations_test.yml` con series sintéticas por alerta. Es media hora y no cambia ningún código |
-| **No hay dashboards de Grafana versionados** | Un JSON exportado a mano envejece mal y nadie lo revisa en un diff. Lo que este repositorio versiona son las **alertas**, que sí son una decisión | Si los paneles se vuelven un artefacto compartido, generarlos desde código (Grafonnet / Foundation SDK) en vez de exportarlos |
+| **Los dashboards se escriben como JSON a mano** | Es el formato que Grafana provisiona sin ninguna herramienta extra, y con `GrafanaDashboardsTest` cubriendo lo que se rompe en silencio —datasource inexistente, serie inexistente, uid repetido— el riesgo real queda acotado | Si los paneles crecen o se repiten entre servicios, generarlos desde código (Grafonnet / Foundation SDK): el JSON a mano no compone ni se parametriza |
+| **`GrafanaDashboardsTest` no verifica que una consulta DEVUELVA datos** | Eso pide la aplicación levantada y tráfico, que es un test de integración con nueve contenedores | El script de verificación del §7 lo hace a mano contra el stack levantado; automatizarlo sería un IT que levanta el profile entero |
 | **El span `outbox.publish` no cuelga con un span link del pedido original** | El §5.3 lo describe bien —entre el `POST` y el despacho pasan hasta 5 s y el span servidor ya cerró—, y la instrumentación automática no lo hace sola | Agregar `traceparent` como campo del `EventEnvelope` y abrir el span consumidor como hijo remoto. Es un cambio de contrato del mensaje y merece su propio paso |
 | **`instance` como etiqueta común** | Con autoscaling agresivo y pods efímeros es churn de series | Está anotado con su umbral (~50 instancias) y su salida: sacarla de las etiquetas comunes y dejársela al scraper como `pod` |
 | **No hay alerta de latencia para el `PUT`** | Decisión del diseño, y sigue siendo correcta: el objetivo es 4,5 s y el peor caso medido es 7,1 s. Una alerta contra un techo que el sistema no cumple suena siempre | El bucket en 4,5 s ya está en el histograma: la alerta se escribe el día que los 2,6 s de la lectura previa se recorten |
@@ -475,6 +501,23 @@ Revisa los ~1.100 registros propios que la suite escribe contra siete patrones
 —email, JWT, `Authorization: Bearer`, la marca de la clave de cifrado de
 desarrollo, apellidos y documentos de las fixtures, y el `Detail: Key (…)=(…)`
 de PostgreSQL— y falla el build con una sola coincidencia.
+
+### Verificar los dashboards
+
+```bash
+curl -s -u admin:reservations-local 'http://127.0.0.1:3000/api/search?type=dash-db' | jq -r '.[] | "\(.uid)\t\(.title)"'
+```
+
+Tres dashboards en la carpeta *Reservas*. Para mirar no hace falta credencial
+—el anónimo entra como *Viewer*—; la credencial es para explorar y editar.
+
+Y para verificar que los paneles no estén vacíos por una consulta rota, en
+lugar de por un sistema sano, cada consulta se puede correr contra el
+datasource real a través del propio Grafana:
+
+```bash
+curl -s -u admin:reservations-local -G 'http://127.0.0.1:3000/api/datasources/proxy/uid/prometheus/api/v1/query' --data-urlencode 'query=sum by (outcome) (rate(reservations_operations_total[5m]))' | jq '.data.result | length'
+```
 
 ### Verificar las alertas y los buckets
 

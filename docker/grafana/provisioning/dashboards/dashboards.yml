@@ -1,16 +1,25 @@
-# Los paneles se cargan desde /var/lib/grafana/dashboards, que el compose monta
-# vacío a propósito: un dashboard JSON exportado a mano envejece mal y nadie lo
-# revisa en un diff. Lo que este repositorio versiona son las ALERTAS, que sí
-# son una decisión, y las consultas que las alimentan.
+# De dónde salen los paneles.
+#
+# Se cargan desde archivos versionados en docker/grafana/dashboards/, que el
+# compose monta de sólo lectura. La alternativa —armarlos a mano en la UI— hace
+# que se pierdan con el primer 'down -v' y que nadie pueda revisar un cambio en
+# un diff.
+#
+# 'allowUiUpdates: false' es coherente con ese mount de sólo lectura: un
+# dashboard provisionado NO se puede sobrescribir desde la UI. Se puede tocar
+# para mirar, y para conservar un cambio hay dos caminos honestos: «Save as»
+# una copia propia, o editar el JSON del repositorio. Con 'true' el botón de
+# guardar existiría y fallaría contra el volumen de sólo lectura, que es peor.
 apiVersion: 1
 
 providers:
   - name: reservations
     orgId: 1
-    folder: Reservations
+    folder: Reservas
     type: file
     disableDeletion: false
-    allowUiUpdates: true
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
     options:
       path: /var/lib/grafana/dashboards
       foldersFromFilesStructure: false

@@ -1,5 +1,6 @@
 package com.edteam.reservations.observability;
 
+import com.edteam.reservations.support.PublishedMetrics;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -171,30 +172,18 @@ class AlertRulesTest {
     void everyMetricInARuleExists() {
         // El otro lado del hallazgo 17: una regla escrita contra un nombre que
         // el código no publica devuelve vacío y no dispara nunca, y eso se
-        // descubre el día del incidente.
-        Set<String> known = Set.of(
-                "reservations_catalog_errors_total",
-                "reservations_catalog_call_seconds",
-                "reservations_catalog_fanout_seconds",
-                "reservations_operations_total",
-                "reservations_outbox_lag_seconds",
-                "reservations_outbox_dead",
-                "reservations_outbox_metrics_errors_total",
-                "reservations_messaging_dlq_depth",
-                "reservations_messaging_enabled",
-                "reservations_security_auth_failures_total",
-                "reservations_security_pii_dev_key",
-                "reservations_security_jwt_dev_tokens",
-                "http_server_requests_seconds_bucket",
-                "reservations:auth_failures:rate10m");
-
+        // descubre el día del incidente. Ya pasó una vez, con el sufijo de la
+        // unidad del lag del outbox.
+        //
+        // La lista de series vive en PublishedMetrics y la comparten este test
+        // y el de los dashboards: son los dos consumidores de los mismos
+        // nombres, y tenerla dos veces es tenerla desalineada.
         List<String> unknown = new ArrayList<>();
         for (Map<String, Object> rule : alerts) {
-            java.util.regex.Matcher matcher = java.util.regex.Pattern
-                    .compile("\\b(reservations[_:][A-Za-z0-9_:]+|http_server_requests[A-Za-z0-9_]*)\\b")
-                    .matcher(String.valueOf(rule.get("expr")));
+            java.util.regex.Matcher matcher =
+                    PublishedMetrics.REFERENCE.matcher(String.valueOf(rule.get("expr")));
             while (matcher.find()) {
-                if (!known.contains(matcher.group())) {
+                if (!PublishedMetrics.NAMES.contains(matcher.group())) {
                     unknown.add(rule.get("alert") + " → " + matcher.group());
                 }
             }

@@ -1,0 +1,261 @@
+{
+  "uid": "reservas-mensajeria",
+  "title": "Reservas — outbox y consumidor",
+  "description": "El camino asincrónico: del hecho de negocio a la notificación. La fila de arriba son las tres formas que tiene este sistema de perder notificaciones, y las tres tienen alerta: el publicador falso cableado (8), el lag que no baja (4) y los mensajes muertos (5). La cuarta forma —que los gauges mientan— es la alerta 9.",
+  "tags": ["reservas", "mensajeria", "outbox"],
+  "timezone": "browser",
+  "editable": true,
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": { "from": "now-3h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "env",
+        "label": "Entorno",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(reservations_outbox_pending, env)",
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    { "type": "row", "title": "Las cuatro formas de perder una notificación", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }, "collapsed": false },
+
+    {
+      "type": "stat",
+      "title": "¿El publicador real está cableado?",
+      "description": "Alerta 8 (P1) fuera de local. Es la pérdida silenciosa más perfecta del sistema: con el publicador falso el outbox DRENA y marca todo como despachado, así que el lag se queda en cero, la alerta 4 nunca dispara, y ningún pasajero recibe nada.",
+      "gridPos": { "h": 5, "w": 5, "x": 0, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "max(reservations_messaging_enabled{env=~\"$env\"})", "legendFormat": "mensajería" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": {
+              "1": { "text": "sí, publica", "color": "green", "index": 0 },
+              "0": { "text": "NO — se descartan", "color": "red", "index": 1 }
+            } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "text", "value": null }] }
+        },
+        "overrides": []
+      },
+      "options": { "graphMode": "none", "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+
+    {
+      "type": "stat",
+      "title": "Lag del outbox",
+      "description": "El número que importa: cuánto tarda una notificación desde que el hecho ocurrió. Alerta 4 (P1) a los 300 s.",
+      "gridPos": { "h": 5, "w": 5, "x": 5, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "max(reservations_outbox_lag_seconds{env=~\"$env\"})", "legendFormat": "lag" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "mappings": [{ "type": "value", "options": { "-1": { "text": "sin dato", "color": "purple", "index": 0 } } }],
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "orange", "value": 60 },
+            { "color": "red", "value": 300 }
+          ] }
+        },
+        "overrides": []
+      },
+      "options": { "graphMode": "area", "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+
+    {
+      "type": "stat",
+      "title": "Dead letters",
+      "description": "Las dos se miden por separado a propósito: una dice «no pudimos publicar» y la otra «no pudieron procesar». Se resuelven en lugares distintos y con gente distinta. Alerta 5 (P2).",
+      "gridPos": { "h": 5, "w": 5, "x": 10, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "max(reservations_outbox_dead{env=~\"$env\"})", "legendFormat": "productor" },
+        { "refId": "B", "expr": "max(reservations_messaging_dlq_depth{env=~\"$env\"})", "legendFormat": "consumidor" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [{ "type": "value", "options": { "-1": { "text": "sin dato", "color": "purple", "index": 0 } } }],
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "red", "value": 1 }
+          ] }
+        },
+        "overrides": []
+      },
+      "options": { "graphMode": "none", "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+
+    {
+      "type": "stat",
+      "title": "¿Los gauges dicen la verdad?",
+      "description": "Alerta 9 (P2). Mientras este contador crezca, los gauges de esta fila devuelven −1 y las alertas 4 y 5 están CIEGAS. Una métrica ciega es un incidente en sí misma: hay que saberlo explícitamente, no deducirlo de un número que no se mueve.",
+      "gridPos": { "h": 5, "w": 5, "x": 15, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(reservations_outbox_metrics_errors_total{env=~\"$env\"}[10m])) * 600",
+          "legendFormat": "lecturas fallidas"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 1,
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "red", "value": 0.001 }
+          ] }
+        },
+        "overrides": []
+      },
+      "options": { "graphMode": "area", "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+
+    {
+      "type": "stat",
+      "title": "Pendientes",
+      "description": "Cuántos hechos esperan salir. Sin alerta propia: lo que le importa al usuario es hace CUÁNTO espera el más viejo, no cuántos hay.",
+      "gridPos": { "h": 5, "w": 4, "x": 20, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "max(reservations_outbox_pending{env=~\"$env\"})", "legendFormat": "pendientes" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [{ "type": "value", "options": { "-1": { "text": "sin dato", "color": "purple", "index": 0 } } }]
+        },
+        "overrides": []
+      },
+      "options": { "graphMode": "area", "colorMode": "value", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+
+    { "type": "row", "title": "El relay", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 6 }, "collapsed": false },
+
+    {
+      "type": "timeseries",
+      "title": "Caudal del relay",
+      "description": "Encolados contra despachados. Si las dos líneas se separan de forma sostenida, el relay no está dando abasto o el destino no acepta.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(reservations_outbox_enqueued_total{env=~\"$env\"}[5m])) * 60", "legendFormat": "encolados" },
+        { "refId": "B", "expr": "sum(rate(reservations_outbox_dispatched_total{env=~\"$env\"}[5m])) * 60", "legendFormat": "despachados" },
+        { "refId": "C", "expr": "sum by (failure) (rate(reservations_outbox_failed_total{env=~\"$env\"}[5m])) * 60", "legendFormat": "fallidos · {{failure}}" },
+        { "refId": "D", "expr": "sum(rate(reservations_outbox_deferred_total{env=~\"$env\"}[5m])) * 60", "legendFormat": "diferidos" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "fillOpacity": 10, "showPoints": "never" } },
+        "overrides": [
+          { "matcher": { "id": "byRegexp", "options": "fallidos.*permanent" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "max"] } }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "¿La vuelta entra en su intervalo?",
+      "description": "El intervalo del relay es 5 s. Si el p95 de la vuelta se acerca a esa línea, hay que bajar el batch-size ANTES de que dos vueltas se pisen: si no, el síntoma llega como lag y la causa no se distingue de un broker lento.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(reservations_outbox_dispatch_duration_seconds_max{env=~\"$env\"})",
+          "legendFormat": "peor vuelta"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(reservations_outbox_dispatch_duration_seconds_sum{env=~\"$env\"}[5m])) / clamp_min(sum(rate(reservations_outbox_dispatch_duration_seconds_count{env=~\"$env\"}[5m])), 0.001)",
+          "legendFormat": "vuelta promedio"
+        },
+        {
+          "refId": "C",
+          "expr": "sum(rate(reservations_outbox_dispatch_skipped_total{env=~\"$env\"}[5m])) * 60",
+          "legendFormat": "ticks salteados por circuito"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "fillOpacity": 0, "showPoints": "never" },
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "red", "value": 5 }
+          ] }
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "ticks salteados por circuito" }, "properties": [{ "id": "unit", "value": "short" }] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "max"] } }
+    },
+
+    { "type": "row", "title": "El consumidor", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 }, "collapsed": false },
+
+    {
+      "type": "timeseries",
+      "title": "Resultado del consumo",
+      "description": "El tipo está acotado al vocabulario conocido más un centinela 'other': la etiqueta la elegía quien publica, y 200 mensajes con tipo al azar eran 200 series en Prometheus.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (result) (rate(reservations_messaging_consumed_total{env=~\"$env\"}[5m])) * 60",
+          "legendFormat": "{{result}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "fillOpacity": 30, "stacking": { "mode": "normal" }, "showPoints": "never" } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "applied" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }] },
+          { "matcher": { "id": "byName", "options": "duplicate" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } }] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["sum"] } }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "Anomalías del consumidor",
+      "description": "Fuera de orden se aplica igual y se registra: descartarlo sería perder una notificación en silencio. A dead letter va lo que no se arregla insistiendo.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (type) (rate(reservations_messaging_out_of_order_total{env=~\"$env\"}[5m])) * 60",
+          "legendFormat": "fuera de orden · {{type}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (type) (rate(reservations_messaging_dead_lettered_total{env=~\"$env\"}[5m])) * 60",
+          "legendFormat": "a dead letter · {{type}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "fillOpacity": 20, "showPoints": "auto" } },
+        "overrides": [
+          { "matcher": { "id": "byRegexp", "options": "a dead letter.*" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["sum"] } }
+    }
+  ]
+}

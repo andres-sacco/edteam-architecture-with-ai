@@ -1,0 +1,179 @@
+{
+  "uid": "reservas-seguridad",
+  "title": "Reservas — seguridad y logs",
+  "description": "Los eventos del borde que antes no dejaban rastro —el 401, el rechazo por cuota— y el buscador por correlationId, que es el pivote de toda investigación: del header que tiene el pasajero a todas las líneas de su pedido, y de ahí a la traza.",
+  "tags": ["reservas", "seguridad", "logs"],
+  "timezone": "browser",
+  "editable": true,
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "correlationId",
+        "label": "Correlation id",
+        "type": "textbox",
+        "query": "",
+        "current": { "text": "", "value": "" },
+        "description": "El valor del header X-Correlation-Id. Vacío muestra todo."
+      },
+      {
+        "name": "nivel",
+        "label": "Nivel",
+        "type": "custom",
+        "query": "ERROR,WARN,INFO,DEBUG,TRACE",
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": ["ERROR", "WARN"], "value": ["ERROR", "WARN"] }
+      }
+    ]
+  },
+  "panels": [
+    { "type": "row", "title": "El borde", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }, "collapsed": false },
+
+    {
+      "type": "timeseries",
+      "title": "Credenciales rechazadas",
+      "description": "Dos motivos y no uno: 'no_token' es un cliente mal configurado o un escaneo; 'invalid_token' es alguien que tiene algo y lo está probando. Sólo el segundo justifica la alerta 6. El token NUNCA entra al log ni a la etiqueta.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (reason) (rate(reservations_security_auth_failures_total[5m])) * 60",
+          "legendFormat": "{{reason}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "fillOpacity": 20, "showPoints": "never" } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "invalid_token" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "max"] } }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "Cuota superada",
+      "description": "Sin identidad y sin la URI cruda: durante un abuso es el propio abuso el que elige qué se escribe. La decisión de subir o bajar la cuota se toma con este panel; el pivote hacia el cliente concreto es por correlationId en el buscador de abajo.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (method, route) (rate(reservations_security_rate_limited_total[5m])) * 60",
+          "legendFormat": "{{method}} {{route}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(reservations_security_quota_registry_reset_total[5m])) * 60",
+          "legendFormat": "registro vaciado (¡regala una ventana a todos!)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "fillOpacity": 20, "showPoints": "never" } },
+        "overrides": [
+          { "matcher": { "id": "byRegexp", "options": "registro vaciado.*" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["sum"] } }
+    },
+
+    {
+      "type": "stat",
+      "title": "¿Secretos de desarrollo?",
+      "description": "Alerta 7 (P1) fuera de local. Con la clave publicada en el repositorio, los documentos de los pasajeros están cifrados con algo que cualquiera puede leer: es equivalente a tenerlos en claro. Con los tokens de desarrollo, cualquiera que conozca el secreto emite una credencial válida.",
+      "gridPos": { "h": 5, "w": 8, "x": 0, "y": 9 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "max(reservations_security_pii_dev_key)", "legendFormat": "clave de cifrado" },
+        { "refId": "B", "expr": "max(reservations_security_jwt_dev_tokens)", "legendFormat": "tokens" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": {
+              "0": { "text": "de producción", "color": "green", "index": 0 },
+              "1": { "text": "DE DESARROLLO", "color": "red", "index": 1 }
+            } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "text", "value": null }] }
+        },
+        "overrides": []
+      },
+      "options": { "graphMode": "none", "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "WARN y ERROR por minuto",
+      "description": "El panel que el §2 del diseño dice que es «de las primeras cosas que se abre cuando algo anda raro». Un WARN suelto no se mira; se actúa por la tasa. Un ERROR significa que hay una acción humana pendiente: si aparece cien veces por hora, dejó de significar algo.",
+      "gridPos": { "h": 5, "w": 16, "x": 8, "y": 9 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (level) (count_over_time({service=\"flight-reservations\", level=~\"WARN|ERROR\"}[1m]))",
+          "legendFormat": "{{level}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "fillOpacity": 30, "showPoints": "never" } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "ERROR" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }] },
+          { "matcher": { "id": "byName", "options": "WARN" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+
+    { "type": "row", "title": "Los logs", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 14 }, "collapsed": false },
+
+    {
+      "type": "timeseries",
+      "title": "Qué está pasando, por tipo de evento",
+      "description": "'event' es etiqueta de consulta en Loki gracias al esquema JSON: filtrar por tipo de hecho no necesita una expresión regular por formato de mensaje, que es lo que el log de texto obligaba a escribir.",
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 15 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (event) (count_over_time({service=\"flight-reservations\", level=~\"$nivel\"}[1m]))",
+          "legendFormat": "{{event}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "fillOpacity": 30, "stacking": { "mode": "normal" }, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["sum"] } }
+    },
+
+    {
+      "type": "logs",
+      "title": "Seguir un pedido",
+      "description": "Pegá el X-Correlation-Id de la respuesta en la variable de arriba y acá quedan TODAS las líneas de ese pedido: las del hilo de Tomcat, las de los hilos virtuales del catálogo, las del relay y las del consumidor. Cada línea lleva su traceId, y hacer clic en él abre la traza en Tempo.",
+      "gridPos": { "h": 14, "w": 24, "x": 0, "y": 22 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{service=\"flight-reservations\", level=~\"$nivel\"} | json | correlationId =~ `(?i).*$correlationId.*`",
+          "queryType": "range"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": false,
+        "showCommonLabels": false,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": true,
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "sortOrder": "Descending"
+      }
+    }
+  ]
+}
