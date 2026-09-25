@@ -1,0 +1,204 @@
+# =============================================================================
+# flight-reservations — escaneo profundo de dependencias, todas las noches
+# =============================================================================
+#
+# POR QUÉ ESTE ARCHIVO EXISTE
+# El pipeline de CI escanea las dependencias con Trivy sobre el SBOM de
+# CycloneDX. Es exacto y tarda segundos, pero identifica cada dependencia por
+# sus COORDENADAS declaradas (groupId:artifactId:version). Un jar que embebió
+# otro jar adentro —shading, vendoring, un uber-jar de un tercero— es invisible
+# para ese método: las coordenadas dicen una cosa y el contenido es otra.
+#
+# OWASP Dependency-Check identifica por HUELLA (hash, metadatos, nombre del
+# archivo) y sí lo ve. El precio es la base del NVD: cientos de megas que hay
+# que bajar, indexar y mantener al día, más una clave de API. Eso es lo que
+# hacía que el escaneo tardara minutos en cada pull request.
+#
+# La respuesta no fue recortar la cobertura: fue sacar al lento del camino
+# crítico. De noche, contra 'main', nadie está esperando este resultado.
+#
+# SEGUNDA RAZÓN, Y NO ES MENOR
+# El CI corre cuando alguien empuja un commit. Las CVE se publican cuando se
+# publican. Un repositorio que no recibe commits durante dos semanas no se
+# entera de nada en dos semanas, aunque una dependencia suya haya pasado a
+# crítica el martes. Este workflow escanea el 'main' de hoy contra la base de
+# hoy, se haya tocado o no el código.
+
+name: Seguridad (nocturno)
+
+on:
+  schedule:
+    # 03:17 UTC. Los minutos no son decorativos: GitHub encola los cron de
+    # todos los repositorios y los que caen en punto compiten entre sí, con
+    # demoras de media hora o más. Un minuto arbitrario evita esa cola.
+    - cron: '17 3 * * *'
+
+  # A mano, para poder verificarlo sin esperar a mañana. Es también el modo en
+  # que se comprueba el gate: agregar a propósito una dependencia vulnerable,
+  # disparar este workflow y confirmar que pasa a rojo.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  JAVA_VERSION: '21'
+  JAVA_DISTRIBUTION: temurin
+  MAVEN_ARGS: '-B -ntp --errors'
+
+jobs:
+
+  deep-scan:
+    name: OWASP Dependency-Check sobre main
+    runs-on: ubuntu-24.04
+    # Treinta minutos y no diez: la primera corrida, con la caché del NVD
+    # vacía, se baja la base entera. Las siguientes son ~2 minutos. Acá ese
+    # número no le cuesta el tiempo a nadie, que es todo el punto.
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      # Para abrir el issue cuando encuentra algo. Es el único permiso extra y
+      # lo usa un solo paso.
+      issues: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: JDK ${{ env.JAVA_VERSION }} + caché del repositorio Maven
+        uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+          cache: maven
+
+      - name: Fecha de hoy, para la clave de caché
+        id: fecha
+        # La clave de caché NO puede llevar 'github.run_id': es único por
+        # corrida, así que la clave primaria nunca acertaría y cada corrida
+        # escribiría una entrada nueva de gigabytes. Lo que hace falta es una
+        # clave que cambie UNA VEZ POR DÍA — que es el ritmo al que el NVD
+        # publica.
+        run: echo "hoy=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Caché de la base del NVD
+        # Es LA optimización de este trabajo. Sin caché, cada corrida vuelve a
+        # bajar y a indexar la base entera; con caché, sólo pide el delta.
+        #
+        # 'restore-keys' hace que, cuando la clave del día todavía no existe,
+        # se parta de la de ayer en vez de cero. Sin la fecha en la clave, la
+        # caché se congelaría en el primer día y el escaneo miraría una base
+        # vieja dando por buenas dependencias que ya tienen CVE publicada.
+        #
+        # La ruta NO está dentro de '~/.m2/repository' — la fija
+        # '<dataDirectory>' en el pom. Ahí adentro chocaba con la caché que
+        # administra 'setup-java', y dos cachés sobre la misma ruta no se
+        # suman: se desalojan.
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ~/.cache/dependency-check
+          key: nvd-${{ runner.os }}-${{ steps.fecha.outputs.hoy }}
+          restore-keys: |
+            nvd-${{ runner.os }}-
+
+      - name: OWASP Dependency-Check
+        id: depcheck
+        env:
+          # La clave entra por el entorno; el pom la lee con
+          # ${env.NVD_API_KEY}. No se pasa con -D: un -D queda en el argv del
+          # proceso y lo ve cualquier cosa que liste procesos en el runner.
+          #
+          # Es gratis y se pide en https://nvd.nist.gov/developers/request-an-api-key
+          #
+          # Este workflow corre por 'schedule' y por 'workflow_dispatch', los
+          # dos siempre en el contexto del repositorio: no hay forma de que un
+          # fork lo dispare, así que el secreto siempre está disponible acá.
+          # Ése era el otro motivo por el que este escaneo no podía vivir en el
+          # pipeline de los pull requests.
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${NVD_API_KEY}" ]; then
+            echo "::error::Falta el secreto NVD_API_KEY. Sin clave, el NVD limita el ritmo a un punto en que la descarga inicial tarda entre 30 y 60 minutos y falla seguido — este trabajo moriría por timeout sin decir nada útil. Pedila gratis en https://nvd.nist.gov/developers/request-an-api-key y cargala en Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+
+          # 'dependency-check:check' y no una fase del ciclo de vida: el plugin
+          # resuelve el árbol de dependencias por su cuenta y no necesita que
+          # el proyecto esté compilado.
+          #
+          # El umbral (failBuildOnCVSS), los formatos, el directorio de datos,
+          # el archivo de supresiones y los analizadores apagados están en el
+          # pom, no acá: así './mvnw dependency-check:check' a mano da
+          # exactamente el mismo resultado que este workflow.
+          ./mvnw ${MAVEN_ARGS} dependency-check:check
+
+      - name: Resumen en el panel del workflow
+        if: ${{ always() }}
+        run: python3 scripts/ci-security-summary.py target/dependency-check/dependency-check-report.json
+
+      - name: Subir el informe
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dependency-check-report-${{ github.run_id }}
+          # El HTML es el informe navegable, con el detalle por CVE y la
+          # evidencia de por qué Dependency-Check identificó cada jar como lo
+          # identificó — que es lo que hay que mirar para decidir si algo es
+          # un falso positivo.
+          path: target/dependency-check/
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Abrir un issue si encontró algo
+        # Un workflow nocturno que falla en silencio es peor que no tenerlo:
+        # nadie mira la pestaña Actions de un repositorio sano, así que el rojo
+        # de las 03:17 se descubre semanas después. El issue es lo que hace que
+        # este escaneo exista para alguien.
+        #
+        # 'failure()' y no 'always()': sólo cuando el escaneo encontró algo por
+        # encima del umbral o murió intentándolo.
+        if: ${{ failure() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          titulo="Dependency-Check nocturno en rojo — $(date -u +%Y-%m-%d)"
+
+          # La etiqueta tiene que existir antes de usarla: 'gh issue create'
+          # con una etiqueta inexistente falla, y este paso ya corre en el
+          # camino de error. Que el aviso se pierda por una etiqueta faltante
+          # sería la peor forma de perderlo. '--force' la crea o la deja como
+          # está, sin fallar en ninguno de los dos casos.
+          gh label create seguridad --color B60205 --description "Hallazgos del escaneo de dependencias" --force
+
+          # Si ya hay uno abierto del día anterior, se comenta ahí en vez de
+          # abrir uno nuevo. Un issue por noche durante dos semanas es la forma
+          # de que el equipo filtre la etiqueta entera.
+          existente="$(gh issue list --state open --label seguridad --search 'Dependency-Check nocturno in:title' --json number --jq '.[0].number // empty')"
+
+          cuerpo="$(printf '%s\n' \
+            "El escaneo profundo de dependencias contra \`main\` terminó en rojo." \
+            "" \
+            "**Corrida:** ${RUN_URL}" \
+            "" \
+            "El detalle está en el resumen de la corrida y en el informe HTML que quedó" \
+            "como artefacto. Lo que encuentra este escaneo y no encuentra el del pipeline" \
+            "son dependencias identificadas por huella: típicamente un jar embebido dentro" \
+            "de otro." \
+            "" \
+            "**Salida correcta:** subir la versión de la dependencia. Si es un falso" \
+            "positivo —Dependency-Check los produce bastante más seguido que Trivy—," \
+            "suprimirlo en \`owasp-suppressions.xml\` con su motivo y su fecha.")"
+
+          if [ -n "${existente}" ]; then
+            gh issue comment "${existente}" --body "${cuerpo}"
+          else
+            gh issue create --title "${titulo}" --label seguridad --body "${cuerpo}"
+          fi
