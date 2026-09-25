@@ -14,7 +14,6 @@ import java.util.List;
  */
 @Schema(name = "Itinerary", description = "Itinerario reservado, con sus tramos en orden de vuelo.")
 public record ItineraryResponse(
-
         @Schema(description = "Identificador opaco del itinerario.", example = "204")
         String id,
 
@@ -29,6 +28,4 @@ public record ItineraryResponse(
         @Schema(description = "Salida del primer tramo, en UTC.", example = "2027-03-15T22:40:00Z")
         Instant firstDepartureAt,
 
-        @Schema(description = "Tramos en orden de vuelo.")
-        List<SegmentResponse> segments) {
-}
+        @Schema(description = "Tramos en orden de vuelo.") List<SegmentResponse> segments) {}

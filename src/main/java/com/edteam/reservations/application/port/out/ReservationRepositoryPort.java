@@ -9,7 +9,6 @@ import com.edteam.reservations.domain.model.IdempotencyKey;
 import com.edteam.reservations.domain.model.Reservation;
 import com.edteam.reservations.domain.model.ReservationId;
 import com.edteam.reservations.domain.model.UserId;
-
 import java.util.Optional;
 
 /** Persistencia del agregado {@code Reservation}. */

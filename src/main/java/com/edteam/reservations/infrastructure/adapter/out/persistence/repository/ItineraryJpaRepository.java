@@ -11,5 +11,4 @@ import org.springframework.data.jpa.repository.JpaRepository;
  * venderse a distinto precio. Cada reserva nueva crea su itinerario, aunque
  * reutilice los segmentos.
  */
-public interface ItineraryJpaRepository extends JpaRepository<ItineraryJpaEntity, Long> {
-}
+public interface ItineraryJpaRepository extends JpaRepository<ItineraryJpaEntity, Long> {}

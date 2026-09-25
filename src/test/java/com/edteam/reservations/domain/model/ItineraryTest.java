@@ -1,16 +1,15 @@
 package com.edteam.reservations.domain.model;
 
-import com.edteam.reservations.domain.exception.InvalidItineraryException;
-import com.edteam.reservations.support.TestFixtures;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-
-import java.time.Duration;
-import java.util.List;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatNullPointerException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import com.edteam.reservations.domain.exception.InvalidItineraryException;
+import com.edteam.reservations.support.TestFixtures;
+import java.time.Duration;
+import java.util.List;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 
 @DisplayName("Itinerary")
 class ItineraryTest {
@@ -58,9 +57,12 @@ class ItineraryTest {
     @Test
     @DisplayName("rechaza segmentos que no se encadenan")
     void rejectsUnchainedSegments() {
-        assertThatThrownBy(() -> Itinerary.newItinerary(TestFixtures.price(), List.of(
-                TestFixtures.newSegment(TestFixtures.EZE, TestFixtures.SCL, TestFixtures.DEPARTURE),
-                TestFixtures.newSegment(TestFixtures.GRU, TestFixtures.MAD, TestFixtures.CONNECTION_DEPARTURE))))
+        assertThatThrownBy(() -> Itinerary.newItinerary(
+                        TestFixtures.price(),
+                        List.of(
+                                TestFixtures.newSegment(TestFixtures.EZE, TestFixtures.SCL, TestFixtures.DEPARTURE),
+                                TestFixtures.newSegment(
+                                        TestFixtures.GRU, TestFixtures.MAD, TestFixtures.CONNECTION_DEPARTURE))))
                 .isInstanceOf(InvalidItineraryException.class)
                 .hasMessageContaining("no se encadenan");
     }
@@ -68,10 +70,12 @@ class ItineraryTest {
     @Test
     @DisplayName("acepta un ida y vuelta, que también se encadena")
     void acceptsRoundTrip() {
-        Itinerary roundTrip = Itinerary.newItinerary(TestFixtures.price(), List.of(
-                TestFixtures.newSegment(TestFixtures.EZE, TestFixtures.SCL, TestFixtures.DEPARTURE),
-                TestFixtures.newSegment(TestFixtures.SCL, TestFixtures.EZE,
-                        TestFixtures.DEPARTURE.plus(Duration.ofDays(7)))));
+        Itinerary roundTrip = Itinerary.newItinerary(
+                TestFixtures.price(),
+                List.of(
+                        TestFixtures.newSegment(TestFixtures.EZE, TestFixtures.SCL, TestFixtures.DEPARTURE),
+                        TestFixtures.newSegment(
+                                TestFixtures.SCL, TestFixtures.EZE, TestFixtures.DEPARTURE.plus(Duration.ofDays(7)))));
 
         assertThat(roundTrip.origin()).isEqualTo(TestFixtures.EZE);
         assertThat(roundTrip.destination()).isEqualTo(TestFixtures.EZE);
@@ -80,9 +84,12 @@ class ItineraryTest {
     @Test
     @DisplayName("rechaza segmentos fuera de orden cronológico")
     void rejectsSegmentsOutOfChronologicalOrder() {
-        assertThatThrownBy(() -> Itinerary.newItinerary(TestFixtures.price(), List.of(
-                TestFixtures.newSegment(TestFixtures.EZE, TestFixtures.SCL, TestFixtures.CONNECTION_DEPARTURE),
-                TestFixtures.newSegment(TestFixtures.SCL, TestFixtures.MAD, TestFixtures.DEPARTURE))))
+        assertThatThrownBy(() -> Itinerary.newItinerary(
+                        TestFixtures.price(),
+                        List.of(
+                                TestFixtures.newSegment(
+                                        TestFixtures.EZE, TestFixtures.SCL, TestFixtures.CONNECTION_DEPARTURE),
+                                TestFixtures.newSegment(TestFixtures.SCL, TestFixtures.MAD, TestFixtures.DEPARTURE))))
                 .isInstanceOf(InvalidItineraryException.class)
                 .hasMessageContaining("orden cronológico");
     }
@@ -90,8 +97,8 @@ class ItineraryTest {
     @Test
     @DisplayName("rechaza el mismo segmento repetido")
     void rejectsDuplicateSegments() {
-        assertThatThrownBy(() -> Itinerary.newItinerary(TestFixtures.price(), List.of(
-                TestFixtures.directSegment(), TestFixtures.directSegment())))
+        assertThatThrownBy(() -> Itinerary.newItinerary(
+                        TestFixtures.price(), List.of(TestFixtures.directSegment(), TestFixtures.directSegment())))
                 .isInstanceOf(InvalidItineraryException.class)
                 .hasMessageContaining("más de una vez");
     }
@@ -101,8 +108,7 @@ class ItineraryTest {
     void rejectsNulls() {
         assertThatNullPointerException()
                 .isThrownBy(() -> Itinerary.newItinerary(null, List.of(TestFixtures.directSegment())));
-        assertThatNullPointerException()
-                .isThrownBy(() -> Itinerary.newItinerary(TestFixtures.price(), null));
+        assertThatNullPointerException().isThrownBy(() -> Itinerary.newItinerary(TestFixtures.price(), null));
         assertThatNullPointerException()
                 .isThrownBy(() -> new Itinerary(null, TestFixtures.price(), List.of(TestFixtures.directSegment())));
     }
@@ -115,7 +121,8 @@ class ItineraryTest {
         assertThat(itinerary.hasDeparted(TestFixtures.NOW)).isFalse();
         assertThat(itinerary.hasDeparted(TestFixtures.DEPARTURE)).isTrue();
         // Ya salió el primer tramo aunque falte la escala.
-        assertThat(itinerary.hasDeparted(TestFixtures.CONNECTION_DEPARTURE.minusSeconds(1))).isTrue();
+        assertThat(itinerary.hasDeparted(TestFixtures.CONNECTION_DEPARTURE.minusSeconds(1)))
+                .isTrue();
     }
 
     @Test
@@ -123,7 +130,6 @@ class ItineraryTest {
     void segmentsAreImmutable() {
         Itinerary itinerary = TestFixtures.newItinerary();
 
-        assertThatThrownBy(() -> itinerary.segments().clear())
-                .isInstanceOf(UnsupportedOperationException.class);
+        assertThatThrownBy(() -> itinerary.segments().clear()).isInstanceOf(UnsupportedOperationException.class);
     }
 }

@@ -1,5 +1,14 @@
 package com.edteam.reservations;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
 import com.edteam.reservations.infrastructure.cache.CacheStore;
 import com.edteam.reservations.infrastructure.cache.MeteredCacheStore;
 import com.edteam.reservations.support.AbstractPostgresIT;
@@ -8,6 +17,10 @@ import com.edteam.reservations.support.TestFixtures;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tags;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -19,20 +32,6 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
-
-import java.time.Duration;
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
-import java.util.UUID;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
  * El cache, enchufado: contexto real, PostgreSQL real, HTTP real y
@@ -99,13 +98,18 @@ class CacheIT extends AbstractPostgresIT {
         mockMvc.perform(get("/v1/reservations/{id}", id).with(asUser()).header(HttpHeaders.IF_NONE_MATCH, "\"0\""))
                 .andExpect(status().isNotModified());
 
-        assertThat(meterRegistry.get(MeteredCacheStore.GETS)
-                .tags(Tags.of("cache", "reservation-version", "result", "hit"))
-                .counter().count())
+        assertThat(meterRegistry
+                        .get(MeteredCacheStore.GETS)
+                        .tags(Tags.of("cache", "reservation-version", "result", "hit"))
+                        .counter()
+                        .count())
                 .as("hits del cache de versiones")
                 .isPositive();
-        assertThat(meterRegistry.get(MeteredCacheStore.SIZE)
-                .tags(Tags.of("cache", "reservation-version")).gauge().value())
+        assertThat(meterRegistry
+                        .get(MeteredCacheStore.SIZE)
+                        .tags(Tags.of("cache", "reservation-version"))
+                        .gauge()
+                        .value())
                 .as("entradas vivas")
                 .isPositive();
 
@@ -122,8 +126,8 @@ class CacheIT extends AbstractPostgresIT {
         mockMvc.perform(get("/v1/reservations/{id}", id).with(asUser()))
                 .andExpect(status().isOk())
                 .andExpect(header().string("ETag", "\"0\""))
-                .andExpect(header().string(HttpHeaders.CACHE_CONTROL,
-                        org.hamcrest.Matchers.containsString("no-store")));
+                .andExpect(
+                        header().string(HttpHeaders.CACHE_CONTROL, org.hamcrest.Matchers.containsString("no-store")));
 
         mockMvc.perform(get("/v1/reservations/{id}", id).with(asUser()).header(HttpHeaders.IF_NONE_MATCH, "\"0\""))
                 .andExpect(status().isNotModified())
@@ -140,7 +144,8 @@ class CacheIT extends AbstractPostgresIT {
         mockMvc.perform(get("/v1/reservations/{id}", id).with(asUser()).header(HttpHeaders.IF_NONE_MATCH, "\"0\""))
                 .andExpect(status().isNotModified());
 
-        mockMvc.perform(put("/v1/reservations/{id}", id).with(asUser())
+        mockMvc.perform(put("/v1/reservations/{id}", id)
+                        .with(asUser())
                         .header(HttpHeaders.IF_MATCH, "\"0\"")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(updateBody(departure)))
@@ -154,7 +159,8 @@ class CacheIT extends AbstractPostgresIT {
                 .andExpect(status().isOk())
                 .andExpect(header().string("ETag", "\"1\""));
 
-        mockMvc.perform(put("/v1/reservations/{id}", id).with(asUser())
+        mockMvc.perform(put("/v1/reservations/{id}", id)
+                        .with(asUser())
                         .header(HttpHeaders.IF_MATCH, "\"1\"")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(updateBody(departure.plus(Duration.ofDays(1)))))
@@ -182,8 +188,8 @@ class CacheIT extends AbstractPostgresIT {
         mockMvc.perform(get("/v1/reservations").with(asUser()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items", org.hamcrest.Matchers.hasSize(2)))
-                .andExpect(header().string(HttpHeaders.CACHE_CONTROL,
-                        org.hamcrest.Matchers.containsString("no-store")));
+                .andExpect(
+                        header().string(HttpHeaders.CACHE_CONTROL, org.hamcrest.Matchers.containsString("no-store")));
     }
 
     @Test
@@ -197,18 +203,22 @@ class CacheIT extends AbstractPostgresIT {
         // total, un long. Se verifica desde afuera igual, porque es la
         // restricción que no puede romperse sin que nadie se entere.
         assertThat(context.getBean("reservationVersionCacheStore", CacheStore.class)
-                .get("rsv:ver:" + id))
+                        .get("rsv:ver:" + id))
                 .hasValueSatisfying(value -> assertThat(value).matches("\\d+"));
     }
 
     private String createReservation() throws Exception {
-        MvcResult created = mockMvc.perform(post("/v1/reservations").with(asUser())
+        MvcResult created = mockMvc.perform(post("/v1/reservations")
+                        .with(asUser())
                         .header(IDEMPOTENCY_KEY_HEADER, UUID.randomUUID().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(createBody(departure)))
                 .andExpect(status().isCreated())
                 .andReturn();
-        return objectMapper.readTree(created.getResponse().getContentAsString()).get("id").asText();
+        return objectMapper
+                .readTree(created.getResponse().getContentAsString())
+                .get("id")
+                .asText();
     }
 
     /**
@@ -220,8 +230,7 @@ class CacheIT extends AbstractPostgresIT {
      */
     private static RequestPostProcessor asUser() {
         return request -> {
-            request.addHeader(HttpHeaders.AUTHORIZATION,
-                    SecurityTestSupport.bearer(TestFixtures.owner()));
+            request.addHeader(HttpHeaders.AUTHORIZATION, SecurityTestSupport.bearer(TestFixtures.owner()));
             return request;
         };
     }

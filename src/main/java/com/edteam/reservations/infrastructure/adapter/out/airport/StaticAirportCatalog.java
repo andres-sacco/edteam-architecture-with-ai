@@ -31,11 +31,26 @@ public class StaticAirportCatalog implements CityResolver {
     public static StaticAirportCatalog withDefaults() {
         return new StaticAirportCatalog(Set.copyOf(Arrays.asList(
                 // Ciudades que resuelve la API de catálogo.
-                "BUE", "MIA", "SCL", "NYC", "PAR", "LON",
+                "BUE",
+                "MIA",
+                "SCL",
+                "NYC",
+                "PAR",
+                "LON",
                 // Códigos previos al catálogo: sirven para levantar y probar.
-                "EZE", "AEP", "COR", "MDZ", "BRC",
-                "GRU", "MVD", "LIM", "BOG",
-                "MEX", "JFK", "MAD", "BCN")));
+                "EZE",
+                "AEP",
+                "COR",
+                "MDZ",
+                "BRC",
+                "GRU",
+                "MVD",
+                "LIM",
+                "BOG",
+                "MEX",
+                "JFK",
+                "MAD",
+                "BCN")));
     }
 
     @Override

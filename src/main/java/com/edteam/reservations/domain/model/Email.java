@@ -1,7 +1,6 @@
 package com.edteam.reservations.domain.model;
 
 import com.edteam.reservations.domain.exception.InvalidUserException;
-
 import java.util.Locale;
 import java.util.regex.Pattern;
 

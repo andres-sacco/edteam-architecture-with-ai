@@ -11,7 +11,6 @@ import com.edteam.reservations.domain.model.ReservationStatus;
  * vive acá, del lado de la infraestructura.
  */
 public enum ReservationStatusJpa {
-
     PENDIENTE(ReservationStatus.PENDING),
     CONFIRMADA(ReservationStatus.CONFIRMED),
     CANCELADA(ReservationStatus.CANCELLED);

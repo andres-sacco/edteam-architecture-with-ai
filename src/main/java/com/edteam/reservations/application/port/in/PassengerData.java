@@ -8,5 +8,4 @@ import java.time.LocalDate;
  * @param documentNumber puede venir nulo: el modelo de datos admite pasajeros
  *                       sin documento cargado
  */
-public record PassengerData(String firstName, String lastName, LocalDate birthDate, String documentNumber) {
-}
+public record PassengerData(String firstName, String lastName, LocalDate birthDate, String documentNumber) {}

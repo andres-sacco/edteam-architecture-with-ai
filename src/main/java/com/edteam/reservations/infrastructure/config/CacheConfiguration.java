@@ -12,17 +12,16 @@ import com.edteam.reservations.infrastructure.cache.MeteredCacheStore;
 import com.edteam.reservations.infrastructure.cache.RedisCacheStore;
 import com.edteam.reservations.infrastructure.resilience.Circuit;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.time.Clock;
+import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.context.annotation.Bean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
 import org.springframework.data.redis.core.StringRedisTemplate;
-
-import java.time.Clock;
-import java.util.function.Consumer;
 
 /**
  * Cableado del cache: dónde vive y quién lo usa.
@@ -59,43 +58,53 @@ public class CacheConfiguration {
 
     /** Nombres de los caches: son la etiqueta {@code cache} de las métricas. */
     public static final String CITY_CATALOG_CACHE = "city-catalog";
+
     public static final String RESERVATION_COUNT_CACHE = "reservation-count";
     public static final String RESERVATION_VERSION_CACHE = "reservation-version";
 
     /** Almacén del maestro de ciudades (P0). */
     @Bean
-    public CacheStore cityCatalogCacheStore(CacheProperties properties,
-                                            ObjectProvider<StringRedisTemplate> redis,
-                                            MeterRegistry registry,
-                                            Circuit redisCircuit,
-                                            Clock clock) {
+    public CacheStore cityCatalogCacheStore(
+            CacheProperties properties,
+            ObjectProvider<StringRedisTemplate> redis,
+            MeterRegistry registry,
+            Circuit redisCircuit,
+            Clock clock) {
         // El único cache con fallback local en caliente, y sólo para el
         // prefijo 'catalog:city:'. Ver CircuitBreakingCacheStore: las claves
         // de versión NO pueden caer a memoria porque se invalidan
         // activamente, y una copia por instancia daría ETags incoherentes.
-        InMemoryCacheStore cityFallback =
-                new InMemoryCacheStore(clock, properties.cityFallbackMaxEntries());
-        return cacheStore(CITY_CATALOG_CACHE, properties, redis, registry, redisCircuit, clock,
-                cityFallback, CacheKeys.CITY_PREFIX);
+        InMemoryCacheStore cityFallback = new InMemoryCacheStore(clock, properties.cityFallbackMaxEntries());
+        return cacheStore(
+                CITY_CATALOG_CACHE,
+                properties,
+                redis,
+                registry,
+                redisCircuit,
+                clock,
+                cityFallback,
+                CacheKeys.CITY_PREFIX);
     }
 
     /** Almacén del total del listado (P1). */
     @Bean
-    public CacheStore reservationCountCacheStore(CacheProperties properties,
-                                                 ObjectProvider<StringRedisTemplate> redis,
-                                                 MeterRegistry registry,
-                                                 Circuit redisCircuit,
-                                                 Clock clock) {
+    public CacheStore reservationCountCacheStore(
+            CacheProperties properties,
+            ObjectProvider<StringRedisTemplate> redis,
+            MeterRegistry registry,
+            Circuit redisCircuit,
+            Clock clock) {
         return cacheStore(RESERVATION_COUNT_CACHE, properties, redis, registry, redisCircuit, clock, null, null);
     }
 
     /** Almacén de la versión de una reserva (P2). */
     @Bean
-    public CacheStore reservationVersionCacheStore(CacheProperties properties,
-                                                   ObjectProvider<StringRedisTemplate> redis,
-                                                   MeterRegistry registry,
-                                                   Circuit redisCircuit,
-                                                   Clock clock) {
+    public CacheStore reservationVersionCacheStore(
+            CacheProperties properties,
+            ObjectProvider<StringRedisTemplate> redis,
+            MeterRegistry registry,
+            Circuit redisCircuit,
+            Clock clock) {
         return cacheStore(RESERVATION_VERSION_CACHE, properties, redis, registry, redisCircuit, clock, null, null);
     }
 
@@ -107,17 +116,16 @@ public class CacheConfiguration {
      */
     @Bean
     @Primary
-    public ReservationSearchQuery cachingReservationSearchQuery(ReservationSearchJpaQuery delegate,
-                                                                CacheStore reservationCountCacheStore,
-                                                                CacheProperties properties) {
+    public ReservationSearchQuery cachingReservationSearchQuery(
+            ReservationSearchJpaQuery delegate, CacheStore reservationCountCacheStore, CacheProperties properties) {
         return new CachingReservationSearchQuery(
                 delegate, reservationCountCacheStore, properties.reservationCountTtl());
     }
 
     /** Cache de versiones que usa el adaptador REST para responder {@code 304}. */
     @Bean
-    public ReservationVersionCache reservationVersionCache(CacheStore reservationVersionCacheStore,
-                                                           CacheProperties properties) {
+    public ReservationVersionCache reservationVersionCache(
+            CacheStore reservationVersionCacheStore, CacheProperties properties) {
         return new ReservationVersionCache(reservationVersionCacheStore, properties.reservationVersionTtl());
     }
 
@@ -136,14 +144,15 @@ public class CacheConfiguration {
      * de degradación — que es la diferencia entre «no pasa nada» y «no nos
      * estamos enterando».
      */
-    private static CacheStore cacheStore(String name,
-                                         CacheProperties properties,
-                                         ObjectProvider<StringRedisTemplate> redis,
-                                         MeterRegistry registry,
-                                         Circuit redisCircuit,
-                                         Clock clock,
-                                         CacheStore localFallback,
-                                         String localPrefix) {
+    private static CacheStore cacheStore(
+            String name,
+            CacheProperties properties,
+            ObjectProvider<StringRedisTemplate> redis,
+            MeterRegistry registry,
+            Circuit redisCircuit,
+            Clock clock,
+            CacheStore localFallback,
+            String localPrefix) {
         Consumer<String> failures = MeteredCacheStore.failureMeter(name, registry);
         CacheStore store = backingStore(name, properties, redis, clock);
         if (store instanceof RedisCacheStore) {
@@ -152,21 +161,22 @@ public class CacheConfiguration {
         return new MeteredCacheStore(store, name, registry);
     }
 
-    private static CacheStore backingStore(String name,
-                                           CacheProperties properties,
-                                           ObjectProvider<StringRedisTemplate> redis,
-                                           Clock clock) {
+    private static CacheStore backingStore(
+            String name, CacheProperties properties, ObjectProvider<StringRedisTemplate> redis, Clock clock) {
         if (!properties.redis().enabled()) {
-            log.info("Cache '{}': en memoria, hasta {} entradas "
-                            + "(no hay 'reservations.cache.redis.enabled')",
-                    name, properties.maxEntries());
+            log.info(
+                    "Cache '{}': en memoria, hasta {} entradas " + "(no hay 'reservations.cache.redis.enabled')",
+                    name,
+                    properties.maxEntries());
             return new InMemoryCacheStore(clock, properties.maxEntries());
         }
 
         StringRedisTemplate template = redis.getIfAvailable();
         if (template == null) {
-            log.warn("Cache '{}': se pidió Redis pero no hay StringRedisTemplate en el contexto; "
-                    + "se usa el cache en memoria", name);
+            log.warn(
+                    "Cache '{}': se pidió Redis pero no hay StringRedisTemplate en el contexto; "
+                            + "se usa el cache en memoria",
+                    name);
             return new InMemoryCacheStore(clock, properties.maxEntries());
         }
 

@@ -1,7 +1,11 @@
 package com.edteam.reservations.infrastructure.adapter.in.messaging;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
 import ch.qos.logback.classic.Level;
-import com.edteam.reservations.application.exception.UnprocessableEventException;
 import com.edteam.reservations.application.port.in.EventProcessingOutcome;
 import com.edteam.reservations.application.port.in.InboundEvent;
 import com.edteam.reservations.application.port.in.ProcessReservationEventUseCase;
@@ -11,6 +15,11 @@ import com.edteam.reservations.support.LogCapture;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ThreadLocalRandom;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -18,18 +27,6 @@ import org.junit.jupiter.api.Test;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.core.MessageProperties;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
-
-import java.nio.charset.StandardCharsets;
-import java.time.Duration;
-import java.util.List;
-import java.util.Set;
-import java.util.concurrent.ThreadLocalRandom;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 /**
  * Los tres hallazgos del consumidor: el ERROR sin correlación, el
@@ -50,9 +47,13 @@ class ReservationEventListenerObservabilityTest {
         useCase = mock(ProcessReservationEventUseCase.class);
         registry = new SimpleMeterRegistry();
         listener = new ReservationEventListener(
-                useCase, new InboundEnvelopeParser(new ObjectMapper()),
-                mock(RabbitTemplate.class), 3,
-                Duration.ofSeconds(1), Duration.ofSeconds(10), registry);
+                useCase,
+                new InboundEnvelopeParser(new ObjectMapper()),
+                mock(RabbitTemplate.class),
+                3,
+                Duration.ofSeconds(1),
+                Duration.ofSeconds(10),
+                registry);
         logs = LogCapture.startAt(Level.DEBUG);
     }
 
@@ -118,19 +119,18 @@ class ReservationEventListenerObservabilityTest {
         // con los identificadores» y la línea siguiente escribía `e.toString()`
         // entero, que en un error de JPA o de PostgreSQL trae los valores
         // enlazados — o sea, el payload que el comentario decía excluir.
-        when(useCase.process(any(InboundEvent.class))).thenThrow(
-                new IllegalStateException("no se pudo insertar Detail: Key (email)=(ana.perez@example.com)"));
+        when(useCase.process(any(InboundEvent.class)))
+                .thenThrow(
+                        new IllegalStateException("no se pudo insertar Detail: Key (email)=(ana.perez@example.com)"));
 
         listener.onMessage(envelope("reservation.created"));
 
-        assertThat(logs.withEvent(LogFields.CONSUMER_RETRY))
-                .hasSize(1)
-                .allSatisfy(captured -> {
-                    assertThat(captured.field(LogFields.EXCEPTION_CLASS)).isEqualTo("IllegalStateException");
-                    assertThat(ForbiddenPatterns.firstMatch(captured.allText()))
-                            .withFailMessage("El fallo transitorio del consumidor volvió a filtrar un dato")
-                            .isEmpty();
-                });
+        assertThat(logs.withEvent(LogFields.CONSUMER_RETRY)).hasSize(1).allSatisfy(captured -> {
+            assertThat(captured.field(LogFields.EXCEPTION_CLASS)).isEqualTo("IllegalStateException");
+            assertThat(ForbiddenPatterns.firstMatch(captured.allText()))
+                    .withFailMessage("El fallo transitorio del consumidor volvió a filtrar un dato")
+                    .isEmpty();
+        });
     }
 
     @Test
@@ -151,8 +151,9 @@ class ReservationEventListenerObservabilityTest {
                 .collect(java.util.stream.Collectors.toSet());
 
         assertThat(types)
-                .withFailMessage("200 mensajes con tipo al azar crearon %d series: "
-                        + "la etiqueta la elige quien publica", types.size())
+                .withFailMessage(
+                        "200 mensajes con tipo al azar crearon %d series: " + "la etiqueta la elige quien publica",
+                        types.size())
                 .containsExactly("other");
     }
 

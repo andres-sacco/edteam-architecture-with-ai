@@ -29,19 +29,18 @@ import com.edteam.reservations.infrastructure.adapter.out.persistence.repository
 import com.edteam.reservations.infrastructure.adapter.out.persistence.repository.ReservationJpaRepository;
 import com.edteam.reservations.infrastructure.adapter.out.persistence.repository.SegmentJpaRepository;
 import com.edteam.reservations.infrastructure.adapter.out.persistence.repository.UserJpaRepository;
-import org.hibernate.exception.ConstraintViolationException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.dao.OptimisticLockingFailureException;
-import org.springframework.stereotype.Repository;
-
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import org.hibernate.exception.ConstraintViolationException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.stereotype.Repository;
 
 /**
  * Adaptador de salida que implementa {@link ReservationRepositoryPort} sobre
@@ -84,6 +83,7 @@ public class ReservationPersistenceAdapter implements ReservationRepositoryPort 
 
     /** Nombres de constraints del modelo de datos, usados para traducir errores. */
     private static final String UQ_IDEMPOTENCY_KEY = "uq_reserva_usuario_idempotency_key";
+
     private static final String FK_RESERVA_USUARIO = "fk_reserva_usuario";
 
     private final ReservationJpaRepository reservationRepository;
@@ -97,16 +97,17 @@ public class ReservationPersistenceAdapter implements ReservationRepositoryPort 
     private final SegmentMapper segmentMapper;
     private final PassengerMapper passengerMapper;
 
-    public ReservationPersistenceAdapter(ReservationJpaRepository reservationRepository,
-                                         ReservationSearchQuery reservationSearch,
-                                         ItineraryJpaRepository itineraryRepository,
-                                         SegmentJpaRepository segmentRepository,
-                                         PassengerJpaRepository passengerRepository,
-                                         UserJpaRepository userRepository,
-                                         ReservationMapper reservationMapper,
-                                         ItineraryMapper itineraryMapper,
-                                         SegmentMapper segmentMapper,
-                                         PassengerMapper passengerMapper) {
+    public ReservationPersistenceAdapter(
+            ReservationJpaRepository reservationRepository,
+            ReservationSearchQuery reservationSearch,
+            ItineraryJpaRepository itineraryRepository,
+            SegmentJpaRepository segmentRepository,
+            PassengerJpaRepository passengerRepository,
+            UserJpaRepository userRepository,
+            ReservationMapper reservationMapper,
+            ItineraryMapper itineraryMapper,
+            SegmentMapper segmentMapper,
+            PassengerMapper passengerMapper) {
         this.reservationRepository = Objects.requireNonNull(reservationRepository);
         this.reservationSearch = Objects.requireNonNull(reservationSearch);
         this.itineraryRepository = Objects.requireNonNull(itineraryRepository);
@@ -181,14 +182,14 @@ public class ReservationPersistenceAdapter implements ReservationRepositoryPort 
 
     private Reservation insert(Reservation reservation) {
         ItineraryJpaEntity itinerary = persistItinerary(reservation.itinerary());
-        List<PassengerJpaEntity> passengers = reservation.passengers().stream()
-                .map(this::resolvePassenger)
-                .toList();
+        List<PassengerJpaEntity> passengers =
+                reservation.passengers().stream().map(this::resolvePassenger).toList();
 
         // Referencia perezosa: para escribir la clave foránea alcanza con el
         // id, que el caso de uso ya resolvió al dar de alta o encontrar al
         // usuario. No hace falta traer la fila.
-        UserJpaEntity user = userRepository.getReferenceById(reservation.userId().value());
+        UserJpaEntity user =
+                userRepository.getReferenceById(reservation.userId().value());
 
         ReservationJpaEntity entity = reservationMapper.toNewEntity(reservation, user, itinerary, passengers);
         try {
@@ -201,7 +202,8 @@ public class ReservationPersistenceAdapter implements ReservationRepositoryPort 
 
     private Reservation update(Reservation reservation) {
         ReservationId reservationId = reservation.requireId();
-        ReservationJpaEntity entity = reservationRepository.findById(reservationId.value())
+        ReservationJpaEntity entity = reservationRepository
+                .findById(reservationId.value())
                 .orElseThrow(() -> new ReservationNotFoundException(reservationId));
 
         // Verificación explícita: detecta el conflicto antes de tocar nada, con
@@ -227,7 +229,9 @@ public class ReservationPersistenceAdapter implements ReservationRepositoryPort 
      * tenía si no cambió, o uno nuevo persistido si la reserva trae otro.
      */
     private ItineraryJpaEntity resolveItineraryForUpdate(Reservation reservation, ReservationJpaEntity entity) {
-        boolean sameItinerary = reservation.itinerary().id()
+        boolean sameItinerary = reservation
+                .itinerary()
+                .id()
                 .map(id -> id.value() == entity.getItinerary().getId())
                 .orElse(false);
         return sameItinerary ? entity.getItinerary() : persistItinerary(reservation.itinerary());
@@ -235,9 +239,8 @@ public class ReservationPersistenceAdapter implements ReservationRepositoryPort 
 
     /** Crea el itinerario, reutilizando los segmentos que ya existan. */
     private ItineraryJpaEntity persistItinerary(Itinerary itinerary) {
-        List<SegmentJpaEntity> segments = itinerary.segments().stream()
-                .map(this::resolveSegment)
-                .toList();
+        List<SegmentJpaEntity> segments =
+                itinerary.segments().stream().map(this::resolveSegment).toList();
         return itineraryRepository.save(itineraryMapper.toNewEntity(itinerary, segments));
     }
 
@@ -252,21 +255,16 @@ public class ReservationPersistenceAdapter implements ReservationRepositoryPort 
     private SegmentJpaEntity resolveSegment(Segment segment) {
         return findSegment(segment).orElseGet(() -> {
             segmentRepository.insertIfAbsent(
-                    segment.origin().value(),
-                    segment.destination().value(),
-                    segment.airline(),
-                    segment.departureAt());
-            return findSegment(segment).orElseThrow(() -> new IllegalStateException(
-                    "El segmento %s no quedó disponible después del insert".formatted(segment.naturalKey())));
+                    segment.origin().value(), segment.destination().value(), segment.airline(), segment.departureAt());
+            return findSegment(segment)
+                    .orElseThrow(() -> new IllegalStateException(
+                            "El segmento %s no quedó disponible después del insert".formatted(segment.naturalKey())));
         });
     }
 
     private Optional<SegmentJpaEntity> findSegment(Segment segment) {
         return segmentRepository.findByOriginAndDestinationAndAirlineAndDepartureAt(
-                segment.origin().value(),
-                segment.destination().value(),
-                segment.airline(),
-                segment.departureAt());
+                segment.origin().value(), segment.destination().value(), segment.airline(), segment.departureAt());
     }
 
     /**

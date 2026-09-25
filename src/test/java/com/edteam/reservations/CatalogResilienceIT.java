@@ -1,5 +1,9 @@
 package com.edteam.reservations;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
 import com.edteam.reservations.infrastructure.adapter.in.rest.DegradationHeaderFilter;
 import com.edteam.reservations.infrastructure.adapter.out.airport.CachingAirportCatalog;
 import com.edteam.reservations.infrastructure.config.ResilienceConfiguration;
@@ -11,19 +15,6 @@ import com.edteam.reservations.support.TestFixtures;
 import com.sun.net.httpserver.HttpServer;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.micrometer.core.instrument.MeterRegistry;
-import org.awaitility.Awaitility;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
-import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.MvcResult;
-
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -37,10 +28,18 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import org.awaitility.Awaitility;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 
 /**
  * El camino del pedido con el catálogo caído, medido de punta a punta.
@@ -64,8 +63,8 @@ class CatalogResilienceIT extends AbstractPostgresIT {
     private static final String IDEMPOTENCY_KEY_HEADER = "Idempotency-Key";
 
     /** Diez tramos encadenados: once ciudades distintas, el máximo del contrato. */
-    private static final List<String> ROUTE = List.of(
-            "EZE", "SCL", "LIM", "BOG", "MEX", "MIA", "NYC", "MAD", "BCN", "PAR", "LON");
+    private static final List<String> ROUTE =
+            List.of("EZE", "SCL", "LIM", "BOG", "MEX", "MIA", "NYC", "MAD", "BCN", "PAR", "LON");
 
     /** El techo declarado del {@code POST}, con el desglose en {@code LatencyBudgetTest}. */
     private static final Duration POST_CEILING = Duration.ofMillis(4_200);
@@ -113,8 +112,8 @@ class CatalogResilienceIT extends AbstractPostgresIT {
         // El contexto se comparte entre los métodos de la clase: sin vaciar el
         // cache, el "cache frío" de un test sería el cache caliente del
         // anterior y la aserción no probaría nada.
-        ROUTE.forEach(code -> cityCache.evict(
-                com.edteam.reservations.infrastructure.cache.CacheKeys.CITY_PREFIX + code));
+        ROUTE.forEach(
+                code -> cityCache.evict(com.edteam.reservations.infrastructure.cache.CacheKeys.CITY_PREFIX + code));
     }
 
     @Test
@@ -140,9 +139,7 @@ class CatalogResilienceIT extends AbstractPostgresIT {
         assertThat(CATALOG.requests() - before)
                 .as("el fan-out en paralelo hace como mucho un intento por ciudad, no tres en serie")
                 .isLessThanOrEqualTo(ROUTE.size());
-        assertThat(degradedResponses())
-                .as("y queda contado, con su motivo")
-                .isPositive();
+        assertThat(degradedResponses()).as("y queda contado, con su motivo").isPositive();
     }
 
     @Test
@@ -151,9 +148,8 @@ class CatalogResilienceIT extends AbstractPostgresIT {
         CATALOG.hang();
 
         long startedAt = System.nanoTime();
-        MvcResult result = createReservation()
-                .andExpect(status().isServiceUnavailable())
-                .andReturn();
+        MvcResult result =
+                createReservation().andExpect(status().isServiceUnavailable()).andReturn();
         Duration elapsed = Duration.ofNanos(System.nanoTime() - startedAt);
 
         assertThat(elapsed).isLessThan(POST_CEILING);
@@ -173,7 +169,8 @@ class CatalogResilienceIT extends AbstractPostgresIT {
             createReservation().andReturn();
         }
 
-        Awaitility.await().atMost(Duration.ofSeconds(30))
+        Awaitility.await()
+                .atMost(Duration.ofSeconds(30))
                 .until(() -> catalogCircuit.state() == CircuitBreaker.State.OPEN);
 
         int before = CATALOG.requests();
@@ -191,7 +188,8 @@ class CatalogResilienceIT extends AbstractPostgresIT {
         for (int i = 0; i < 3; i++) {
             createReservation().andReturn();
         }
-        Awaitility.await().atMost(Duration.ofSeconds(30))
+        Awaitility.await()
+                .atMost(Duration.ofSeconds(30))
                 .until(() -> catalogCircuit.state() == CircuitBreaker.State.OPEN);
 
         CATALOG.healthy();
@@ -199,7 +197,8 @@ class CatalogResilienceIT extends AbstractPostgresIT {
         // Transición automática a semiabierto: no depende de que llegue
         // tráfico, que es la restricción de «un circuito abierto no puede ser
         // permanente».
-        Awaitility.await().atMost(Duration.ofSeconds(30))
+        Awaitility.await()
+                .atMost(Duration.ofSeconds(30))
                 .until(() -> catalogCircuit.state() == CircuitBreaker.State.HALF_OPEN);
 
         Awaitility.await().atMost(Duration.ofSeconds(40)).untilAsserted(() -> {
@@ -226,7 +225,8 @@ class CatalogResilienceIT extends AbstractPostgresIT {
     @DisplayName("el estado del circuito se publica como métrica")
     void theCircuitStateIsPublished() {
         assertThat(registry.find("resilience4j.circuitbreaker.state")
-                .tag("name", ResilienceConfiguration.CATALOG_CIRCUIT).gauges())
+                        .tag("name", ResilienceConfiguration.CATALOG_CIRCUIT)
+                        .gauges())
                 .as("sin esta serie no hay forma de enterarse de que el sistema está degradado")
                 .isNotEmpty();
     }
@@ -234,9 +234,11 @@ class CatalogResilienceIT extends AbstractPostgresIT {
     // -----------------------------------------------------------------
 
     private double degradedResponses() {
-        return registry.find(DegradationRecorder.SERVED)
+        return registry
+                .find(DegradationRecorder.SERVED)
                 .tag("dependency", CachingAirportCatalog.DEPENDENCY)
-                .counters().stream()
+                .counters()
+                .stream()
                 .mapToDouble(io.micrometer.core.instrument.Counter::count)
                 .sum();
     }
@@ -247,9 +249,8 @@ class CatalogResilienceIT extends AbstractPostgresIT {
         for (int i = 0; i < ROUTE.size() - 1; i++) {
             segments.add("""
                     {"originAirportCode":"%s","destinationAirportCode":"%s",
-                     "airline":"%s","departureAt":"%s"}"""
-                    .formatted(ROUTE.get(i), ROUTE.get(i + 1), TestFixtures.AIRLINE,
-                            departure.plus(Duration.ofHours(i * 6L))));
+                     "airline":"%s","departureAt":"%s"}""".formatted(
+                    ROUTE.get(i), ROUTE.get(i + 1), TestFixtures.AIRLINE, departure.plus(Duration.ofHours(i * 6L))));
         }
         String body = """
                 {"itinerary":{"price":1250.50,"currency":"USD","segments":[%s]},
@@ -302,8 +303,8 @@ class CatalogResilienceIT extends AbstractPostgresIT {
                     exchange.close();
                     return;
                 }
-                byte[] payload = ("{\"code\":\"" + code + "\",\"name\":\"" + code + "\"}")
-                        .getBytes(StandardCharsets.UTF_8);
+                byte[] payload =
+                        ("{\"code\":\"" + code + "\",\"name\":\"" + code + "\"}").getBytes(StandardCharsets.UTF_8);
                 exchange.getResponseHeaders().add("Content-Type", "application/json");
                 exchange.sendResponseHeaders(200, payload.length);
                 try (OutputStream out = exchange.getResponseBody()) {

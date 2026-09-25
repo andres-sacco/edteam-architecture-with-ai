@@ -3,7 +3,6 @@ package com.edteam.reservations.domain.event;
 import com.edteam.reservations.domain.model.ItinerarySummary;
 import com.edteam.reservations.domain.model.ReservationId;
 import com.edteam.reservations.domain.model.UserId;
-
 import java.time.Instant;
 
 /**

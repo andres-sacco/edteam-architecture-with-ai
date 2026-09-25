@@ -5,7 +5,6 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
-
 import java.time.Instant;
 
 /**
@@ -31,8 +30,6 @@ public record SegmentRequest(
         @Size(max = 50, message = "La aerolínea no puede superar los 50 caracteres")
         String airline,
 
-        @Schema(description = "Fecha y hora de salida, en UTC. Debe ser futura.",
-                example = "2027-03-15T22:40:00Z")
+        @Schema(description = "Fecha y hora de salida, en UTC. Debe ser futura.", example = "2027-03-15T22:40:00Z")
         @NotNull(message = "La fecha de salida es obligatoria")
-        Instant departureAt) {
-}
+        Instant departureAt) {}

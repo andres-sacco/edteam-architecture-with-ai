@@ -1,12 +1,11 @@
 package com.edteam.reservations.infrastructure.adapter.out.airport;
 
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
+import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.List;
 import java.util.Set;
-
-import static org.assertj.core.api.Assertions.assertThat;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 
 /**
  * El stub resuelve ahora por conjunto, igual que el resolutor real: así la
@@ -21,14 +20,16 @@ class StaticAirportCatalogTest {
     void knowsDefaultAirports() {
         StaticAirportCatalog catalog = StaticAirportCatalog.withDefaults();
 
-        assertThat(catalog.resolve(List.of("EZE", "MAD")).values())
-                .allMatch(CityResolution::exists);
+        assertThat(catalog.resolve(List.of("EZE", "MAD")).values()).allMatch(CityResolution::exists);
     }
 
     @Test
     @DisplayName("no reconoce un aeropuerto que no está en el maestro")
     void rejectsUnknownAirport() {
-        assertThat(StaticAirportCatalog.withDefaults().resolve(List.of("ZZZ")).get("ZZZ").status())
+        assertThat(StaticAirportCatalog.withDefaults()
+                        .resolve(List.of("ZZZ"))
+                        .get("ZZZ")
+                        .status())
                 .isEqualTo(CityResolution.Status.ABSENT);
     }
 
@@ -43,7 +44,9 @@ class StaticAirportCatalogTest {
     @Test
     @DisplayName("nunca devuelve 'no disponible': un stub en memoria no se cae")
     void neverReportsUnavailable() {
-        assertThat(StaticAirportCatalog.withDefaults().resolve(List.of("EZE", "ZZZ")).values())
+        assertThat(StaticAirportCatalog.withDefaults()
+                        .resolve(List.of("EZE", "ZZZ"))
+                        .values())
                 .allMatch(CityResolution::isKnown);
     }
 

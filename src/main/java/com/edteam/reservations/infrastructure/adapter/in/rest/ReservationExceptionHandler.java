@@ -21,16 +21,19 @@ import com.edteam.reservations.infrastructure.adapter.out.airport.CachingAirport
 import com.edteam.reservations.infrastructure.logging.LogFields;
 import com.edteam.reservations.infrastructure.logging.RequestLogFilter;
 import com.edteam.reservations.infrastructure.logging.Throwables;
-import org.springframework.dao.QueryTimeoutException;
-import org.springframework.dao.TransientDataAccessException;
-import org.springframework.transaction.CannotCreateTransactionException;
+import java.net.URI;
+import java.util.List;
+import java.util.Locale;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.QueryTimeoutException;
+import org.springframework.dao.TransientDataAccessException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.validation.FieldError;
 import org.springframework.validation.ObjectError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -39,10 +42,6 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.ServletWebRequest;
 import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
-
-import java.net.URI;
-import java.util.List;
-import java.util.Locale;
 
 /**
  * Traduce las excepciones a respuestas HTTP con un cuerpo uniforme.
@@ -134,7 +133,9 @@ public class ReservationExceptionHandler extends ResponseEntityExceptionHandler 
                 .addKeyValue(LogFields.HTTP_STATUS, HttpStatus.CONFLICT.value())
                 .addKeyValue(LogFields.OUTCOME, "conflict")
                 .log("Conflicto de versión al escribir la reserva");
-        return problem(HttpStatus.CONFLICT, ApiErrorCode.CONCURRENT_UPDATE,
+        return problem(
+                HttpStatus.CONFLICT,
+                ApiErrorCode.CONCURRENT_UPDATE,
                 "%s Volvé a leer la reserva y reintentá con el ETag actualizado.".formatted(e.getMessage()),
                 request);
     }
@@ -170,7 +171,8 @@ public class ReservationExceptionHandler extends ResponseEntityExceptionHandler 
         // que era el tercer sitio donde salía y el que el diseño no enumeraba.
         log.atWarn()
                 .addKeyValue(LogFields.EVENT, LogFields.RESERVATION_DUPLICATE)
-                .addKeyValue(LogFields.IDEMPOTENCY_KEY, e.idempotencyKey().value().toString())
+                .addKeyValue(
+                        LogFields.IDEMPOTENCY_KEY, e.idempotencyKey().value().toString())
                 .addKeyValue(LogFields.HTTP_STATUS, HttpStatus.CONFLICT.value())
                 .addKeyValue(LogFields.OUTCOME, "unresolved")
                 .log("No se pudo resolver la carrera por la clave de idempotencia");
@@ -204,8 +206,11 @@ public class ReservationExceptionHandler extends ResponseEntityExceptionHandler 
                 .addKeyValue(LogFields.REASON, "other_user_resource")
                 .addKeyValue(LogFields.HTTP_STATUS, HttpStatus.FORBIDDEN.value())
                 .log("Pedido rechazado por alcance");
-        return problem(HttpStatus.FORBIDDEN, ApiErrorCode.FORBIDDEN,
-                "El solicitante no puede consultar reservas de otro usuario.", request);
+        return problem(
+                HttpStatus.FORBIDDEN,
+                ApiErrorCode.FORBIDDEN,
+                "El solicitante no puede consultar reservas de otro usuario.",
+                request);
     }
 
     // ------------------------------------------------------------------
@@ -259,12 +264,13 @@ public class ReservationExceptionHandler extends ResponseEntityExceptionHandler 
      * qué campo marcar.
      */
     @Override
-    protected ResponseEntity<Object> handleMethodArgumentNotValid(MethodArgumentNotValidException e,
-                                                                  HttpHeaders headers,
-                                                                  HttpStatusCode status,
-                                                                  WebRequest request) {
-        ProblemDetail body = problem(HttpStatus.BAD_REQUEST, ApiErrorCode.VALIDATION_ERROR,
-                "El pedido tiene %d campo(s) inválido(s).".formatted(e.getErrorCount()), request);
+    protected ResponseEntity<Object> handleMethodArgumentNotValid(
+            MethodArgumentNotValidException e, HttpHeaders headers, HttpStatusCode status, WebRequest request) {
+        ProblemDetail body = problem(
+                HttpStatus.BAD_REQUEST,
+                ApiErrorCode.VALIDATION_ERROR,
+                "El pedido tiene %d campo(s) inválido(s).".formatted(e.getErrorCount()),
+                request);
         body.setProperty("errors", toFieldErrors(e));
 
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).headers(headers).body(body);
@@ -280,11 +286,8 @@ public class ReservationExceptionHandler extends ResponseEntityExceptionHandler 
      * errores de negocio.
      */
     @Override
-    protected ResponseEntity<Object> handleExceptionInternal(Exception e,
-                                                             Object body,
-                                                             HttpHeaders headers,
-                                                             HttpStatusCode statusCode,
-                                                             WebRequest request) {
+    protected ResponseEntity<Object> handleExceptionInternal(
+            Exception e, Object body, HttpHeaders headers, HttpStatusCode statusCode, WebRequest request) {
         ResponseEntity<Object> response = super.handleExceptionInternal(e, body, headers, statusCode, request);
         if (response != null && response.getBody() instanceof ProblemDetail problem) {
             enrich(problem, defaultCodeFor(statusCode), request);
@@ -321,8 +324,11 @@ public class ReservationExceptionHandler extends ResponseEntityExceptionHandler 
                 .addKeyValue(LogFields.HTTP_STATUS, HttpStatus.INTERNAL_SERVER_ERROR.value())
                 .setCause(e)
                 .log("Error no controlado procesando el pedido");
-        return problem(HttpStatus.INTERNAL_SERVER_ERROR, ApiErrorCode.INTERNAL_ERROR,
-                "Ocurrió un error inesperado procesando el pedido.", request);
+        return problem(
+                HttpStatus.INTERNAL_SERVER_ERROR,
+                ApiErrorCode.INTERNAL_ERROR,
+                "Ocurrió un error inesperado procesando el pedido.",
+                request);
     }
 
     // ------------------------------------------------------------------
@@ -342,8 +348,8 @@ public class ReservationExceptionHandler extends ResponseEntityExceptionHandler 
      * dependencia externa, no un defecto del código.
      */
     @ExceptionHandler(AirportCatalogUnavailableException.class)
-    public ResponseEntity<ProblemDetail> handleCatalogUnavailable(AirportCatalogUnavailableException e,
-                                                                  WebRequest request) {
+    public ResponseEntity<ProblemDetail> handleCatalogUnavailable(
+            AirportCatalogUnavailableException e, WebRequest request) {
         log.atWarn()
                 .addKeyValue(LogFields.EVENT, LogFields.DEGRADED_EXHAUSTED)
                 .addKeyValue(LogFields.DEPENDENCY, CachingAirportCatalog.DEPENDENCY)
@@ -351,7 +357,9 @@ public class ReservationExceptionHandler extends ResponseEntityExceptionHandler 
                 .addKeyValue(LogFields.REASON, Throwables.reasonOf(e))
                 .addKeyValue(LogFields.HTTP_STATUS, HttpStatus.SERVICE_UNAVAILABLE.value())
                 .log("Maestro de aeropuertos no disponible: el pedido falla de frente");
-        ProblemDetail problem = problem(HttpStatus.SERVICE_UNAVAILABLE, ApiErrorCode.AIRPORT_CATALOG_UNAVAILABLE,
+        ProblemDetail problem = problem(
+                HttpStatus.SERVICE_UNAVAILABLE,
+                ApiErrorCode.AIRPORT_CATALOG_UNAVAILABLE,
                 "No se pudo validar los aeropuertos del itinerario contra el maestro. Reintentá en unos segundos.",
                 request);
 
@@ -378,8 +386,11 @@ public class ReservationExceptionHandler extends ResponseEntityExceptionHandler 
                 .addKeyValue(LogFields.REASON, Throwables.reasonOf(e))
                 .addKeyValue(LogFields.HTTP_STATUS, HttpStatus.INTERNAL_SERVER_ERROR.value())
                 .log("Integración con el maestro de aeropuertos rota");
-        return problem(HttpStatus.INTERNAL_SERVER_ERROR, ApiErrorCode.AIRPORT_CATALOG_ERROR,
-                "Ocurrió un error inesperado procesando el pedido.", request);
+        return problem(
+                HttpStatus.INTERNAL_SERVER_ERROR,
+                ApiErrorCode.AIRPORT_CATALOG_ERROR,
+                "Ocurrió un error inesperado procesando el pedido.",
+                request);
     }
 
     /**
@@ -396,8 +407,11 @@ public class ReservationExceptionHandler extends ResponseEntityExceptionHandler 
      * un {@code SQLTransientConnectionException} no dice nada que el mensaje
      * no diga ya.
      */
-    @ExceptionHandler({TransientDataAccessException.class, CannotCreateTransactionException.class,
-            QueryTimeoutException.class})
+    @ExceptionHandler({
+        TransientDataAccessException.class,
+        CannotCreateTransactionException.class,
+        QueryTimeoutException.class
+    })
     public ResponseEntity<ProblemDetail> handleDatabaseUnavailable(Exception e, WebRequest request) {
         log.atWarn()
                 .addKeyValue(LogFields.EVENT, LogFields.DEGRADED_EXHAUSTED)
@@ -407,7 +421,9 @@ public class ReservationExceptionHandler extends ResponseEntityExceptionHandler 
                 .addKeyValue(LogFields.REASON, Throwables.reasonOf(e))
                 .addKeyValue(LogFields.HTTP_STATUS, HttpStatus.SERVICE_UNAVAILABLE.value())
                 .log("La base no respondió a tiempo");
-        ProblemDetail problem = problem(HttpStatus.SERVICE_UNAVAILABLE, ApiErrorCode.DATABASE_UNAVAILABLE,
+        ProblemDetail problem = problem(
+                HttpStatus.SERVICE_UNAVAILABLE,
+                ApiErrorCode.DATABASE_UNAVAILABLE,
                 "El servicio está saturado y no pudo procesar el pedido. Reintentá en unos segundos.",
                 request);
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)

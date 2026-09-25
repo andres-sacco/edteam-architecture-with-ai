@@ -1,5 +1,8 @@
 package com.edteam.reservations.infrastructure.adapter.out.airport.catalog;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
 import com.edteam.reservations.application.exception.AirportCatalogIntegrationException;
 import com.edteam.reservations.application.exception.AirportCatalogThrottledException;
 import com.edteam.reservations.application.exception.AirportCatalogUnavailableException;
@@ -11,17 +14,13 @@ import com.edteam.reservations.support.TestFixtures;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
-import org.awaitility.Awaitility;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-
 import java.time.Duration;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import org.awaitility.Awaitility;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 
 /**
  * El circuito del catálogo: cuándo abre, cuándo no, y cómo vuelve solo.
@@ -48,16 +47,14 @@ class CircuitBreakingCityCatalogClientTest {
         CityCatalogClient client = new CircuitBreakingCityCatalogClient(delegate, circuit);
 
         for (int i = 0; i < 4; i++) {
-            assertThatThrownBy(() -> client.findByCode("BUE"))
-                    .isInstanceOf(AirportCatalogUnavailableException.class);
+            assertThatThrownBy(() -> client.findByCode("BUE")).isInstanceOf(AirportCatalogUnavailableException.class);
         }
         assertThat(circuit.state())
                 .as("con 4 de 5 llamadas mínimas el circuito todavía no puede decidir")
                 .isEqualTo(CircuitBreaker.State.CLOSED);
         assertThat(delegate.calls()).isEqualTo(4);
 
-        assertThatThrownBy(() -> client.findByCode("BUE"))
-                .isInstanceOf(AirportCatalogUnavailableException.class);
+        assertThatThrownBy(() -> client.findByCode("BUE")).isInstanceOf(AirportCatalogUnavailableException.class);
 
         assertThat(circuit.state())
                 .as("la quinta llamada completa el mínimo con 100 % de fallo")
@@ -77,8 +74,7 @@ class CircuitBreakingCityCatalogClientTest {
         int afterOpening = delegate.calls();
 
         for (int i = 0; i < 20; i++) {
-            assertThatThrownBy(() -> client.findByCode("BUE"))
-                    .isInstanceOf(CallNotPermittedException.class);
+            assertThatThrownBy(() -> client.findByCode("BUE")).isInstanceOf(CallNotPermittedException.class);
         }
 
         assertThat(delegate.calls())
@@ -98,7 +94,8 @@ class CircuitBreakingCityCatalogClientTest {
                 code -> {
                     calls.incrementAndGet();
                     return Optional.empty();
-                }, circuit);
+                },
+                circuit);
 
         for (int i = 0; i < 30; i++) {
             assertThat(client.findByCode("ZZZ")).isEmpty();
@@ -115,11 +112,11 @@ class CircuitBreakingCityCatalogClientTest {
         CityCatalogClient client = new CircuitBreakingCityCatalogClient(
                 code -> {
                     throw new AirportCatalogIntegrationException("401 del catálogo");
-                }, circuit);
+                },
+                circuit);
 
         for (int i = 0; i < 20; i++) {
-            assertThatThrownBy(() -> client.findByCode("BUE"))
-                    .isInstanceOf(AirportCatalogIntegrationException.class);
+            assertThatThrownBy(() -> client.findByCode("BUE")).isInstanceOf(AirportCatalogIntegrationException.class);
         }
 
         assertThat(circuit.state())
@@ -134,7 +131,8 @@ class CircuitBreakingCityCatalogClientTest {
         CityCatalogClient client = new CircuitBreakingCityCatalogClient(
                 code -> {
                     throw new AirportCatalogThrottledException("429");
-                }, circuit);
+                },
+                circuit);
 
         for (int i = 0; i < 5; i++) {
             assertThatThrownBy(() -> client.findByCode("BUE")).isInstanceOf(RuntimeException.class);
@@ -158,15 +156,15 @@ class CircuitBreakingCityCatalogClientTest {
                         throw new AirportCatalogUnavailableException("503");
                     }
                     return Optional.of(BUE);
-                }, circuit);
+                },
+                circuit);
 
         for (int i = 0; i < 5; i++) {
             assertThatThrownBy(() -> client.findByCode("BUE")).isInstanceOf(RuntimeException.class);
         }
         assertThat(circuit.state()).isEqualTo(CircuitBreaker.State.OPEN);
 
-        Awaitility.await().atMost(Duration.ofSeconds(3))
-                .until(() -> circuit.state() == CircuitBreaker.State.HALF_OPEN);
+        Awaitility.await().atMost(Duration.ofSeconds(3)).until(() -> circuit.state() == CircuitBreaker.State.HALF_OPEN);
 
         healthy.set(true);
         // Dos llamadas de prueba: es el 'permitted-calls-in-half-open-state'
@@ -174,16 +172,18 @@ class CircuitBreakingCityCatalogClientTest {
         assertThat(client.findByCode("BUE")).contains(BUE);
         assertThat(client.findByCode("BUE")).contains(BUE);
 
-        Awaitility.await().atMost(Duration.ofSeconds(3))
-                .until(() -> circuit.state() == CircuitBreaker.State.CLOSED);
+        Awaitility.await().atMost(Duration.ofSeconds(3)).until(() -> circuit.state() == CircuitBreaker.State.CLOSED);
     }
 
     private static Circuit circuit(String name, int window, int minimum, int failureRate, Duration open) {
         CircuitBreakerProperties properties = new CircuitBreakerProperties(
-                true, window, minimum, failureRate, Duration.ofSeconds(10), 100,
-                open, 2, true, Duration.ofHours(1));
-        return Circuit.of(name, properties, Failures::catalog,
-                CircuitBreakerRegistry.ofDefaults(), MutableClock.at(TestFixtures.NOW));
+                true, window, minimum, failureRate, Duration.ofSeconds(10), 100, open, 2, true, Duration.ofHours(1));
+        return Circuit.of(
+                name,
+                properties,
+                Failures::catalog,
+                CircuitBreakerRegistry.ofDefaults(),
+                MutableClock.at(TestFixtures.NOW));
     }
 
     private static final class Failing implements CityCatalogClient {

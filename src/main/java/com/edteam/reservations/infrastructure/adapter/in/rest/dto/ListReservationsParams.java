@@ -7,10 +7,9 @@ import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
-import org.springframework.format.annotation.DateTimeFormat;
-
 import java.time.Instant;
 import java.util.List;
+import org.springframework.format.annotation.DateTimeFormat;
 
 /**
  * Parámetros de consulta del listado de reservas.
@@ -30,28 +29,28 @@ import java.util.List;
  * record por su constructor canónico y no sabe elegir si hay más de uno.
  */
 public record ListReservationsParams(
-
         @Schema(description = """
                 Devuelve sólo las reservas del usuario indicado, identificado por su email.
 
-                **Sólo lo puede usar un cliente con rol de backoffice.** Para todos los                 demás el listado ya está acotado a sus propias reservas, y enviar el email                 de otro usuario responde 403. Enviar el propio es válido, aunque                 redundante.""",
-                example = "ana.perez@example.com")
+                **Sólo lo puede usar un cliente con rol de backoffice.** Para todos los                 demás el listado ya está acotado a sus propias reservas, y enviar el email                 de otro usuario responde 403. Enviar el propio es válido, aunque                 redundante.""", example = "ana.perez@example.com")
         @Email(message = "Debe ser una dirección de correo válida")
         @Size(max = 150, message = "El email no puede superar los 150 caracteres")
         String userId,
 
-        @Schema(description = "Devuelve sólo las reservas en alguno de los estados indicados. "
-                + "Repetible: `?status=PENDING&status=CONFIRMED`.")
+        @Schema(
+                description = "Devuelve sólo las reservas en alguno de los estados indicados. "
+                        + "Repetible: `?status=PENDING&status=CONFIRMED`.")
         List<ReservationStatusDto> status,
 
-        @Schema(description = "Devuelve las reservas cuyo primer tramo despega en esta "
-                + "fecha/hora o después.",
+        @Schema(
+                description = "Devuelve las reservas cuyo primer tramo despega en esta " + "fecha/hora o después.",
                 example = "2027-03-01T00:00:00Z")
         @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
         Instant departureFrom,
 
-        @Schema(description = "Devuelve las reservas cuyo primer tramo despega en esta "
-                + "fecha/hora o antes. Si es anterior a `departureFrom`, la respuesta es 400.",
+        @Schema(
+                description = "Devuelve las reservas cuyo primer tramo despega en esta "
+                        + "fecha/hora o antes. Si es anterior a `departureFrom`, la respuesta es 400.",
                 example = "2027-03-31T23:59:59Z")
         @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
         Instant departureTo,
@@ -65,12 +64,13 @@ public record ListReservationsParams(
         @Max(value = 100, message = "El tamaño de página no puede superar 100")
         Integer size,
 
-        @Schema(description = "Criterio de ordenamiento, como `campo,dirección`. Los campos "
-                + "ordenables son parte del contrato y no del modelo interno.",
+        @Schema(
+                description = "Criterio de ordenamiento, como `campo,dirección`. Los campos "
+                        + "ordenables son parte del contrato y no del modelo interno.",
                 defaultValue = "createdAt,desc",
-                allowableValues = {"createdAt,asc", "createdAt,desc",
-                        "firstDepartureAt,asc", "firstDepartureAt,desc"})
-        @Pattern(regexp = ApiFormats.SORT,
+                allowableValues = {"createdAt,asc", "createdAt,desc", "firstDepartureAt,asc", "firstDepartureAt,desc"})
+        @Pattern(
+                regexp = ApiFormats.SORT,
                 message = "Valores admitidos: createdAt|firstDepartureAt seguido de asc|desc")
         String sort) {
 

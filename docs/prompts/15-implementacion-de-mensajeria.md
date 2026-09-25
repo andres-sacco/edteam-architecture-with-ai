@@ -69,4 +69,3 @@ Las entradas de este prompt son la **topología diseñada** en [13](13-topologia
 3. **Tabla de la topología final**: cola/tópico | publicador | consumidor | garantía | DLQ asociada | clave de idempotencia.
 4. **Hallazgos que no se remedian en este paso**, con el motivo y qué haría falta para revisarlos.
 5. **Comandos de verificación**: cómo levantar el broker, cómo correr el build y los tests, y cómo reproducir a mano la prueba de doble procesamiento y la de caída del consumidor.
-

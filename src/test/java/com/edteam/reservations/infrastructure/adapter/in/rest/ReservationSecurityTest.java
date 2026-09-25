@@ -1,5 +1,18 @@
 package com.edteam.reservations.infrastructure.adapter.in.rest;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
 import com.edteam.reservations.application.exception.ReservationNotFoundException;
 import com.edteam.reservations.application.port.in.CancelReservationUseCase;
 import com.edteam.reservations.application.port.in.CreateReservationUseCase;
@@ -15,6 +28,7 @@ import com.edteam.reservations.infrastructure.security.SecurityConfiguration;
 import com.edteam.reservations.support.TestFixtures;
 import com.edteam.reservations.support.WebSliceConfiguration;
 import com.edteam.reservations.support.WithMockActor;
+import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -26,21 +40,6 @@ import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithAnonymousUser;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
-
-import java.util.UUID;
-
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
-import static org.mockito.Mockito.when;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
  * Lo que tiene que <b>fallar</b>.
@@ -58,10 +57,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 // contexto: el contador vive en el filtro, que es un bean del contexto, así
 // que compartirlo entre los tests de esta clase haría que el resultado
 // dependa del orden de ejecución.
-@WebMvcTest(value = ReservationController.class,
-        properties = "reservations.security.rate-limit.enabled=false")
-@Import({ReservationRestMapper.class, SecurityConfiguration.class, WebSliceConfiguration.class,
-        TestVersionCacheConfiguration.class})
+@WebMvcTest(value = ReservationController.class, properties = "reservations.security.rate-limit.enabled=false")
+@Import({
+    ReservationRestMapper.class,
+    SecurityConfiguration.class,
+    WebSliceConfiguration.class,
+    TestVersionCacheConfiguration.class
+})
 @DisplayName("Seguridad del borde HTTP")
 class ReservationSecurityTest {
 
@@ -123,7 +125,9 @@ class ReservationSecurityTest {
             mockMvc.perform(get("/v1/reservations/10")).andExpect(status().isUnauthorized());
             mockMvc.perform(get("/v1/reservations")).andExpect(status().isUnauthorized());
             mockMvc.perform(post("/v1/reservations")
-                            .header(ReservationController.IDEMPOTENCY_KEY_HEADER, UUID.randomUUID().toString())
+                            .header(
+                                    ReservationController.IDEMPOTENCY_KEY_HEADER,
+                                    UUID.randomUUID().toString())
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(BODY))
                     .andExpect(status().isUnauthorized());
@@ -135,8 +139,8 @@ class ReservationSecurityTest {
             mockMvc.perform(delete("/v1/reservations/10").header(HttpHeaders.IF_MATCH, "\"0\""))
                     .andExpect(status().isUnauthorized());
 
-            verifyNoInteractions(createReservation, getReservation, listReservations,
-                    modifyReservation, cancelReservation);
+            verifyNoInteractions(
+                    createReservation, getReservation, listReservations, modifyReservation, cancelReservation);
         }
 
         @Test
@@ -147,8 +151,8 @@ class ReservationSecurityTest {
                     .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
                     .andExpect(jsonPath("$.code").value("UNAUTHENTICATED"))
                     .andExpect(jsonPath("$.instance").value("/v1/reservations/10"))
-                    .andExpect(header().string(HttpHeaders.WWW_AUTHENTICATE,
-                            org.hamcrest.Matchers.containsString("Bearer")));
+                    .andExpect(header().string(
+                                    HttpHeaders.WWW_AUTHENTICATE, org.hamcrest.Matchers.containsString("Bearer")));
         }
 
         @Test
@@ -206,8 +210,7 @@ class ReservationSecurityTest {
             // El caso de uso ya decidió: devuelve el mismo error que si no
             // existiera. Lo que se verifica acá es que el adaptador no lo
             // convierta en otra cosa —un 403 acá reabriría la enumeración—.
-            when(getReservation.get(any()))
-                    .thenThrow(new ReservationNotFoundException(ReservationId.of(10L)));
+            when(getReservation.get(any())).thenThrow(new ReservationNotFoundException(ReservationId.of(10L)));
 
             mockMvc.perform(get("/v1/reservations/10"))
                     .andExpect(status().isNotFound())
@@ -221,18 +224,19 @@ class ReservationSecurityTest {
 
             mockMvc.perform(get("/v1/reservations/10")).andExpect(status().isOk());
 
-            var query = org.mockito.ArgumentCaptor
-                    .<com.edteam.reservations.application.port.in.GetReservationQuery>captor();
+            var query =
+                    org.mockito.ArgumentCaptor
+                            .<com.edteam.reservations.application.port.in.GetReservationQuery>captor();
             verify(getReservation).get(query.capture());
-            org.assertj.core.api.Assertions.assertThat(query.getValue().actor().email().value())
+            org.assertj.core.api.Assertions.assertThat(
+                            query.getValue().actor().email().value())
                     .isEqualTo(TestFixtures.OTHER_USER_EMAIL);
         }
 
         @Test
         @DisplayName("pedir el listado de otro usuario responde 403 y no filtra su contenido")
         void listingSomeoneElseIsForbidden() throws Exception {
-            when(listReservations.list(any()))
-                    .thenThrow(new ReservationAccessDeniedException("no corresponde"));
+            when(listReservations.list(any())).thenThrow(new ReservationAccessDeniedException("no corresponde"));
 
             mockMvc.perform(get("/v1/reservations").param("userId", TestFixtures.USER_EMAIL))
                     .andExpect(status().isForbidden())
@@ -240,8 +244,8 @@ class ReservationSecurityTest {
                     .andExpect(jsonPath("$.code").value("FORBIDDEN"))
                     // El detalle es fijo: no refleja el email del solicitante
                     // ni el pedido.
-                    .andExpect(jsonPath("$.detail")
-                            .value("El solicitante no puede consultar reservas de otro usuario."));
+                    .andExpect(
+                            jsonPath("$.detail").value("El solicitante no puede consultar reservas de otro usuario."));
         }
     }
 
@@ -251,7 +255,10 @@ class ReservationSecurityTest {
 
     @Nested
     @DisplayName("Con rol de backoffice")
-    @WithMockActor(email = "soporte@edteam.example", firstName = "Soporte", lastName = "Reservas",
+    @WithMockActor(
+            email = "soporte@edteam.example",
+            firstName = "Soporte",
+            lastName = "Reservas",
             roles = ActorRole.BACKOFFICE)
     class Backoffice {
 
@@ -263,11 +270,12 @@ class ReservationSecurityTest {
             mockMvc.perform(get("/v1/reservations").param("userId", TestFixtures.USER_EMAIL))
                     .andExpect(status().isOk());
 
-            var query = org.mockito.ArgumentCaptor
-                    .<com.edteam.reservations.application.port.in.ListReservationsQuery>captor();
+            var query =
+                    org.mockito.ArgumentCaptor
+                            .<com.edteam.reservations.application.port.in.ListReservationsQuery>captor();
             verify(listReservations).list(query.capture());
-            org.assertj.core.api.Assertions.assertThat(
-                    query.getValue().actor().actsOnBehalfOfOthers()).isTrue();
+            org.assertj.core.api.Assertions.assertThat(query.getValue().actor().actsOnBehalfOfOthers())
+                    .isTrue();
         }
     }
 
@@ -287,8 +295,9 @@ class ReservationSecurityTest {
 
             mockMvc.perform(get("/v1/reservations/10").secure(true))
                     .andExpect(status().isOk())
-                    .andExpect(header().string("Strict-Transport-Security",
-                            org.hamcrest.Matchers.containsString("max-age=31536000")))
+                    .andExpect(header().string(
+                                    "Strict-Transport-Security",
+                                    org.hamcrest.Matchers.containsString("max-age=31536000")))
                     .andExpect(header().string("X-Content-Type-Options", "nosniff"))
                     .andExpect(header().string("X-Frame-Options", "DENY"))
                     .andExpect(header().string("Referrer-Policy", "no-referrer"));
@@ -300,8 +309,8 @@ class ReservationSecurityTest {
             when(getReservation.get(any())).thenReturn(TestFixtures.storedReservation(0L));
 
             mockMvc.perform(get("/v1/reservations/10"))
-                    .andExpect(header().string(HttpHeaders.CACHE_CONTROL,
-                            org.hamcrest.Matchers.containsString("no-store")));
+                    .andExpect(header().string(
+                                    HttpHeaders.CACHE_CONTROL, org.hamcrest.Matchers.containsString("no-store")));
         }
 
         @Test
@@ -309,8 +318,7 @@ class ReservationSecurityTest {
         void emitsACorrelationId() throws Exception {
             when(getReservation.get(any())).thenReturn(TestFixtures.storedReservation(0L));
 
-            mockMvc.perform(get("/v1/reservations/10"))
-                    .andExpect(header().exists("X-Correlation-Id"));
+            mockMvc.perform(get("/v1/reservations/10")).andExpect(header().exists("X-Correlation-Id"));
         }
     }
 }

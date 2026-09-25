@@ -1,7 +1,6 @@
 package com.edteam.reservations.application.port.in;
 
 import com.edteam.reservations.domain.access.Actor;
-
 import java.util.Objects;
 
 /**
@@ -12,10 +11,8 @@ import java.util.Objects;
  * @param newItinerary    itinerario que reemplaza al vigente
  * @param actor           quién pide la modificación
  */
-public record ModifyReservationCommand(long reservationId,
-                                       long expectedVersion,
-                                       ItineraryData newItinerary,
-                                       Actor actor) {
+public record ModifyReservationCommand(
+        long reservationId, long expectedVersion, ItineraryData newItinerary, Actor actor) {
 
     public ModifyReservationCommand {
         Objects.requireNonNull(newItinerary, "newItinerary es obligatorio");

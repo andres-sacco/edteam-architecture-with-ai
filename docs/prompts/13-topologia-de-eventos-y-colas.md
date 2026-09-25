@@ -75,4 +75,3 @@ Diseñar la topología de mensajería del sistema: qué se comunica de forma asi
 2. **Lista de colas y tópicos creados**: nombre | publicador | consumidor(es) | garantía de entrega | orden | retención.
 3. **Contrato de mensaje** por tipo de evento: envelope y payload, con un ejemplo en JSON.
 4. **Qué cambia en el código actual**: piezas que se conservan, se reemplazan o se agregan, por paquete.
-

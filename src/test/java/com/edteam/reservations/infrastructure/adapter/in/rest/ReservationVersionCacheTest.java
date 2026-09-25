@@ -1,19 +1,18 @@
 package com.edteam.reservations.infrastructure.adapter.in.rest;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
 import com.edteam.reservations.domain.model.ReservationId;
 import com.edteam.reservations.infrastructure.cache.CacheKeys;
 import com.edteam.reservations.infrastructure.cache.FailingCacheStore;
 import com.edteam.reservations.infrastructure.cache.InMemoryCacheStore;
 import com.edteam.reservations.support.MutableClock;
 import com.edteam.reservations.support.TestFixtures;
+import java.time.Duration;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-
-import java.time.Duration;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @DisplayName("ReservationVersionCache")
 class ReservationVersionCacheTest {
@@ -111,10 +110,8 @@ class ReservationVersionCacheTest {
     @Test
     @DisplayName("exige almacén y TTL positivo")
     void validatesConstructorArguments() {
-        assertThatThrownBy(() -> new ReservationVersionCache(null, TTL))
-                .isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() -> new ReservationVersionCache(store, null))
-                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> new ReservationVersionCache(null, TTL)).isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> new ReservationVersionCache(store, null)).isInstanceOf(NullPointerException.class);
         assertThatThrownBy(() -> new ReservationVersionCache(store, Duration.ZERO))
                 .isInstanceOf(IllegalArgumentException.class);
     }

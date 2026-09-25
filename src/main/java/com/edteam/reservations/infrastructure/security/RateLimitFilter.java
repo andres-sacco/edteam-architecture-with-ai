@@ -9,6 +9,14 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
+import java.net.URI;
+import java.time.Clock;
+import java.time.Duration;
+import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
@@ -19,15 +27,6 @@ import org.springframework.http.ProblemDetail;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.filter.OncePerRequestFilter;
-
-import java.io.IOException;
-import java.net.URI;
-import java.time.Clock;
-import java.time.Duration;
-import java.util.Map;
-import java.util.Objects;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Cuota de pedidos por identidad, con ventana fija.
@@ -77,10 +76,8 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
     private final Map<String, Window> windows = new ConcurrentHashMap<>();
 
-    public RateLimitFilter(SecurityProperties.RateLimit properties,
-                           ObjectMapper objectMapper,
-                           Clock clock,
-                           SecurityMetrics metrics) {
+    public RateLimitFilter(
+            SecurityProperties.RateLimit properties, ObjectMapper objectMapper, Clock clock, SecurityMetrics metrics) {
         this.properties = Objects.requireNonNull(properties);
         this.objectMapper = Objects.requireNonNull(objectMapper);
         this.clock = Objects.requireNonNull(clock);
@@ -93,9 +90,8 @@ public class RateLimitFilter extends OncePerRequestFilter {
     }
 
     @Override
-    protected void doFilterInternal(HttpServletRequest request,
-                                    HttpServletResponse response,
-                                    FilterChain chain) throws ServletException, IOException {
+    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
+            throws ServletException, IOException {
         boolean write = isWrite(request.getMethod());
         int quota = write ? properties.writes() : properties.reads();
         String key = (write ? "w|" : "r|") + clientKey(request);
@@ -112,7 +108,8 @@ public class RateLimitFilter extends OncePerRequestFilter {
     }
 
     private static boolean isWrite(String method) {
-        return !HttpMethod.GET.matches(method) && !HttpMethod.HEAD.matches(method)
+        return !HttpMethod.GET.matches(method)
+                && !HttpMethod.HEAD.matches(method)
                 && !HttpMethod.OPTIONS.matches(method);
     }
 
@@ -153,16 +150,19 @@ public class RateLimitFilter extends OncePerRequestFilter {
             windows.clear();
         }
 
-        Window window = windows.compute(key, (ignored, current) ->
-                current == null || current.window != currentWindow
-                        ? new Window(currentWindow)
-                        : current);
+        Window window = windows.compute(
+                key,
+                (ignored, current) ->
+                        current == null || current.window != currentWindow ? new Window(currentWindow) : current);
         return quota - window.count.incrementAndGet();
     }
 
     private void reject(HttpServletRequest request, HttpServletResponse response) throws IOException {
-        long retryAfter = Math.max(1, Duration.ofMillis(
-                properties.window().toMillis() - clock.millis() % properties.window().toMillis()).toSeconds());
+        long retryAfter = Math.max(
+                1,
+                Duration.ofMillis(properties.window().toMillis()
+                                - clock.millis() % properties.window().toMillis())
+                        .toSeconds());
 
         // Sigue sin la identidad, y ahora tampoco con la URI cruda: es un log
         // de alto volumen durante un abuso y es el propio abuso el que elige
@@ -180,7 +180,8 @@ public class RateLimitFilter extends OncePerRequestFilter {
                 .addKeyValue("retryAfterSeconds", retryAfter)
                 .log("Cuota de pedidos superada");
 
-        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.TOO_MANY_REQUESTS,
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.TOO_MANY_REQUESTS,
                 "Se superó la cuota de pedidos. Reintentá en %d segundo(s).".formatted(retryAfter));
         problem.setType(ApiErrorCode.RATE_LIMIT_EXCEEDED.type());
         problem.setTitle(ApiErrorCode.RATE_LIMIT_EXCEEDED.title());

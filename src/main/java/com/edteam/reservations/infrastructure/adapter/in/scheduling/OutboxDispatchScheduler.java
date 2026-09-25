@@ -10,15 +10,14 @@ import com.edteam.reservations.infrastructure.resilience.Circuit;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
+import java.time.Duration;
+import java.util.Objects;
+import java.util.concurrent.ThreadLocalRandom;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-
-import java.time.Duration;
-import java.util.Objects;
-import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * Dispara el relay del outbox cada pocos segundos.
@@ -75,10 +74,11 @@ public class OutboxDispatchScheduler {
     private final Counter probes;
     private final Timer duration;
 
-    public OutboxDispatchScheduler(DispatchPendingNotificationsUseCase dispatchNotifications,
-                                   OutboxProperties properties,
-                                   Circuit brokerCircuit,
-                                   MeterRegistry registry) {
+    public OutboxDispatchScheduler(
+            DispatchPendingNotificationsUseCase dispatchNotifications,
+            OutboxProperties properties,
+            Circuit brokerCircuit,
+            MeterRegistry registry) {
         this.dispatchNotifications = Objects.requireNonNull(dispatchNotifications);
         this.properties = Objects.requireNonNull(properties);
         this.brokerCircuit = brokerCircuit;
@@ -94,7 +94,8 @@ public class OutboxDispatchScheduler {
                 .register(registry);
     }
 
-    @Scheduled(fixedDelayString = "${reservations.outbox.dispatch-interval:5s}",
+    @Scheduled(
+            fixedDelayString = "${reservations.outbox.dispatch-interval:5s}",
             initialDelayString = "${reservations.outbox.dispatch-interval:5s}")
     public void dispatch() {
         // El decorador del scheduler ya puso un id; acá se refina para que
@@ -118,8 +119,7 @@ public class OutboxDispatchScheduler {
                         .addKeyValue(LogFields.DISPATCHED, result.dispatched())
                         .addKeyValue(LogFields.FAILED, result.failed())
                         .addKeyValue(LogFields.DEFERRED, result.deferred())
-                        .addKeyValue(LogFields.DURATION_MS,
-                                (System.nanoTime() - startedAt) / 1_000_000L)
+                        .addKeyValue(LogFields.DURATION_MS, (System.nanoTime() - startedAt) / 1_000_000L)
                         .log("Outbox despachado");
             }
         } catch (InterruptedException e) {

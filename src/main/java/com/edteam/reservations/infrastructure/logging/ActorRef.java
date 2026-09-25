@@ -43,8 +43,7 @@ public final class ActorRef {
 
     private static final String UNKNOWN = "anon";
 
-    private ActorRef() {
-    }
+    private ActorRef() {}
 
     public static String of(String identity) {
         if (identity == null || identity.isBlank()) {
@@ -52,8 +51,8 @@ public final class ActorRef {
         }
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(identity.trim().toLowerCase(java.util.Locale.ROOT)
-                    .getBytes(StandardCharsets.UTF_8));
+            byte[] hash = digest.digest(
+                    identity.trim().toLowerCase(java.util.Locale.ROOT).getBytes(StandardCharsets.UTF_8));
             return HexFormat.of().formatHex(hash).substring(0, LENGTH);
         } catch (NoSuchAlgorithmException e) {
             // SHA-256 es obligatorio en toda JVM. Si no está, lo correcto es no

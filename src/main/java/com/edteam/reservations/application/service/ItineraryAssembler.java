@@ -10,11 +10,10 @@ import com.edteam.reservations.domain.model.Money;
 import com.edteam.reservations.domain.model.Passenger;
 import com.edteam.reservations.domain.model.Segment;
 import com.edteam.reservations.domain.model.User;
-import org.springframework.stereotype.Component;
-
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
+import org.springframework.stereotype.Component;
 
 /**
  * Traduce los datos de entrada de los casos de uso a value objects del dominio.
@@ -33,9 +32,8 @@ public class ItineraryAssembler {
     public Itinerary toItinerary(ItineraryData data) {
         Objects.requireNonNull(data, "Los datos del itinerario son obligatorios");
 
-        List<Segment> segments = data.segments().stream()
-                .map(ItineraryAssembler::toSegment)
-                .toList();
+        List<Segment> segments =
+                data.segments().stream().map(ItineraryAssembler::toSegment).toList();
 
         return Itinerary.newItinerary(new Money(data.price(), data.currency()), segments);
     }
@@ -62,9 +60,7 @@ public class ItineraryAssembler {
     public List<Passenger> toPassengers(List<PassengerData> data) {
         Objects.requireNonNull(data, "Los datos de los pasajeros son obligatorios");
 
-        return data.stream()
-                .map(ItineraryAssembler::toPassenger)
-                .toList();
+        return data.stream().map(ItineraryAssembler::toPassenger).toList();
     }
 
     private static Segment toSegment(SegmentData data) {

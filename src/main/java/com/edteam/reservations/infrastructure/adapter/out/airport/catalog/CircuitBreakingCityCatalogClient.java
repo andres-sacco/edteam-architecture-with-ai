@@ -1,7 +1,6 @@
 package com.edteam.reservations.infrastructure.adapter.out.airport.catalog;
 
 import com.edteam.reservations.infrastructure.resilience.Circuit;
-
 import java.util.Objects;
 import java.util.Optional;
 

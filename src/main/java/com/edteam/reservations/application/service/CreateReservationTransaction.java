@@ -14,15 +14,14 @@ import com.edteam.reservations.domain.model.Itinerary;
 import com.edteam.reservations.domain.model.Passenger;
 import com.edteam.reservations.domain.model.Reservation;
 import com.edteam.reservations.domain.model.User;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * La parte transaccional del alta: sólo base de datos, nada de red.
@@ -56,11 +55,12 @@ class CreateReservationTransaction {
     private final EventOutboxPort eventOutbox;
     private final AuditTrailPort auditTrail;
 
-    CreateReservationTransaction(ReservationRepositoryPort reservationRepository,
-                                 UserRepositoryPort userRepository,
-                                 ItineraryAssembler itineraryAssembler,
-                                 EventOutboxPort eventOutbox,
-                                 AuditTrailPort auditTrail) {
+    CreateReservationTransaction(
+            ReservationRepositoryPort reservationRepository,
+            UserRepositoryPort userRepository,
+            ItineraryAssembler itineraryAssembler,
+            EventOutboxPort eventOutbox,
+            AuditTrailPort auditTrail) {
         this.reservationRepository = Objects.requireNonNull(reservationRepository);
         this.userRepository = Objects.requireNonNull(userRepository);
         this.itineraryAssembler = Objects.requireNonNull(itineraryAssembler);
@@ -89,10 +89,8 @@ class CreateReservationTransaction {
     // statement_timeout de 2 s del driver queda como red por si alguna
     // sentencia se sale de lo previsto.
     @Transactional(timeout = 1)
-    CreateReservationResult apply(CreateReservationCommand command,
-                                  Itinerary itinerary,
-                                  List<Passenger> passengers,
-                                  Instant now) {
+    CreateReservationResult apply(
+            CreateReservationCommand command, Itinerary itinerary, List<Passenger> passengers, Instant now) {
         IdempotencyKey idempotencyKey = IdempotencyKey.of(command.idempotencyKey());
 
         // Se BUSCA al usuario, no se lo da de alta todavía. La clave de
@@ -102,8 +100,8 @@ class CreateReservationTransaction {
         // tampoco puede haber usado la clave antes, así que saltear la
         // búsqueda en ese caso es correcto y no sólo barato.
         Optional<User> registered = userRepository.findByEmail(command.actor().email());
-        Optional<Reservation> alreadyCreated = registered
-                .flatMap(user -> reservationRepository.findByIdempotencyKey(user.requireId(), idempotencyKey));
+        Optional<Reservation> alreadyCreated = registered.flatMap(
+                user -> reservationRepository.findByIdempotencyKey(user.requireId(), idempotencyKey));
         if (alreadyCreated.isPresent()) {
             Reservation existing = alreadyCreated.get();
             log.atInfo()
@@ -121,8 +119,12 @@ class CreateReservationTransaction {
         Reservation saved = reservationRepository.save(reservation);
 
         eventOutbox.enqueue(List.of(ReservationCreated.of(saved)));
-        auditTrail.record(AuditEntry.allowed(AuditAction.RESERVATION_CREATED,
-                command.actor().email(), saved.requireId().toString(), saved.version(), now));
+        auditTrail.record(AuditEntry.allowed(
+                AuditAction.RESERVATION_CREATED,
+                command.actor().email(),
+                saved.requireId().toString(),
+                saved.version(),
+                now));
 
         // El usuario se identifica por su id interno y no por su email: estos
         // logs salen del perímetro hacia el SaaS de observabilidad, que no
@@ -141,7 +143,8 @@ class CreateReservationTransaction {
                 .addKeyValue("userId", saved.userId().value())
                 .addKeyValue("reservationVersion", saved.version())
                 .addKeyValue("itinerary.origin", saved.itinerary().origin().value())
-                .addKeyValue("itinerary.destination", saved.itinerary().destination().value())
+                .addKeyValue(
+                        "itinerary.destination", saved.itinerary().destination().value())
                 .addKeyValue("passengers", saved.passengers().size())
                 .log("Reserva creada");
         return CreateReservationResult.created(saved);

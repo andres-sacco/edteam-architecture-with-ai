@@ -7,13 +7,12 @@ import com.edteam.reservations.domain.model.IdempotencyKey;
 import com.edteam.reservations.domain.model.Itinerary;
 import com.edteam.reservations.domain.model.Passenger;
 import com.edteam.reservations.domain.model.Reservation;
-import org.springframework.stereotype.Service;
-
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import org.springframework.stereotype.Service;
 
 /**
  * Alta de una reserva, o recuperación de la que ya existe para esa clave de
@@ -52,11 +51,12 @@ public class CreateReservationService implements CreateReservationUseCase {
     private final CreateReservationTransaction transaction;
     private final Clock clock;
 
-    CreateReservationService(ItineraryAssembler itineraryAssembler,
-                             AirportExistenceValidator airportValidator,
-                             ReservationIdempotencyLookup idempotencyLookup,
-                             CreateReservationTransaction transaction,
-                             Clock clock) {
+    CreateReservationService(
+            ItineraryAssembler itineraryAssembler,
+            AirportExistenceValidator airportValidator,
+            ReservationIdempotencyLookup idempotencyLookup,
+            CreateReservationTransaction transaction,
+            Clock clock) {
         this.itineraryAssembler = Objects.requireNonNull(itineraryAssembler);
         this.airportValidator = Objects.requireNonNull(airportValidator);
         this.idempotencyLookup = Objects.requireNonNull(idempotencyLookup);
@@ -75,8 +75,8 @@ public class CreateReservationService implements CreateReservationUseCase {
         // en lugar de otra tanda entera de consultas contra un proveedor que
         // ya está sufriendo. La clave protegía la base; esto protege también
         // al tercero.
-        Optional<Reservation> existing = idempotencyLookup.findExisting(
-                command.actor().email(), IdempotencyKey.of(command.idempotencyKey()));
+        Optional<Reservation> existing =
+                idempotencyLookup.findExisting(command.actor().email(), IdempotencyKey.of(command.idempotencyKey()));
         if (existing.isPresent()) {
             return CreateReservationResult.alreadyExisted(existing.get());
         }

@@ -1,5 +1,8 @@
 package com.edteam.reservations.application.service;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
 import com.edteam.reservations.application.exception.UnprocessableEventException;
 import com.edteam.reservations.application.notification.NotificationDelivery;
 import com.edteam.reservations.application.port.in.EventProcessingOutcome;
@@ -8,19 +11,15 @@ import com.edteam.reservations.application.port.out.NotificationDeliveryPort;
 import com.edteam.reservations.application.port.out.ProcessedMessagePort;
 import com.edteam.reservations.support.MutableClock;
 import com.edteam.reservations.support.TestFixtures;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 
 /**
  * El lado del consumo que este repositorio controla.
@@ -54,8 +53,8 @@ class ProcessReservationEventServiceTest {
     }
 
     private static InboundEvent event(String messageId, String type, long sequence, Instant occurredAt) {
-        return new InboundEvent(messageId, type, 1, "urn:edteam:flight-reservations",
-                SUBJECT, sequence, USER, occurredAt, "corr-1");
+        return new InboundEvent(
+                messageId, type, 1, "urn:edteam:flight-reservations", SUBJECT, sequence, USER, occurredAt, "corr-1");
     }
 
     // -----------------------------------------------------------------
@@ -118,8 +117,16 @@ class ProcessReservationEventServiceTest {
         // reconoce (una regla que se endureció después de aplicarlo). Se
         // confirma como duplicado en lugar de mandarse a la DLQ: su efecto ya
         // está hecho y reprocesarlo no puede cambiar nada.
-        InboundEvent sameIdUnknownType = new InboundEvent("m-1", "reservation.exploded", 1,
-                "urn:edteam:flight-reservations", SUBJECT, 10L, USER, clock.instant(), null);
+        InboundEvent sameIdUnknownType = new InboundEvent(
+                "m-1",
+                "reservation.exploded",
+                1,
+                "urn:edteam:flight-reservations",
+                SUBJECT,
+                10L,
+                USER,
+                clock.instant(),
+                null);
 
         assertThat(service.process(sameIdUnknownType)).isEqualTo(EventProcessingOutcome.DUPLICATE);
         assertThat(deliveries.countFor(SUBJECT)).isEqualTo(1);
@@ -148,7 +155,8 @@ class ProcessReservationEventServiceTest {
         assertThat(outcome).isEqualTo(EventProcessingOutcome.APPLIED_OUT_OF_ORDER);
         // Los dos efectos existen: el alta NO se perdió.
         assertThat(deliveries.countFor(SUBJECT)).isEqualTo(2);
-        assertThat(deliveries.all()).extracting(NotificationDelivery::messageId)
+        assertThat(deliveries.all())
+                .extracting(NotificationDelivery::messageId)
                 .containsExactly("m-confirmed", "m-created");
     }
 
@@ -194,8 +202,16 @@ class ProcessReservationEventServiceTest {
     @Test
     @DisplayName("una versión de esquema que no se entiende no es procesable")
     void rejectsUnsupportedSchemaVersions() {
-        InboundEvent v2 = new InboundEvent("m-1", "reservation.created", 2,
-                "urn:edteam:flight-reservations", SUBJECT, 10L, USER, clock.instant(), null);
+        InboundEvent v2 = new InboundEvent(
+                "m-1",
+                "reservation.created",
+                2,
+                "urn:edteam:flight-reservations",
+                SUBJECT,
+                10L,
+                USER,
+                clock.instant(),
+                null);
 
         assertThatThrownBy(() -> service.process(v2))
                 .isInstanceOf(UnprocessableEventException.class)
@@ -205,8 +221,8 @@ class ProcessReservationEventServiceTest {
     @Test
     @DisplayName("un hecho más viejo que la ventana de frescura no se notifica")
     void rejectsStaleEvents() {
-        InboundEvent old = event("m-1", "reservation.confirmed", 10L,
-                clock.instant().minus(Duration.ofHours(30)));
+        InboundEvent old =
+                event("m-1", "reservation.confirmed", 10L, clock.instant().minus(Duration.ofHours(30)));
 
         assertThatThrownBy(() -> service.process(old))
                 .isInstanceOf(UnprocessableEventException.class)
@@ -218,8 +234,8 @@ class ProcessReservationEventServiceTest {
     @Test
     @DisplayName("un hecho dentro de la ventana sí se notifica")
     void acceptsEventsInsideTheFreshnessWindow() {
-        InboundEvent recent = event("m-1", "reservation.confirmed", 10L,
-                clock.instant().minus(Duration.ofHours(23)));
+        InboundEvent recent =
+                event("m-1", "reservation.confirmed", 10L, clock.instant().minus(Duration.ofHours(23)));
 
         assertThat(service.process(recent)).isEqualTo(EventProcessingOutcome.APPLIED);
     }
@@ -281,15 +297,15 @@ class ProcessReservationEventServiceTest {
             // Igual que el UNIQUE de la tabla: un segundo efecto para el mismo
             // mensaje no es un aviso duplicado, es un error.
             if (delivered.stream().anyMatch(d -> d.messageId().equals(delivery.messageId()))) {
-                throw new IllegalStateException(
-                        "Segunda entrega para el mensaje " + delivery.messageId());
+                throw new IllegalStateException("Segunda entrega para el mensaje " + delivery.messageId());
             }
             delivered.add(delivery);
         }
 
         @Override
         public int countFor(String subject) {
-            return (int) delivered.stream().filter(d -> d.subject().equals(subject)).count();
+            return (int)
+                    delivered.stream().filter(d -> d.subject().equals(subject)).count();
         }
 
         List<NotificationDelivery> all() {

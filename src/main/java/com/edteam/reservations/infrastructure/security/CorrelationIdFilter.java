@@ -5,12 +5,11 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import org.slf4j.MDC;
-import org.springframework.web.filter.OncePerRequestFilter;
-
 import java.io.IOException;
 import java.util.UUID;
 import java.util.regex.Pattern;
+import org.slf4j.MDC;
+import org.springframework.web.filter.OncePerRequestFilter;
 
 /**
  * Da a cada pedido un identificador que aparece en todos sus logs y en su
@@ -51,9 +50,8 @@ public class CorrelationIdFilter extends OncePerRequestFilter {
     private static final Pattern ACCEPTED = Pattern.compile("[A-Za-z0-9_-]{8,64}");
 
     @Override
-    protected void doFilterInternal(HttpServletRequest request,
-                                    HttpServletResponse response,
-                                    FilterChain chain) throws ServletException, IOException {
+    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
+            throws ServletException, IOException {
         String correlationId = acceptedOrNew(request.getHeader(HEADER));
         MDC.put(MDC_KEY, correlationId);
         MDC.put(MDC_CLIENT_IP, LogSanitizer.sanitize(request.getRemoteAddr(), 45));

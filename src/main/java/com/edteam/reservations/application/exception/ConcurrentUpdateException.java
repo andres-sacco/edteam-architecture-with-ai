@@ -23,8 +23,10 @@ public class ConcurrentUpdateException extends ApplicationException {
     }
 
     public ConcurrentUpdateException(ReservationId reservationId, long expectedVersion, Throwable cause) {
-        super("La reserva %s fue modificada por otro proceso (versión esperada %d)"
-                .formatted(reservationId, expectedVersion), cause);
+        super(
+                "La reserva %s fue modificada por otro proceso (versión esperada %d)"
+                        .formatted(reservationId, expectedVersion),
+                cause);
         this.reservationId = reservationId;
         this.expectedVersion = expectedVersion;
     }

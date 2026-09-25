@@ -7,10 +7,9 @@ import io.swagger.v3.oas.models.info.Contact;
 import io.swagger.v3.oas.models.info.Info;
 import io.swagger.v3.oas.models.info.License;
 import io.swagger.v3.oas.models.tags.Tag;
+import java.util.List;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-
-import java.util.List;
 
 /**
  * Metadatos del documento OpenAPI que genera springdoc.
@@ -87,9 +86,8 @@ public class OpenApiConfiguration {
     public OpenAPI reservationsOpenApi() {
         return new OpenAPI()
                 .info(apiInfo())
-                .tags(List.of(new Tag()
-                        .name(RESERVATIONS_TAG)
-                        .description("Ciclo de vida de las reservas de vuelos.")));
+                .tags(List.of(
+                        new Tag().name(RESERVATIONS_TAG).description("Ciclo de vida de las reservas de vuelos.")));
     }
 
     private static Info apiInfo() {

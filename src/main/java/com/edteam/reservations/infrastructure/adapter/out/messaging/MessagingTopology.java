@@ -68,6 +68,5 @@ public final class MessagingTopology {
     public static final String SCHEMA_VERSION_HEADER = "x-schema-version";
     public static final String SEQUENCE_HEADER = "x-sequence";
 
-    private MessagingTopology() {
-    }
+    private MessagingTopology() {}
 }

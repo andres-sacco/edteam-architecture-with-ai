@@ -11,15 +11,14 @@ import com.edteam.reservations.domain.event.ReservationCancelled;
 import com.edteam.reservations.domain.event.ReservationConfirmed;
 import com.edteam.reservations.domain.event.ReservationCreated;
 import com.edteam.reservations.domain.event.ReservationModified;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
 import java.time.Clock;
 import java.time.Duration;
 import java.util.Objects;
 import java.util.Set;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Aplica un hecho de reserva recibido por mensajería.
@@ -73,9 +72,8 @@ public class ProcessReservationEventService implements ProcessReservationEventUs
     private final NotificationDeliveryPort notificationDeliveries;
     private final Clock clock;
 
-    public ProcessReservationEventService(ProcessedMessagePort processedMessages,
-                                          NotificationDeliveryPort notificationDeliveries,
-                                          Clock clock) {
+    public ProcessReservationEventService(
+            ProcessedMessagePort processedMessages, NotificationDeliveryPort notificationDeliveries, Clock clock) {
         this.processedMessages = Objects.requireNonNull(processedMessages);
         this.notificationDeliveries = Objects.requireNonNull(notificationDeliveries);
         this.clock = Objects.requireNonNull(clock);
@@ -110,8 +108,12 @@ public class ProcessReservationEventService implements ProcessReservationEventUs
 
         // 4. El efecto.
         notificationDeliveries.deliver(new NotificationDelivery(
-                event.messageId(), event.type(), event.subject(),
-                event.userId(), event.sequence(), event.occurredAt()));
+                event.messageId(),
+                event.type(),
+                event.subject(),
+                event.userId(),
+                event.sequence(),
+                event.occurredAt()));
 
         // El payload no se loguea en INFO: lleva ruta y fecha de viaje, que
         // atadas a un usuario son dato personal. Acá quedan type, subject y
@@ -147,21 +149,18 @@ public class ProcessReservationEventService implements ProcessReservationEventUs
             // Un tipo desconocido no es un mensaje venenoso: es un binding
             // demasiado amplio del lado del consumidor. Se descarta con su
             // motivo en lugar de reintentarse para siempre.
-            throw new UnprocessableEventException(
-                    "Tipo de evento desconocido: '%s'".formatted(event.type()));
+            throw new UnprocessableEventException("Tipo de evento desconocido: '%s'".formatted(event.type()));
         }
         if (event.schemaVersion() != SUPPORTED_SCHEMA_VERSION) {
-            throw new UnprocessableEventException(
-                    "Versión de esquema %d no soportada para '%s' (se entiende la %d)"
-                            .formatted(event.schemaVersion(), event.type(), SUPPORTED_SCHEMA_VERSION));
+            throw new UnprocessableEventException("Versión de esquema %d no soportada para '%s' (se entiende la %d)"
+                    .formatted(event.schemaVersion(), event.type(), SUPPORTED_SCHEMA_VERSION));
         }
         Duration age = Duration.between(event.occurredAt(), clock.instant());
         if (age.compareTo(FRESHNESS_WINDOW) > 0) {
             throw new UnprocessableEventException(
                     ("El hecho '%s' de la reserva %s ocurrió hace %d h y supera la ventana de %d h: "
-                            + "notificarlo ahora es peor que no notificarlo")
-                            .formatted(event.type(), event.subject(), age.toHours(),
-                                    FRESHNESS_WINDOW.toHours()));
+                                    + "notificarlo ahora es peor que no notificarlo")
+                            .formatted(event.type(), event.subject(), age.toHours(), FRESHNESS_WINDOW.toHours()));
         }
     }
 }

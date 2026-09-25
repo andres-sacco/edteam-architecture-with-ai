@@ -1,7 +1,6 @@
 package com.edteam.reservations.application.port.in;
 
 import com.edteam.reservations.domain.access.Actor;
-
 import java.util.List;
 import java.util.Objects;
 
@@ -19,10 +18,8 @@ import java.util.Objects;
  * @param itinerary      itinerario a reservar
  * @param passengers     pasajeros; entre 1 y 9
  */
-public record CreateReservationCommand(Actor actor,
-                                       String idempotencyKey,
-                                       ItineraryData itinerary,
-                                       List<PassengerData> passengers) {
+public record CreateReservationCommand(
+        Actor actor, String idempotencyKey, ItineraryData itinerary, List<PassengerData> passengers) {
 
     public CreateReservationCommand {
         Objects.requireNonNull(actor, "El solicitante es obligatorio");

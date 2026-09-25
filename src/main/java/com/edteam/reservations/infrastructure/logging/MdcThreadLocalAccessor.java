@@ -1,9 +1,8 @@
 package com.edteam.reservations.infrastructure.logging;
 
 import io.micrometer.context.ThreadLocalAccessor;
-import org.slf4j.MDC;
-
 import java.util.Map;
+import org.slf4j.MDC;
 
 /**
  * Enseña a {@code context-propagation} a llevarse el MDC.

@@ -12,14 +12,6 @@ import com.edteam.reservations.infrastructure.logging.Throwables;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tags;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.slf4j.MDC;
-import org.springframework.amqp.core.Message;
-import org.springframework.amqp.core.MessageProperties;
-import org.springframework.amqp.rabbit.annotation.RabbitListener;
-import org.springframework.amqp.rabbit.core.RabbitTemplate;
-
 import java.time.Duration;
 import java.util.Locale;
 import java.util.Map;
@@ -27,6 +19,13 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.regex.Pattern;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
+import org.springframework.amqp.core.Message;
+import org.springframework.amqp.core.MessageProperties;
+import org.springframework.amqp.rabbit.annotation.RabbitListener;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 
 /**
  * Adaptador de entrada: consume la cola de trabajo y delega en el caso de uso.
@@ -104,13 +103,14 @@ public class ReservationEventListener {
     private final Duration maxDelay;
     private final MeterRegistry registry;
 
-    public ReservationEventListener(ProcessReservationEventUseCase processEvent,
-                                    InboundEnvelopeParser parser,
-                                    RabbitTemplate rabbitTemplate,
-                                    int maxAttempts,
-                                    Duration initialDelay,
-                                    Duration maxDelay,
-                                    MeterRegistry registry) {
+    public ReservationEventListener(
+            ProcessReservationEventUseCase processEvent,
+            InboundEnvelopeParser parser,
+            RabbitTemplate rabbitTemplate,
+            int maxAttempts,
+            Duration initialDelay,
+            Duration maxDelay,
+            MeterRegistry registry) {
         this.processEvent = Objects.requireNonNull(processEvent);
         this.parser = Objects.requireNonNull(parser);
         this.rabbitTemplate = Objects.requireNonNull(rabbitTemplate);
@@ -141,8 +141,8 @@ public class ReservationEventListener {
         // aunque el cuerpo sea basura, igual que `InboundEnvelopeParser` ya usa
         // el messageId y el type de las propiedades como respaldo.
         Map<String, String> previousMdc = MDC.getCopyOfContextMap();
-        String amqpCorrelationId = acceptedCorrelationId(
-                message.getMessageProperties().getCorrelationId());
+        String amqpCorrelationId =
+                acceptedCorrelationId(message.getMessageProperties().getCorrelationId());
         if (amqpCorrelationId != null) {
             MDC.put(MDC_CORRELATION_ID, amqpCorrelationId);
         }
@@ -222,8 +222,7 @@ public class ReservationEventListener {
                         .addKeyValue(LogFields.MAX_ATTEMPTS, maxAttempts)
                         .addKeyValue(LogFields.EXCEPTION_CLASS, Throwables.rootClassOf(e))
                         .log("Agotadas las vueltas de reintento: va a la dead letter del consumidor");
-                toDeadLetter(message, attempt,
-                        "agotó las %d vueltas de reintento: %s".formatted(maxAttempts, e));
+                toDeadLetter(message, attempt, "agotó las %d vueltas de reintento: %s".formatted(maxAttempts, e));
             } else {
                 toRetry(message, attempt);
             }
@@ -246,9 +245,7 @@ public class ReservationEventListener {
      * silencio; el mensaje se procesa igual, sólo que sin id.
      */
     private static String acceptedCorrelationId(String claimed) {
-        return claimed != null && ACCEPTED_CORRELATION_ID.matcher(claimed).matches()
-                ? claimed
-                : null;
+        return claimed != null && ACCEPTED_CORRELATION_ID.matcher(claimed).matches() ? claimed : null;
     }
 
     /**

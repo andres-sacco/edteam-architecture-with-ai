@@ -1,8 +1,7 @@
 package com.edteam.reservations.infrastructure.config;
 
-import org.springframework.boot.context.properties.ConfigurationProperties;
-
 import java.time.Duration;
+import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
  * Parámetros del relay del outbox.
@@ -42,15 +41,16 @@ import java.time.Duration;
  *                       cada lectura consulta, que es lo que necesitan los tests
  */
 @ConfigurationProperties(prefix = "reservations.outbox")
-public record OutboxProperties(Duration dispatchInterval,
-                               int batchSize,
-                               int maxAttempts,
-                               Duration retryCeiling,
-                               Duration initialBackoff,
-                               Duration maxBackoff,
-                               Duration claimLease,
-                               Duration retention,
-                               Duration metricsCache) {
+public record OutboxProperties(
+        Duration dispatchInterval,
+        int batchSize,
+        int maxAttempts,
+        Duration retryCeiling,
+        Duration initialBackoff,
+        Duration maxBackoff,
+        Duration claimLease,
+        Duration retention,
+        Duration metricsCache) {
 
     public OutboxProperties {
         if (dispatchInterval == null || dispatchInterval.isNegative() || dispatchInterval.isZero()) {
@@ -127,7 +127,15 @@ public record OutboxProperties(Duration dispatchInterval,
         if (floor == null || claimLease.compareTo(floor) >= 0) {
             return this;
         }
-        return new OutboxProperties(dispatchInterval, batchSize, maxAttempts, retryCeiling,
-                initialBackoff, maxBackoff, floor, retention, metricsCache);
+        return new OutboxProperties(
+                dispatchInterval,
+                batchSize,
+                maxAttempts,
+                retryCeiling,
+                initialBackoff,
+                maxBackoff,
+                floor,
+                retention,
+                metricsCache);
     }
 }

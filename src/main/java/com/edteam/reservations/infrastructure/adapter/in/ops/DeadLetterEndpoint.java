@@ -1,14 +1,13 @@
 package com.edteam.reservations.infrastructure.adapter.in.ops;
 
 import com.edteam.reservations.infrastructure.adapter.out.messaging.DeadLetterQueue;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Objects;
 import org.springframework.boot.actuate.endpoint.annotation.Endpoint;
 import org.springframework.boot.actuate.endpoint.annotation.ReadOperation;
 import org.springframework.boot.actuate.endpoint.annotation.WriteOperation;
 import org.springframework.lang.Nullable;
-
-import java.util.LinkedHashMap;
-import java.util.Map;
-import java.util.Objects;
 
 /**
  * Endpoint {@code messaging-dlq} del puerto de gestión: la dead letter del

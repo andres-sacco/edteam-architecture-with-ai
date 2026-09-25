@@ -13,13 +13,12 @@ import io.github.resilience4j.micrometer.tagged.TaggedBulkheadMetrics;
 import io.github.resilience4j.micrometer.tagged.TaggedCircuitBreakerMetrics;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.binder.MeterBinder;
+import java.time.Clock;
+import java.time.Duration;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-
-import java.time.Clock;
-import java.time.Duration;
 
 /**
  * El cableado de la resiliencia, en un solo lugar.
@@ -64,33 +63,28 @@ public class ResilienceConfiguration {
     }
 
     @Bean
-    public Circuit catalogCircuit(AirportCatalogProperties properties,
-                                  CircuitBreakerRegistry registry,
-                                  Clock clock) {
+    public Circuit catalogCircuit(AirportCatalogProperties properties, CircuitBreakerRegistry registry, Clock clock) {
         return circuit(CATALOG_CIRCUIT, properties.circuitBreaker(), Failures::catalog, registry, clock);
     }
 
     @Bean
-    public Circuit redisCircuit(CacheProperties properties,
-                                CircuitBreakerRegistry registry,
-                                Clock clock) {
+    public Circuit redisCircuit(CacheProperties properties, CircuitBreakerRegistry registry, Clock clock) {
         return circuit(REDIS_CIRCUIT, properties.circuitBreaker(), Failures::cache, registry, clock);
     }
 
     @Bean
-    public Circuit brokerCircuit(MessagingProperties properties,
-                                 CircuitBreakerRegistry registry,
-                                 Clock clock) {
+    public Circuit brokerCircuit(MessagingProperties properties, CircuitBreakerRegistry registry, Clock clock) {
         return circuit(BROKER_CIRCUIT, properties.circuitBreaker(), Failures::broker, registry, clock);
     }
 
-    private static Circuit circuit(String name,
-                                   CircuitBreakerProperties properties,
-                                   java.util.function.Function<Throwable,
-                                           com.edteam.reservations.infrastructure.resilience.FailureClassification>
-                                           classifier,
-                                   CircuitBreakerRegistry registry,
-                                   Clock clock) {
+    private static Circuit circuit(
+            String name,
+            CircuitBreakerProperties properties,
+            java.util.function.Function<
+                            Throwable, com.edteam.reservations.infrastructure.resilience.FailureClassification>
+                    classifier,
+            CircuitBreakerRegistry registry,
+            Clock clock) {
         return Boolean.TRUE.equals(properties.enabled())
                 ? Circuit.of(name, properties, classifier, registry, clock)
                 : Circuit.disabled(name, registry, clock);
@@ -103,10 +97,12 @@ public class ResilienceConfiguration {
      */
     @Bean
     public Bulkhead catalogBulkhead(AirportCatalogProperties properties, BulkheadRegistry registry) {
-        return registry.bulkhead(CATALOG_BULKHEAD, BulkheadConfig.custom()
-                .maxConcurrentCalls(properties.bulkhead().maxConcurrentCalls())
-                .maxWaitDuration(Duration.ZERO)
-                .build());
+        return registry.bulkhead(
+                CATALOG_BULKHEAD,
+                BulkheadConfig.custom()
+                        .maxConcurrentCalls(properties.bulkhead().maxConcurrentCalls())
+                        .maxWaitDuration(Duration.ZERO)
+                        .build());
     }
 
     /**
@@ -120,7 +116,8 @@ public class ResilienceConfiguration {
     @Bean
     public MeterBinder resilienceMetrics(CircuitBreakerRegistry circuitBreakers, BulkheadRegistry bulkheads) {
         return registry -> {
-            TaggedCircuitBreakerMetrics.ofCircuitBreakerRegistry(circuitBreakers).bindTo(registry);
+            TaggedCircuitBreakerMetrics.ofCircuitBreakerRegistry(circuitBreakers)
+                    .bindTo(registry);
             TaggedBulkheadMetrics.ofBulkheadRegistry(bulkheads).bindTo(registry);
         };
     }

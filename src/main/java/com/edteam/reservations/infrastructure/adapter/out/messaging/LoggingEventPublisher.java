@@ -2,10 +2,9 @@ package com.edteam.reservations.infrastructure.adapter.out.messaging;
 
 import com.edteam.reservations.application.outbox.OutboxMessage;
 import com.edteam.reservations.application.port.out.EventPublisherPort;
+import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import java.util.Objects;
 
 /**
  * Publicador de reemplazo: escribe una línea y devuelve.
@@ -48,8 +47,13 @@ public class LoggingEventPublisher implements EventPublisherPort {
         // viaje, que atadas a un usuario sí son dato personal: va a DEBUG,
         // apagado en producción, donde el destino de estos logs es un SaaS de
         // observabilidad.
-        log.warn("[mensajería APAGADA] no se publica nada: type={} subject={} messageId={} sequence={} source={}",
-                message.type(), message.subject(), message.id(), message.sequence(), source);
+        log.warn(
+                "[mensajería APAGADA] no se publica nada: type={} subject={} messageId={} sequence={} source={}",
+                message.type(),
+                message.subject(),
+                message.id(),
+                message.sequence(),
+                source);
         log.debug("[mensajería APAGADA] messageId={} payload={}", message.id(), message.payload());
     }
 }

@@ -1,9 +1,9 @@
 package com.edteam.reservations.infrastructure.logging;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-
-import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Log forging desde un proveedor externo.
@@ -30,8 +30,7 @@ class LogSanitizerTest {
     @Test
     @DisplayName("neutraliza el retorno de carro y las secuencias de escape de la terminal")
     void neutralisesControlCharacters() {
-        assertThat(LogSanitizer.sanitize("a\rb\tc\u001b[31md"))
-                .isEqualTo("a b c [31md");
+        assertThat(LogSanitizer.sanitize("a\rb\tc\u001b[31md")).isEqualTo("a b c [31md");
     }
 
     @Test

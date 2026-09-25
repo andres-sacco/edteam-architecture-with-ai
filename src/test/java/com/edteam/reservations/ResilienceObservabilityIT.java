@@ -1,7 +1,12 @@
 package com.edteam.reservations;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
 import com.edteam.reservations.infrastructure.config.ResilienceConfiguration;
 import com.edteam.reservations.support.AbstractPostgresIT;
+import com.edteam.reservations.support.SecurityTestSupport;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.prometheusmetrics.PrometheusMeterRegistry;
 import org.junit.jupiter.api.DisplayName;
@@ -9,12 +14,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.actuate.observability.AutoConfigureObservability;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import com.edteam.reservations.support.SecurityTestSupport;
 import org.springframework.test.web.servlet.MockMvc;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
  * Se puede saber, sin entrar al servidor, si un circuito está abierto y hace
@@ -48,23 +48,25 @@ class ResilienceObservabilityIT extends AbstractPostgresIT {
                 .as("el scrape necesita un registro de Prometheus, no el simple de los tests")
                 .isInstanceOf(PrometheusMeterRegistry.class);
 
-        mockMvc.perform(get("/actuator/prometheus").with(SecurityTestSupport.asOwner())).andExpect(status().isOk());
+        mockMvc.perform(get("/actuator/prometheus").with(SecurityTestSupport.asOwner()))
+                .andExpect(status().isOk());
     }
 
     @Test
     @DisplayName("el estado de los tres circuitos se publica con su nombre")
     void thethreeCircuitStatesArePublished() throws Exception {
         String scrape = mockMvc.perform(get("/actuator/prometheus").with(SecurityTestSupport.asOwner()))
-                .andReturn().getResponse().getContentAsString();
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
 
         assertThat(scrape).contains("resilience4j_circuitbreaker_state");
-        for (String circuit : new String[]{
-                ResilienceConfiguration.CATALOG_CIRCUIT,
-                ResilienceConfiguration.REDIS_CIRCUIT,
-                ResilienceConfiguration.BROKER_CIRCUIT}) {
-            assertThat(scrape)
-                    .as("estado del circuito '%s'", circuit)
-                    .contains("name=\"" + circuit + "\"");
+        for (String circuit : new String[] {
+            ResilienceConfiguration.CATALOG_CIRCUIT,
+            ResilienceConfiguration.REDIS_CIRCUIT,
+            ResilienceConfiguration.BROKER_CIRCUIT
+        }) {
+            assertThat(scrape).as("estado del circuito '%s'", circuit).contains("name=\"" + circuit + "\"");
         }
     }
 
@@ -72,7 +74,9 @@ class ResilienceObservabilityIT extends AbstractPostgresIT {
     @DisplayName("se publican las llamadas que el circuito NO permitió: es lo que mide cuánto ahorró")
     void theCallsTheCircuitRefusedArePublished() throws Exception {
         String scrape = mockMvc.perform(get("/actuator/prometheus").with(SecurityTestSupport.asOwner()))
-                .andReturn().getResponse().getContentAsString();
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
 
         assertThat(scrape).contains("resilience4j_circuitbreaker_calls");
         assertThat(scrape).contains("resilience4j_bulkhead_available_concurrent_calls");

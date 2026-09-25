@@ -1,15 +1,14 @@
 package com.edteam.reservations.infrastructure.cache;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
 import com.edteam.reservations.support.MutableClock;
 import com.edteam.reservations.support.TestFixtures;
+import java.time.Duration;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-
-import java.time.Duration;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @DisplayName("InMemoryCacheStore")
 class InMemoryCacheStoreTest {
@@ -126,9 +125,7 @@ class InMemoryCacheStoreTest {
     @Test
     @DisplayName("exige clock y un tope positivo")
     void validatesConstructorArguments() {
-        assertThatThrownBy(() -> new InMemoryCacheStore(null, 10))
-                .isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() -> new InMemoryCacheStore(clock, 0))
-                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new InMemoryCacheStore(null, 10)).isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> new InMemoryCacheStore(clock, 0)).isInstanceOf(IllegalArgumentException.class);
     }
 }

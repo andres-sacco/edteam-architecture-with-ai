@@ -2,7 +2,6 @@ package com.edteam.reservations.application.port.out;
 
 import com.edteam.reservations.domain.model.Email;
 import com.edteam.reservations.domain.model.User;
-
 import java.util.Optional;
 
 /** Persistencia del maestro de usuarios. */

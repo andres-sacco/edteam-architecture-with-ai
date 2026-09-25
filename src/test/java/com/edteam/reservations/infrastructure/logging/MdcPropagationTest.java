@@ -1,20 +1,19 @@
 package com.edteam.reservations.infrastructure.logging;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import io.micrometer.context.ContextRegistry;
 import io.micrometer.context.ContextSnapshot;
 import io.micrometer.context.ContextSnapshotFactory;
 import io.micrometer.context.ThreadLocalAccessor;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-import org.slf4j.MDC;
-
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-
-import static org.assertj.core.api.Assertions.assertThat;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.slf4j.MDC;
 
 /**
  * Los tres saltos de correlación que la auditoría encontró rotos, uno por test.
@@ -49,11 +48,14 @@ class MdcPropagationTest {
         ContextSnapshot snapshot = ContextSnapshotFactory.builder().build().captureAll();
 
         try (ExecutorService workers = Executors.newVirtualThreadPerTaskExecutor()) {
-            String seenInsideTheTask = CompletableFuture.supplyAsync(() -> {
-                try (ContextSnapshot.Scope ignored = snapshot.setThreadLocals()) {
-                    return MDC.get(LogFields.CORRELATION_ID);
-                }
-            }, workers).get();
+            String seenInsideTheTask = CompletableFuture.supplyAsync(
+                            () -> {
+                                try (ContextSnapshot.Scope ignored = snapshot.setThreadLocals()) {
+                                    return MDC.get(LogFields.CORRELATION_ID);
+                                }
+                            },
+                            workers)
+                    .get();
 
             assertThat(seenInsideTheTask).isEqualTo("audit-0000-0001");
         }
@@ -66,14 +68,18 @@ class MdcPropagationTest {
         ContextSnapshot snapshot = ContextSnapshotFactory.builder().build().captureAll();
 
         try (ExecutorService workers = Executors.newVirtualThreadPerTaskExecutor()) {
-            String afterTheScope = CompletableFuture.supplyAsync(() -> {
-                try (ContextSnapshot.Scope ignored = snapshot.setThreadLocals()) {
-                    assertThat(MDC.get(LogFields.CORRELATION_ID)).isEqualTo("audit-0000-0001");
-                }
-                // Fuera del scope, nada: un id que sobrevive al pedido le miente
-                // al siguiente que tome ese hilo.
-                return MDC.get(LogFields.CORRELATION_ID);
-            }, workers).get();
+            String afterTheScope = CompletableFuture.supplyAsync(
+                            () -> {
+                                try (ContextSnapshot.Scope ignored = snapshot.setThreadLocals()) {
+                                    assertThat(MDC.get(LogFields.CORRELATION_ID))
+                                            .isEqualTo("audit-0000-0001");
+                                }
+                                // Fuera del scope, nada: un id que sobrevive al pedido le miente
+                                // al siguiente que tome ese hilo.
+                                return MDC.get(LogFields.CORRELATION_ID);
+                            },
+                            workers)
+                    .get();
 
             assertThat(afterTheScope).isNull();
         }
@@ -85,10 +91,12 @@ class MdcPropagationTest {
         MdcTaskDecorator decorator = new MdcTaskDecorator();
         StringBuilder seen = new StringBuilder();
 
-        decorator.decorate(() -> {
-            MdcTaskDecorator.adopt("outbox-relay");
-            seen.append(MDC.get(LogFields.CORRELATION_ID));
-        }).run();
+        decorator
+                .decorate(() -> {
+                    MdcTaskDecorator.adopt("outbox-relay");
+                    seen.append(MDC.get(LogFields.CORRELATION_ID));
+                })
+                .run();
 
         assertThat(seen.toString())
                 .startsWith("job-outbox-relay-")
@@ -105,7 +113,9 @@ class MdcPropagationTest {
         MDC.put(LogFields.CORRELATION_ID, "id-de-la-corrida");
         MDC.put("otro", "valor");
 
-        new MdcTaskDecorator().decorate(() -> MdcTaskDecorator.adopt("messaging-purge")).run();
+        new MdcTaskDecorator()
+                .decorate(() -> MdcTaskDecorator.adopt("messaging-purge"))
+                .run();
 
         assertThat(MDC.get(LogFields.CORRELATION_ID)).isEqualTo("id-de-la-corrida");
         assertThat(MDC.get("otro")).isEqualTo("valor");
@@ -118,7 +128,9 @@ class MdcPropagationTest {
         // `MDC.setContextMap(null)` tira IllegalArgumentException, y el caso
         // «no había nada» es el normal en el hilo del scheduler.
         MDC.clear();
-        new MdcTaskDecorator().decorate(() -> MdcTaskDecorator.adopt("outbox-relay")).run();
+        new MdcTaskDecorator()
+                .decorate(() -> MdcTaskDecorator.adopt("outbox-relay"))
+                .run();
         assertThat(MDC.getCopyOfContextMap()).isNullOrEmpty();
     }
 

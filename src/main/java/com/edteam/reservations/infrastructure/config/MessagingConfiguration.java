@@ -14,6 +14,7 @@ import com.edteam.reservations.infrastructure.adapter.out.messaging.UnavailableD
 import com.edteam.reservations.infrastructure.resilience.Circuit;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.time.Clock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.core.Binding;
@@ -32,8 +33,6 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-
-import java.time.Clock;
 
 /**
  * Cableado de la mensajería.
@@ -79,20 +78,29 @@ public class MessagingConfiguration {
      */
     @Bean
     @ConditionalOnProperty(name = "reservations.messaging.enabled", havingValue = "true", matchIfMissing = true)
-    public EventPublisherPort rabbitEventPublisher(RabbitTemplate rabbitTemplate,
-                                                   ObjectMapper objectMapper,
-                                                   MessagingProperties properties,
-                                                   Circuit brokerCircuit,
-                                                   Clock clock) {
-        log.info("Mensajería: publicando a '{}' como '{}' (confirm {} ms, con circuito)",
-                properties.exchange(), properties.source(), properties.confirmTimeout().toMillis());
+    public EventPublisherPort rabbitEventPublisher(
+            RabbitTemplate rabbitTemplate,
+            ObjectMapper objectMapper,
+            MessagingProperties properties,
+            Circuit brokerCircuit,
+            Clock clock) {
+        log.info(
+                "Mensajería: publicando a '{}' como '{}' (confirm {} ms, con circuito)",
+                properties.exchange(),
+                properties.source(),
+                properties.confirmTimeout().toMillis());
         // El circuito por fuera del publicador, y el gate del scheduler por
         // fuera del caso de uso: el primero evita pagar connect + confirm por
         // mensaje, el segundo evita reclamar el lote de la base para
         // descartarlo. Los dos hacen falta.
         return new CircuitBreakingEventPublisher(
-                new RabbitEventPublisher(rabbitTemplate, objectMapper, properties.exchange(),
-                        properties.source(), properties.confirmTimeout(), clock),
+                new RabbitEventPublisher(
+                        rabbitTemplate,
+                        objectMapper,
+                        properties.exchange(),
+                        properties.source(),
+                        properties.confirmTimeout(),
+                        clock),
                 brokerCircuit);
     }
 
@@ -418,12 +426,20 @@ public class MessagingConfiguration {
             @Qualifier("consumerRabbitTemplate") RabbitTemplate rabbitTemplate,
             MessagingProperties properties,
             MeterRegistry registry) {
-        log.info("Mensajería: consumidor de referencia levantado sobre '{}' ({} vueltas, backoff de {} ms a {} ms)",
-                MessagingTopology.CONSUMER_QUEUE, properties.maxRetryRounds(),
-                properties.retryDelay().toMillis(), properties.maxRetryDelay().toMillis());
-        return new ReservationEventListener(processEvent, new InboundEnvelopeParser(objectMapper),
-                rabbitTemplate, properties.maxRetryRounds(),
-                properties.retryDelay(), properties.maxRetryDelay(), registry);
+        log.info(
+                "Mensajería: consumidor de referencia levantado sobre '{}' ({} vueltas, backoff de {} ms a {} ms)",
+                MessagingTopology.CONSUMER_QUEUE,
+                properties.maxRetryRounds(),
+                properties.retryDelay().toMillis(),
+                properties.maxRetryDelay().toMillis());
+        return new ReservationEventListener(
+                processEvent,
+                new InboundEnvelopeParser(objectMapper),
+                rabbitTemplate,
+                properties.maxRetryRounds(),
+                properties.retryDelay(),
+                properties.maxRetryDelay(),
+                registry);
     }
 
     // -----------------------------------------------------------------

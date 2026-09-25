@@ -1,5 +1,9 @@
 package com.edteam.reservations.application.service;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatNullPointerException;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
 import com.edteam.reservations.application.port.in.ItineraryData;
 import com.edteam.reservations.application.port.in.PassengerData;
 import com.edteam.reservations.domain.exception.InvalidAirportCodeException;
@@ -9,16 +13,11 @@ import com.edteam.reservations.domain.exception.InvalidPassengerException;
 import com.edteam.reservations.domain.model.Itinerary;
 import com.edteam.reservations.domain.model.Passenger;
 import com.edteam.reservations.support.TestFixtures;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatNullPointerException;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 
 @DisplayName("ItineraryAssembler")
 class ItineraryAssemblerTest {
@@ -55,33 +54,38 @@ class ItineraryAssemblerTest {
         assertThat(passengers).hasSize(2);
         assertThat(passengers.getFirst().documentNumber()).contains("30123456");
         assertThat(passengers.getLast().documentNumber()).isEmpty();
-        assertThat(passengers).allSatisfy(passenger -> assertThat(passenger.id()).isEmpty());
+        assertThat(passengers)
+                .allSatisfy(passenger -> assertThat(passenger.id()).isEmpty());
     }
 
     @Test
     @DisplayName("propaga las validaciones del dominio en la traducción")
     void propagatesDomainValidations() {
-        ItineraryData codigoInvalido = new ItineraryData(BigDecimal.TEN, "USD",
+        ItineraryData codigoInvalido = new ItineraryData(
+                BigDecimal.TEN,
+                "USD",
                 List.of(TestFixtures.segmentData(TestFixtures.EZE, TestFixtures.SCL, TestFixtures.DEPARTURE)));
         assertThat(assembler.toItinerary(codigoInvalido)).isNotNull();
 
         ItineraryData sinSegmentos = new ItineraryData(BigDecimal.TEN, "USD", List.of());
-        assertThatThrownBy(() -> assembler.toItinerary(sinSegmentos))
-                .isInstanceOf(InvalidItineraryException.class);
+        assertThatThrownBy(() -> assembler.toItinerary(sinSegmentos)).isInstanceOf(InvalidItineraryException.class);
 
-        ItineraryData monedaInvalida = new ItineraryData(BigDecimal.TEN, "DOLARES",
+        ItineraryData monedaInvalida = new ItineraryData(
+                BigDecimal.TEN,
+                "DOLARES",
                 List.of(TestFixtures.segmentData(TestFixtures.EZE, TestFixtures.SCL, TestFixtures.DEPARTURE)));
-        assertThatThrownBy(() -> assembler.toItinerary(monedaInvalida))
-                .isInstanceOf(InvalidMoneyException.class);
+        assertThatThrownBy(() -> assembler.toItinerary(monedaInvalida)).isInstanceOf(InvalidMoneyException.class);
 
-        ItineraryData aeropuertoInvalido = new ItineraryData(BigDecimal.TEN, "USD",
+        ItineraryData aeropuertoInvalido = new ItineraryData(
+                BigDecimal.TEN,
+                "USD",
                 List.of(new com.edteam.reservations.application.port.in.SegmentData(
                         "EZEE", "SCL", TestFixtures.AIRLINE, TestFixtures.DEPARTURE)));
         assertThatThrownBy(() -> assembler.toItinerary(aeropuertoInvalido))
                 .isInstanceOf(InvalidAirportCodeException.class);
 
-        assertThatThrownBy(() -> assembler.toPassengers(
-                List.of(new PassengerData("", "Pérez", LocalDate.of(1990, 5, 20), "1"))))
+        assertThatThrownBy(() ->
+                        assembler.toPassengers(List.of(new PassengerData("", "Pérez", LocalDate.of(1990, 5, 20), "1"))))
                 .isInstanceOf(InvalidPassengerException.class);
     }
 

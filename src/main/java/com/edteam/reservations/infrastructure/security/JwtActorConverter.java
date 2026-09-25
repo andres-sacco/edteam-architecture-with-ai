@@ -6,6 +6,11 @@ import com.edteam.reservations.domain.exception.InvalidUserException;
 import com.edteam.reservations.domain.model.Email;
 import com.edteam.reservations.infrastructure.logging.ActorRef;
 import com.edteam.reservations.infrastructure.logging.LogFields;
+import java.util.Collection;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -13,12 +18,6 @@ import org.springframework.core.convert.converter.Converter;
 import org.springframework.security.authentication.AbstractAuthenticationToken;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.InvalidBearerTokenException;
-
-import java.util.Collection;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Locale;
-import java.util.Set;
 
 /**
  * Traduce el token validado al {@link Actor} del dominio.
@@ -146,7 +145,9 @@ public class JwtActorConverter implements Converter<Jwt, AbstractAuthenticationT
             switch (claimed.toUpperCase(Locale.ROOT)) {
                 case "BACKOFFICE", "PARTNER" -> roles.add(ActorRole.BACKOFFICE);
                 case "CUSTOMER" -> roles.add(ActorRole.CUSTOMER);
-                default -> { /* rol que no conocemos: no otorga nada */ }
+                default -> {
+                    /* rol que no conocemos: no otorga nada */
+                }
             }
         }
         if (roles.isEmpty()) {
@@ -158,7 +159,10 @@ public class JwtActorConverter implements Converter<Jwt, AbstractAuthenticationT
     private static Collection<String> rawRoles(Jwt jwt) {
         Object claim = jwt.getClaim(ROLES_CLAIM);
         if (claim instanceof Collection<?> values) {
-            return values.stream().filter(String.class::isInstance).map(String.class::cast).toList();
+            return values.stream()
+                    .filter(String.class::isInstance)
+                    .map(String.class::cast)
+                    .toList();
         }
         // 'scope' es un string separado por espacios: es lo que dice la RFC 6749.
         String scope = stringClaim(jwt, SCOPE_CLAIM);

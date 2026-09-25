@@ -27,6 +27,5 @@ public final class ApiFormats {
     /** Criterio de orden admitido en el listado: {@code campo,dirección}. */
     public static final String SORT = "^(createdAt|firstDepartureAt),(asc|desc)$";
 
-    private ApiFormats() {
-    }
+    private ApiFormats() {}
 }

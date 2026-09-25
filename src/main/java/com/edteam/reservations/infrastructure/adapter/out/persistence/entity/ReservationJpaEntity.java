@@ -14,13 +14,12 @@ import jakarta.persistence.ManyToMany;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
-import org.hibernate.annotations.JdbcTypeCode;
-import org.hibernate.type.SqlTypes;
-
 import java.time.Instant;
 import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.UUID;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 /**
  * Tabla {@code reserva}.
@@ -78,7 +77,8 @@ public class ReservationJpaEntity {
     private UUID idempotencyKey;
 
     @ManyToMany(fetch = FetchType.LAZY)
-    @JoinTable(name = "reserva_pasajero",
+    @JoinTable(
+            name = "reserva_pasajero",
             joinColumns = @JoinColumn(name = "reserva_id"),
             inverseJoinColumns = @JoinColumn(name = "pasajero_id"))
     private Set<PassengerJpaEntity> passengers = new LinkedHashSet<>();
@@ -87,13 +87,14 @@ public class ReservationJpaEntity {
         // Requerido por JPA.
     }
 
-    public ReservationJpaEntity(UserJpaEntity user,
-                                ItineraryJpaEntity itinerary,
-                                ReservationStatusJpa status,
-                                Instant createdAt,
-                                Instant updatedAt,
-                                UUID idempotencyKey,
-                                Set<PassengerJpaEntity> passengers) {
+    public ReservationJpaEntity(
+            UserJpaEntity user,
+            ItineraryJpaEntity itinerary,
+            ReservationStatusJpa status,
+            Instant createdAt,
+            Instant updatedAt,
+            UUID idempotencyKey,
+            Set<PassengerJpaEntity> passengers) {
         this.user = user;
         this.itinerary = itinerary;
         this.status = status;

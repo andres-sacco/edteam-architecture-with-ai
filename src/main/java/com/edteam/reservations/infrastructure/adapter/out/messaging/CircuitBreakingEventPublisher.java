@@ -5,7 +5,6 @@ import com.edteam.reservations.application.outbox.OutboxMessage;
 import com.edteam.reservations.application.port.out.EventPublisherPort;
 import com.edteam.reservations.infrastructure.resilience.Circuit;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
-
 import java.util.Objects;
 
 /**

@@ -1,8 +1,7 @@
 package com.edteam.reservations.infrastructure.config;
 
-import org.springframework.boot.context.properties.ConfigurationProperties;
-
 import java.time.Duration;
+import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
  * Parámetros del cache.
@@ -44,12 +43,13 @@ import java.time.Duration;
  * @param redis                 configuración del almacén distribuido
  */
 @ConfigurationProperties(prefix = "reservations.cache")
-public record CacheProperties(Integer maxEntries,
-                              Integer cityFallbackMaxEntries,
-                              Duration reservationCountTtl,
-                              Duration reservationVersionTtl,
-                              Redis redis,
-                              CircuitBreakerProperties circuitBreaker) {
+public record CacheProperties(
+        Integer maxEntries,
+        Integer cityFallbackMaxEntries,
+        Duration reservationCountTtl,
+        Duration reservationVersionTtl,
+        Redis redis,
+        CircuitBreakerProperties circuitBreaker) {
 
     /**
      * Umbrales por defecto del circuito de Redis.
@@ -67,8 +67,7 @@ public record CacheProperties(Integer maxEntries,
      * volvió, y cada ronda de prueba cuesta cinco timeouts.
      */
     private static final CircuitBreakerProperties CIRCUIT_DEFAULTS = new CircuitBreakerProperties(
-            true, 100, 30, 50, Duration.ofMillis(150), 60,
-            Duration.ofSeconds(10), 5, true, Duration.ofMinutes(10));
+            true, 100, 30, 50, Duration.ofMillis(150), 60, Duration.ofSeconds(10), 5, true, Duration.ofMinutes(10));
 
     public CacheProperties {
         if (maxEntries == null || maxEntries <= 0) {
@@ -90,6 +89,5 @@ public record CacheProperties(Integer maxEntries,
     }
 
     /** @param enabled {@code true} para usar Redis; {@code false} deja el cache en memoria */
-    public record Redis(boolean enabled) {
-    }
+    public record Redis(boolean enabled) {}
 }

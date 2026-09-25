@@ -35,8 +35,7 @@ public final class OpsActor {
     /** Valor cuando la acción no viene de una persona autenticada. */
     public static final String SYSTEM = "system";
 
-    private OpsActor() {
-    }
+    private OpsActor() {}
 
     public static String current() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();

@@ -30,8 +30,7 @@ import java.util.Set;
  */
 public final class PublishedMetrics {
 
-    private PublishedMetrics() {
-    }
+    private PublishedMetrics() {}
 
     /** Series de la aplicación, más las de Actuator que los paneles usan. */
     public static final Set<String> NAMES = Set.of(

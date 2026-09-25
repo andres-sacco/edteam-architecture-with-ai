@@ -1,5 +1,11 @@
 package com.edteam.reservations.infrastructure.security;
 
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+import java.util.Objects;
+import javax.crypto.spec.SecretKeySpec;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
@@ -11,13 +17,6 @@ import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtTimestampValidator;
 import org.springframework.security.oauth2.jwt.JwtValidators;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
-
-import javax.crypto.spec.SecretKeySpec;
-import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.List;
-import java.util.Objects;
 
 /**
  * Arma el decodificador del token Bearer según cómo esté configurado el
@@ -44,15 +43,15 @@ public final class JwtDecoderFactory {
 
     private static final String HMAC_ALGORITHM = "HmacSHA256";
 
-    private JwtDecoderFactory() {
-    }
+    private JwtDecoderFactory() {}
 
     public static JwtDecoder create(SecurityProperties.Jwt properties) {
         Objects.requireNonNull(properties, "La configuración del token es obligatoria");
 
         if (properties.hasJwkSetUri()) {
             log.info("Tokens Bearer: se validan contra el JWKS de {}", properties.jwkSetUri());
-            return withValidators(NimbusJwtDecoder.withJwkSetUri(properties.jwkSetUri()).build(), properties);
+            return withValidators(
+                    NimbusJwtDecoder.withJwkSetUri(properties.jwkSetUri()).build(), properties);
         }
         if (!properties.devTokensEnabled()) {
             throw new IllegalStateException("""
@@ -78,9 +77,8 @@ public final class JwtDecoderFactory {
         }
         byte[] key = properties.devSecret().getBytes(StandardCharsets.UTF_8);
         if (key.length < MIN_SECRET_BYTES) {
-            throw new IllegalStateException(
-                    "La clave de desarrollo necesita al menos %d bytes y tiene %d"
-                            .formatted(MIN_SECRET_BYTES, key.length));
+            throw new IllegalStateException("La clave de desarrollo necesita al menos %d bytes y tiene %d"
+                    .formatted(MIN_SECRET_BYTES, key.length));
         }
         // Ver el comentario equivalente en PiiCipher: un evento, un registro.
         log.atWarn()
@@ -90,19 +88,20 @@ public final class JwtDecoderFactory {
                 .addKeyValue("remediation", "reservations.security.jwt.jwk-set-uri + dev-tokens=false")
                 .log("Se aceptan tokens firmados con una clave simétrica conocida");
         return withValidators(
-                NimbusJwtDecoder.withSecretKey(new SecretKeySpec(key, HMAC_ALGORITHM)).build(), properties);
+                NimbusJwtDecoder.withSecretKey(new SecretKeySpec(key, HMAC_ALGORITHM))
+                        .build(),
+                properties);
     }
 
     private static NimbusJwtDecoder withValidators(NimbusJwtDecoder decoder, SecurityProperties.Jwt properties) {
-        Collection<OAuth2TokenValidator<Jwt>> validators =
-                new ArrayList<>(List.of(new JwtTimestampValidator()));
+        Collection<OAuth2TokenValidator<Jwt>> validators = new ArrayList<>(List.of(new JwtTimestampValidator()));
 
         if (properties.hasIssuer()) {
             validators.add(JwtValidators.createDefaultWithIssuer(properties.issuer()));
         }
         if (properties.hasAudience()) {
-            validators.add(new JwtClaimValidator<List<String>>(JwtClaimNames.AUD,
-                    audiences -> audiences != null && audiences.contains(properties.audience())));
+            validators.add(new JwtClaimValidator<List<String>>(
+                    JwtClaimNames.AUD, audiences -> audiences != null && audiences.contains(properties.audience())));
         }
         decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(validators));
         return decoder;
@@ -114,7 +113,8 @@ public final class JwtDecoderFactory {
      * esté en el camino: bastaría con servir otro juego de claves.
      */
     public static void requireSecureJwkSetUri(SecurityProperties.Jwt properties) {
-        if (properties.hasJwkSetUri() && !properties.jwkSetUri().startsWith("https://")
+        if (properties.hasJwkSetUri()
+                && !properties.jwkSetUri().startsWith("https://")
                 && !properties.jwkSetUri().startsWith("http://localhost")) {
             throw new IllegalStateException(
                     "El JWKS tiene que servirse por HTTPS: '%s' no lo hace".formatted(properties.jwkSetUri()));

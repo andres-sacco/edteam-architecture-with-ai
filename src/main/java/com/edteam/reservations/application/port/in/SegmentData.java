@@ -10,10 +10,8 @@ import java.util.Objects;
  * entrada, que no deben construir value objects del dominio. La traducción
  * —con sus validaciones— ocurre en un solo lugar.
  */
-public record SegmentData(String originAirportCode,
-                          String destinationAirportCode,
-                          String airline,
-                          Instant departureAt) {
+public record SegmentData(
+        String originAirportCode, String destinationAirportCode, String airline, Instant departureAt) {
 
     public SegmentData {
         Objects.requireNonNull(departureAt, "departureAt es obligatorio");

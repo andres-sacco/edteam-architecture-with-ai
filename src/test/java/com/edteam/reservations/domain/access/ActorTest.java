@@ -1,14 +1,13 @@
 package com.edteam.reservations.domain.access;
 
-import com.edteam.reservations.domain.exception.InvalidUserException;
-import com.edteam.reservations.domain.model.Email;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-
-import java.util.Set;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import com.edteam.reservations.domain.exception.InvalidUserException;
+import com.edteam.reservations.domain.model.Email;
+import java.util.Set;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 
 @DisplayName("Actor")
 class ActorTest {
@@ -27,14 +26,14 @@ class ActorTest {
     @Test
     @DisplayName("backoffice sí")
     void backofficeActsForOthers() {
-        assertThat(Actor.backoffice(EMAIL, "Ana", "Pérez").actsOnBehalfOfOthers()).isTrue();
+        assertThat(Actor.backoffice(EMAIL, "Ana", "Pérez").actsOnBehalfOfOthers())
+                .isTrue();
     }
 
     @Test
     @DisplayName("un actor sin roles no existe: el privilegio se otorga, no se deduce")
     void rejectsAnActorWithoutRoles() {
-        assertThatThrownBy(() -> new Actor(EMAIL, "Ana", "Pérez", Set.of()))
-                .isInstanceOf(InvalidUserException.class);
+        assertThatThrownBy(() -> new Actor(EMAIL, "Ana", "Pérez", Set.of())).isInstanceOf(InvalidUserException.class);
     }
 
     @Test
@@ -51,8 +50,7 @@ class ActorTest {
     @Test
     @DisplayName("exige identidad")
     void requiresAnEmail() {
-        assertThatThrownBy(() -> Actor.customer(null, "Ana", "Pérez"))
-                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> Actor.customer(null, "Ana", "Pérez")).isInstanceOf(NullPointerException.class);
     }
 
     @Test

@@ -29,15 +29,13 @@ import java.util.List;
  * @param cancelledAt momento de la cancelación; {@code null} si la reserva no
  *                    está cancelada
  */
-@Schema(name = "Reservation",
-        description = """
+@Schema(name = "Reservation", description = """
                 Representación de una reserva.
 
                 No incluye el número de versión interno: la concurrencia se maneja con
                 `ETag` / `If-Match`. Tampoco la clave de idempotencia, que identifica un
                 intento de creación y no le sirve a quien lee la reserva.""")
 public record ReservationResponse(
-
         @Schema(description = "Identificador opaco de la reserva.", example = "1042")
         String id,
 
@@ -51,8 +49,7 @@ public record ReservationResponse(
                 interno de la base no se expone: el email es lo que el cliente conoce y
                 lo que no cambia de significado entre entornos.
 
-                El nombre y el apellido del usuario no forman parte de este recurso.""",
-                example = "ana.perez@example.com")
+                El nombre y el apellido del usuario no forman parte de este recurso.""", example = "ana.perez@example.com")
         String userId,
 
         ItineraryResponse itinerary,
@@ -63,12 +60,11 @@ public record ReservationResponse(
         @Schema(description = "Momento de creación, en UTC.", example = "2026-09-22T14:03:11Z")
         Instant createdAt,
 
-        @Schema(description = "Momento de la última modificación, en UTC.",
-                example = "2026-09-22T14:03:11Z")
+        @Schema(description = "Momento de la última modificación, en UTC.", example = "2026-09-22T14:03:11Z")
         Instant updatedAt,
 
-        @Schema(description = "Momento de la cancelación, en UTC. Nulo si la reserva no "
-                + "está cancelada.",
-                example = "null", nullable = true)
-        Instant cancelledAt) {
-}
+        @Schema(
+                description = "Momento de la cancelación, en UTC. Nulo si la reserva no " + "está cancelada.",
+                example = "null",
+                nullable = true)
+        Instant cancelledAt) {}

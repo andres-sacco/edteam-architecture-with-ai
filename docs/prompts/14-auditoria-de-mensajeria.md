@@ -61,4 +61,3 @@ Para **cada hallazgo**, además del problema, definir **cómo detectarlo de form
 3. **Mitigación propuesta** por hallazgo, en una o dos líneas, sin escribir el código.
 4. **Limitaciones asumidas**, listadas aparte con el motivo por el que no son hallazgos.
 5. **Orden sugerido de remediación**, con el criterio usado para ordenarlo.
-

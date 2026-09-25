@@ -29,4 +29,3 @@ Diseñar el modelo de datos normalizado hasta 3FN.
 ## Formato de salida
 
 Diagrama entidad-relación descrito y script DDL de creación de tablas.
-

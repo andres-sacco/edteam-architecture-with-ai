@@ -2,13 +2,12 @@ package com.edteam.reservations.infrastructure.adapter.out.inbox;
 
 import com.edteam.reservations.application.port.out.ProcessedMessagePort;
 import com.edteam.reservations.infrastructure.jdbc.Utc;
-import org.springframework.dao.DuplicateKeyException;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Repository;
-
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Objects;
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Repository;
 
 /**
  * Deduplicación del consumidor sobre PostgreSQL.
@@ -68,7 +67,6 @@ public class JdbcProcessedMessageStore implements ProcessedMessagePort {
     @Override
     public int purgeProcessedBefore(Instant limit) {
         Objects.requireNonNull(limit, "El límite es obligatorio");
-        return jdbcTemplate.update(
-                "DELETE FROM processed_message WHERE processed_at < ?", Utc.param(limit));
+        return jdbcTemplate.update("DELETE FROM processed_message WHERE processed_at < ?", Utc.param(limit));
     }
 }

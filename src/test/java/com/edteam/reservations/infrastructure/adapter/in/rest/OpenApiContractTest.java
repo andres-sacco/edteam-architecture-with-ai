@@ -1,5 +1,12 @@
 package com.edteam.reservations.infrastructure.adapter.in.rest;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
 import com.edteam.reservations.application.exception.ReservationNotFoundException;
 import com.edteam.reservations.application.port.in.CancelReservationUseCase;
 import com.edteam.reservations.application.port.in.CreateReservationUseCase;
@@ -14,6 +21,12 @@ import com.edteam.reservations.support.WebSliceConfiguration;
 import com.edteam.reservations.support.WithMockActor;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -31,20 +44,6 @@ import org.springframework.web.method.HandlerMethod;
 import org.springframework.web.servlet.mvc.condition.PathPatternsRequestCondition;
 import org.springframework.web.servlet.mvc.method.RequestMappingInfo;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
-
-import java.util.Iterator;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.Set;
-import java.util.TreeSet;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.when;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
  * Verifica que el documento que genera springdoc describa de verdad esta API.
@@ -65,18 +64,23 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  *   <li>el cuerpo de una respuesta de error real, propiedad por propiedad.</li>
  * </ol>
  */
-@WebMvcTest(properties = {
-        "reservations.security.rate-limit.enabled=false",
-        // Apagado por defecto en application.yml; acá se lo enciende para
-        // poder leer el documento que este test verifica.
-        "springdoc.api-docs.enabled=true"
+@WebMvcTest(
+        properties = {
+            "reservations.security.rate-limit.enabled=false",
+            // Apagado por defecto en application.yml; acá se lo enciende para
+            // poder leer el documento que este test verifica.
+            "springdoc.api-docs.enabled=true"
+        })
+@Import({
+    ReservationRestMapper.class,
+    OpenApiConfiguration.class,
+    SecurityConfiguration.class,
+    WebSliceConfiguration.class
 })
-@Import({ReservationRestMapper.class, OpenApiConfiguration.class,
-        SecurityConfiguration.class, WebSliceConfiguration.class})
 @ImportAutoConfiguration({
-        SpringDocConfiguration.class,
-        SpringDocConfigProperties.class,
-        SpringDocWebMvcConfiguration.class
+    SpringDocConfiguration.class,
+    SpringDocConfigProperties.class,
+    SpringDocWebMvcConfiguration.class
 })
 // El documento se sirve sin token (ver SecurityConfiguration#API_DOCS); el
 // actor hace falta para el único test que ejercita un endpoint real, el que
@@ -192,7 +196,9 @@ class OpenApiContractTest {
                         .as("tipo de medio del error %s en %s", code, operation)
                         .containsExactly(MediaType.APPLICATION_PROBLEM_JSON_VALUE);
                 assertThat(content.get(MediaType.APPLICATION_PROBLEM_JSON_VALUE)
-                        .get("schema").get("$ref").asText())
+                                .get("schema")
+                                .get("$ref")
+                                .asText())
                         .as("esquema del error %s en %s", code, operation)
                         .endsWith("/Problem");
             });
@@ -210,13 +216,14 @@ class OpenApiContractTest {
         // no lo expande, el documento declara un único parámetro con forma de
         // objeto y nadie puede deducir cómo se llama al endpoint: pasa el test
         // de rutas y de códigos, y la documentación igual es inservible.
-        JsonNode parameters = document().get("paths").get(RESERVATIONS).get("get").get("parameters");
+        JsonNode parameters =
+                document().get("paths").get(RESERVATIONS).get("get").get("parameters");
 
         Set<String> names = new TreeSet<>();
         parameters.forEach(parameter -> names.add(parameter.get("name").asText()));
 
-        assertThat(names).containsExactlyInAnyOrder(
-                "userId", "status", "departureFrom", "departureTo", "page", "size", "sort");
+        assertThat(names)
+                .containsExactlyInAnyOrder("userId", "status", "departureFrom", "departureTo", "page", "size", "sort");
         parameters.forEach(parameter -> assertThat(parameter.get("in").asText())
                 .as("ubicación del parámetro %s", parameter.get("name").asText())
                 .isEqualTo("query"));
@@ -228,10 +235,18 @@ class OpenApiContractTest {
         // La API rechaza con 400 una reserva sin pasajeros o sin tramos. Si el
         // documento dice minItems: 0, está autorizando algo que no existe: un
         // cliente generado a partir de él construiría pedidos que siempre fallan.
-        assertThat(schema("CreateReservationRequest").get("properties").get("passengers").get("minItems").asInt())
+        assertThat(schema("CreateReservationRequest")
+                        .get("properties")
+                        .get("passengers")
+                        .get("minItems")
+                        .asInt())
                 .as("mínimo de pasajeros")
                 .isEqualTo(1);
-        assertThat(schema("ItineraryRequest").get("properties").get("segments").get("minItems").asInt())
+        assertThat(schema("ItineraryRequest")
+                        .get("properties")
+                        .get("segments")
+                        .get("minItems")
+                        .asInt())
                 .as("mínimo de tramos")
                 .isEqualTo(1);
     }
@@ -242,12 +257,16 @@ class OpenApiContractTest {
         JsonNode paths = document().get("paths");
         Set<String> operationIds = new TreeSet<>();
 
-        paths.forEach(path -> path.forEach(operation ->
-                operationIds.add(operation.get("operationId").asText())));
+        paths.forEach(path -> path.forEach(
+                operation -> operationIds.add(operation.get("operationId").asText())));
 
-        assertThat(operationIds).containsExactlyInAnyOrder(
-                "createReservation", "getReservation", "listReservations",
-                "updateReservation", "cancelReservation");
+        assertThat(operationIds)
+                .containsExactlyInAnyOrder(
+                        "createReservation",
+                        "getReservation",
+                        "listReservations",
+                        "updateReservation",
+                        "cancelReservation");
     }
 
     @Test
@@ -267,7 +286,9 @@ class OpenApiContractTest {
         for (String method : List.of("put", "delete")) {
             JsonNode header = parameterOf(RESERVATION, method, "If-Match");
 
-            assertThat(header).as("parámetro If-Match en el %s", method.toUpperCase(Locale.ROOT)).isNotNull();
+            assertThat(header)
+                    .as("parámetro If-Match en el %s", method.toUpperCase(Locale.ROOT))
+                    .isNotNull();
             assertThat(header.get("in").asText()).isEqualTo("header");
             assertThat(header.get("required").asBoolean()).isTrue();
         }
@@ -278,16 +299,41 @@ class OpenApiContractTest {
     void documentsTheETagResponseHeader() throws Exception {
         JsonNode paths = document().get("paths");
 
-        assertThat(paths.get(RESERVATIONS).get("post").get("responses").get("201")
-                .get("headers").has("ETag")).isTrue();
-        assertThat(paths.get(RESERVATIONS).get("post").get("responses").get("201")
-                .get("headers").has("Location")).isTrue();
-        assertThat(paths.get(RESERVATION).get("get").get("responses").get("200")
-                .get("headers").has("ETag")).isTrue();
-        assertThat(paths.get(RESERVATION).get("put").get("responses").get("200")
-                .get("headers").has("ETag")).isTrue();
-        assertThat(paths.get(RESERVATION).get("delete").get("responses").get("200")
-                .get("headers").has("ETag")).isTrue();
+        assertThat(paths.get(RESERVATIONS)
+                        .get("post")
+                        .get("responses")
+                        .get("201")
+                        .get("headers")
+                        .has("ETag"))
+                .isTrue();
+        assertThat(paths.get(RESERVATIONS)
+                        .get("post")
+                        .get("responses")
+                        .get("201")
+                        .get("headers")
+                        .has("Location"))
+                .isTrue();
+        assertThat(paths.get(RESERVATION)
+                        .get("get")
+                        .get("responses")
+                        .get("200")
+                        .get("headers")
+                        .has("ETag"))
+                .isTrue();
+        assertThat(paths.get(RESERVATION)
+                        .get("put")
+                        .get("responses")
+                        .get("200")
+                        .get("headers")
+                        .has("ETag"))
+                .isTrue();
+        assertThat(paths.get(RESERVATION)
+                        .get("delete")
+                        .get("responses")
+                        .get("200")
+                        .get("headers")
+                        .has("ETag"))
+                .isTrue();
     }
 
     @Test
@@ -303,7 +349,12 @@ class OpenApiContractTest {
                 .as("If-None-Match es opcional, a diferencia de If-Match")
                 .isFalse();
 
-        JsonNode notModified = document().get("paths").get(RESERVATION).get("get").get("responses").get("304");
+        JsonNode notModified = document()
+                .get("paths")
+                .get(RESERVATION)
+                .get("get")
+                .get("responses")
+                .get("304");
         assertThat(notModified).as("respuesta 304 declarada").isNotNull();
         assertThat(notModified.get("headers").has("ETag")).isTrue();
     }
@@ -313,9 +364,9 @@ class OpenApiContractTest {
     void reservationSchemaHidesInternalDetails() throws Exception {
         Set<String> properties = fieldNames(schema("Reservation").get("properties"));
 
-        assertThat(properties).containsExactlyInAnyOrder(
-                "id", "status", "userId", "itinerary", "passengers",
-                "createdAt", "updatedAt", "cancelledAt");
+        assertThat(properties)
+                .containsExactlyInAnyOrder(
+                        "id", "status", "userId", "itinerary", "passengers", "createdAt", "updatedAt", "cancelledAt");
     }
 
     // ------------------------------------------------------------------
@@ -325,12 +376,13 @@ class OpenApiContractTest {
     @Test
     @DisplayName("el esquema de error describe el cuerpo que la aplicación realmente devuelve")
     void errorSchemaMatchesARealErrorBody() throws Exception {
-        when(getReservation.get(any()))
-                .thenThrow(new ReservationNotFoundException(ReservationId.of(999L)));
+        when(getReservation.get(any())).thenThrow(new ReservationNotFoundException(ReservationId.of(999L)));
 
         JsonNode realBody = objectMapper.readTree(mockMvc.perform(get("/v1/reservations/999"))
                 .andExpect(status().isNotFound())
-                .andReturn().getResponse().getContentAsString());
+                .andReturn()
+                .getResponse()
+                .getContentAsString());
 
         assertThat(fieldNames(realBody))
                 .as("propiedades de un 404 real, todas declaradas en el esquema Problem")
@@ -342,12 +394,13 @@ class OpenApiContractTest {
     @DisplayName("el detalle campo por campo de la validación también está declarado")
     void validationErrorsAreDocumented() throws Exception {
         JsonNode realBody = objectMapper.readTree(mockMvc.perform(post(RESERVATIONS)
-                        .header(ReservationController.IDEMPOTENCY_KEY_HEADER,
-                                "3f1a9c7e-0f6e-4a39-9d2c-8b5f0c1e7a44")
+                        .header(ReservationController.IDEMPOTENCY_KEY_HEADER, "3f1a9c7e-0f6e-4a39-9d2c-8b5f0c1e7a44")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"userId\": 1}"))
                 .andExpect(status().isBadRequest())
-                .andReturn().getResponse().getContentAsString());
+                .andReturn()
+                .getResponse()
+                .getContentAsString());
 
         assertThat(realBody.has("errors")).isTrue();
         assertThat(fieldNames(realBody)).isSubsetOf(fieldNames(schema("Problem").get("properties")));
@@ -388,9 +441,7 @@ class OpenApiContractTest {
             // Swagger UI ejecuta contra el primer servidor del documento. Con una
             // lista fija encabezada por producción, probar desde el entorno local
             // dispararía pedidos reales contra producción.
-            assertThat(url)
-                    .as("servidor declarado en el documento")
-                    .startsWith("http://localhost");
+            assertThat(url).as("servidor declarado en el documento").startsWith("http://localhost");
 
             // Las rutas ya llevan /v1: si el servidor también lo trajera, quedaría
             // duplicado en cada pedido.
@@ -406,9 +457,11 @@ class OpenApiContractTest {
         Set<String> operations = new TreeSet<>();
         JsonNode paths = document().get("paths");
 
-        paths.fieldNames().forEachRemaining(path ->
-                paths.get(path).fieldNames().forEachRemaining(method ->
-                        operations.add("%s %s".formatted(method.toUpperCase(Locale.ROOT), path))));
+        paths.fieldNames()
+                .forEachRemaining(path -> paths.get(path)
+                        .fieldNames()
+                        .forEachRemaining(
+                                method -> operations.add("%s %s".formatted(method.toUpperCase(Locale.ROOT), path))));
 
         return operations;
     }
@@ -421,7 +474,8 @@ class OpenApiContractTest {
                 return;
             }
             for (String pattern : patternsOf(info)) {
-                info.getMethodsCondition().getMethods()
+                info.getMethodsCondition()
+                        .getMethods()
                         .forEach(method -> operations.add("%s %s".formatted(method.name(), pattern)));
             }
         });
@@ -431,7 +485,8 @@ class OpenApiContractTest {
 
     /** Deja afuera lo que no es parte de la API: springdoc, actuator, páginas de error. */
     private static boolean isOwnAdapter(HandlerMethod handler) {
-        return handler.getBeanType().getPackageName()
+        return handler.getBeanType()
+                .getPackageName()
                 .startsWith("com.edteam.reservations.infrastructure.adapter.in.rest");
     }
 
@@ -478,7 +533,9 @@ class OpenApiContractTest {
         if (document == null) {
             String json = mockMvc.perform(get(API_DOCS))
                     .andExpect(status().isOk())
-                    .andReturn().getResponse().getContentAsString();
+                    .andReturn()
+                    .getResponse()
+                    .getContentAsString();
             document = objectMapper.readTree(json);
         }
         return document;

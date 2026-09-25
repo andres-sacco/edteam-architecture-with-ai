@@ -5,15 +5,14 @@ import com.edteam.reservations.infrastructure.logging.Throwables;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.binder.MeterBinder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.dao.DataAccessException;
-
 import java.time.Duration;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataAccessException;
 
 /**
  * Gauges del estado del outbox y de la DLQ del consumidor.
@@ -106,8 +105,8 @@ public class OutboxMetrics implements MeterBinder {
         io.micrometer.core.instrument.Gauge.builder(PENDING, this, m -> m.honest(OutboxStats::pending))
                 .description("Mensajes del outbox esperando publicación. -1 = no se pudo leer")
                 .register(registry);
-        io.micrometer.core.instrument.Gauge.builder(LAG, this,
-                        m -> m.honest(stats -> stats.lag().toMillis() / 1000.0))
+        io.micrometer.core.instrument.Gauge.builder(
+                        LAG, this, m -> m.honest(stats -> stats.lag().toMillis() / 1000.0))
                 .baseUnit("seconds")
                 .description("Antigüedad del mensaje pendiente más viejo: el retraso real de la "
                         + "notificación. -1 = no se pudo leer")
@@ -172,6 +171,5 @@ public class OutboxMetrics implements MeterBinder {
         }
     }
 
-    private record Snapshot(OutboxStats stats, long takenAt) {
-    }
+    private record Snapshot(OutboxStats stats, long takenAt) {}
 }

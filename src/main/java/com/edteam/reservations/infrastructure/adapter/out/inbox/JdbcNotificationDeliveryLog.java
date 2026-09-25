@@ -4,13 +4,12 @@ import com.edteam.reservations.application.notification.NotificationDelivery;
 import com.edteam.reservations.application.port.out.NotificationDeliveryPort;
 import com.edteam.reservations.infrastructure.jdbc.Utc;
 import com.edteam.reservations.infrastructure.logging.LogFields;
+import java.time.Clock;
+import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
-
-import java.time.Clock;
-import java.util.Objects;
 
 /**
  * Efecto del consumidor: una fila por notificación emitida.
@@ -40,13 +39,18 @@ public class JdbcNotificationDeliveryLog implements NotificationDeliveryPort {
     @Override
     public void deliver(NotificationDelivery delivery) {
         Objects.requireNonNull(delivery, "La entrega es obligatoria");
-        jdbcTemplate.update("""
+        jdbcTemplate.update(
+                """
                 INSERT INTO notificacion_entrega
                     (message_id, type, reserva_id, usuario_id, sequence, occurred_at, delivered_at)
                 VALUES (?::uuid, ?, ?, ?, ?, ?, ?)
                 """,
-                delivery.messageId(), delivery.type(), delivery.subject(), delivery.userId(),
-                delivery.sequence(), Utc.param(delivery.occurredAt()),
+                delivery.messageId(),
+                delivery.type(),
+                delivery.subject(),
+                delivery.userId(),
+                delivery.sequence(),
+                Utc.param(delivery.occurredAt()),
                 Utc.param(clock.instant()));
 
         // El destinatario por id interno, que fuera de nuestra base no es un

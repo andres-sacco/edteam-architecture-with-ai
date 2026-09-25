@@ -4,15 +4,13 @@ import com.edteam.reservations.domain.model.ItinerarySummary;
 import com.edteam.reservations.domain.model.Reservation;
 import com.edteam.reservations.domain.model.ReservationId;
 import com.edteam.reservations.domain.model.UserId;
-
 import java.time.Instant;
 import java.util.Objects;
 
 /** Se canceló una reserva. */
-public record ReservationCancelled(ReservationId reservationId,
-                                   UserId userId,
-                                   ItinerarySummary itinerary,
-                                   Instant occurredAt) implements DomainEvent {
+public record ReservationCancelled(
+        ReservationId reservationId, UserId userId, ItinerarySummary itinerary, Instant occurredAt)
+        implements DomainEvent {
 
     public static final String TYPE = "reservation.cancelled";
 

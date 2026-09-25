@@ -1,7 +1,6 @@
 package com.edteam.reservations.infrastructure.adapter.out.airport.catalog;
 
 import io.github.resilience4j.bulkhead.Bulkhead;
-
 import java.util.Objects;
 import java.util.Optional;
 

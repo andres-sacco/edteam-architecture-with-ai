@@ -1,5 +1,12 @@
 package com.edteam.reservations.application.service;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
+
 import com.edteam.reservations.application.audit.AuditAction;
 import com.edteam.reservations.application.audit.AuditEntry;
 import com.edteam.reservations.application.audit.AuditOutcome;
@@ -9,6 +16,7 @@ import com.edteam.reservations.application.port.out.AuditTrailPort;
 import com.edteam.reservations.application.port.out.ReservationRepositoryPort;
 import com.edteam.reservations.domain.model.Reservation;
 import com.edteam.reservations.support.TestFixtures;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -16,15 +24,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-
-import java.util.Optional;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
-import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 @DisplayName("GetReservationService")
@@ -88,8 +87,7 @@ class GetReservationServiceTest {
         when(reservationRepository.findById(TestFixtures.RESERVATION_ID))
                 .thenReturn(Optional.of(TestFixtures.storedReservation(3L)));
 
-        assertThatThrownBy(() -> get(TestFixtures.stranger()))
-                .isInstanceOf(ReservationNotFoundException.class);
+        assertThatThrownBy(() -> get(TestFixtures.stranger())).isInstanceOf(ReservationNotFoundException.class);
 
         ArgumentCaptor<AuditEntry> entry = ArgumentCaptor.captor();
         verify(auditTrail).record(entry.capture());
@@ -105,8 +103,7 @@ class GetReservationServiceTest {
     void doesNotAuditAPlainMiss() {
         when(reservationRepository.findById(TestFixtures.RESERVATION_ID)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> get(TestFixtures.owner()))
-                .isInstanceOf(ReservationNotFoundException.class);
+        assertThatThrownBy(() -> get(TestFixtures.owner())).isInstanceOf(ReservationNotFoundException.class);
 
         verify(auditTrail, never()).record(org.mockito.ArgumentMatchers.any());
     }

@@ -1,9 +1,8 @@
 package com.edteam.reservations.infrastructure.security;
 
-import org.springframework.boot.context.properties.ConfigurationProperties;
-
 import java.time.Duration;
 import java.util.List;
+import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
  * Configuración de la capa de seguridad.

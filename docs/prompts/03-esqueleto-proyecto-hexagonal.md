@@ -35,4 +35,3 @@ El sistema se espera que tenga muchos usuarios concurrentes desde el día uno; s
 ## Formato de salida
 
 Un proyecto en Maven para ser importado en algún IDE.
-

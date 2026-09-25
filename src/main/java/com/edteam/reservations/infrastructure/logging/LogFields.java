@@ -32,8 +32,7 @@ package com.edteam.reservations.infrastructure.logging;
  */
 public final class LogFields {
 
-    private LogFields() {
-    }
+    private LogFields() {}
 
     // ------------------------------------------------------------------
     // El campo sobre el que se filtra

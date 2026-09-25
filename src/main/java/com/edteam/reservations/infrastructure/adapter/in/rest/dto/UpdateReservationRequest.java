@@ -12,15 +12,12 @@ import jakarta.validation.constraints.NotNull;
  * El caso de uso que hay detrás ({@code ModifyReservationUseCase}) tampoco
  * admite otra cosa.
  */
-@Schema(name = "UpdateReservationRequest",
-        description = """
+@Schema(name = "UpdateReservationRequest", description = """
                 Datos para actualizar una reserva.
 
                 Sólo el itinerario es modificable: el usuario dueño y los pasajeros forman
                 parte de la identidad comercial de la reserva, y cambiarlos exige cancelar
                 y reservar de nuevo.""")
 public record UpdateReservationRequest(
-        @NotNull(message = "El itinerario es obligatorio")
-        @Valid
-        ItineraryRequest itinerary) {
-}
+        @NotNull(message = "El itinerario es obligatorio") @Valid
+        ItineraryRequest itinerary) {}

@@ -1,9 +1,9 @@
 package com.edteam.reservations.infrastructure.logging;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-
-import static org.assertj.core.api.Assertions.assertThat;
 
 @DisplayName("Enmascarado de PII en los logs")
 class PiiMaskerTest {

@@ -9,13 +9,12 @@ import com.edteam.reservations.infrastructure.adapter.out.persistence.entity.Pas
 import com.edteam.reservations.infrastructure.adapter.out.persistence.entity.ReservationJpaEntity;
 import com.edteam.reservations.infrastructure.adapter.out.persistence.entity.ReservationStatusJpa;
 import com.edteam.reservations.infrastructure.adapter.out.persistence.entity.UserJpaEntity;
-import org.springframework.stereotype.Component;
-
 import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import org.springframework.stereotype.Component;
 
 /**
  * Traduce la reserva completa entre el dominio y JPA.
@@ -31,9 +30,7 @@ public class ReservationMapper {
     private final PassengerMapper passengerMapper;
     private final UserMapper userMapper;
 
-    public ReservationMapper(ItineraryMapper itineraryMapper,
-                             PassengerMapper passengerMapper,
-                             UserMapper userMapper) {
+    public ReservationMapper(ItineraryMapper itineraryMapper, PassengerMapper passengerMapper, UserMapper userMapper) {
         this.itineraryMapper = Objects.requireNonNull(itineraryMapper);
         this.passengerMapper = Objects.requireNonNull(passengerMapper);
         this.userMapper = Objects.requireNonNull(userMapper);
@@ -67,10 +64,11 @@ public class ReservationMapper {
      * <p>Ni el id ni la versión se asignan acá: son de la base
      * ({@code BIGSERIAL} y {@code @Version}).
      */
-    public ReservationJpaEntity toNewEntity(Reservation reservation,
-                                            UserJpaEntity user,
-                                            ItineraryJpaEntity itinerary,
-                                            List<PassengerJpaEntity> passengers) {
+    public ReservationJpaEntity toNewEntity(
+            Reservation reservation,
+            UserJpaEntity user,
+            ItineraryJpaEntity itinerary,
+            List<PassengerJpaEntity> passengers) {
         Set<PassengerJpaEntity> uniquePassengers = new LinkedHashSet<>(passengers);
         return new ReservationJpaEntity(
                 user,

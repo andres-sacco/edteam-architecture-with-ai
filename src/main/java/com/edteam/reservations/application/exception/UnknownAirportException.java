@@ -1,7 +1,6 @@
 package com.edteam.reservations.application.exception;
 
 import com.edteam.reservations.domain.model.AirportCode;
-
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -22,8 +21,8 @@ public class UnknownAirportException extends ApplicationException {
     private final List<AirportCode> unknownCodes;
 
     public UnknownAirportException(List<AirportCode> unknownCodes) {
-        super("Las siguientes ciudades no existen en el catálogo: %s".formatted(
-                unknownCodes.stream().map(AirportCode::value).collect(Collectors.joining(", "))));
+        super("Las siguientes ciudades no existen en el catálogo: %s"
+                .formatted(unknownCodes.stream().map(AirportCode::value).collect(Collectors.joining(", "))));
         this.unknownCodes = List.copyOf(unknownCodes);
     }
 

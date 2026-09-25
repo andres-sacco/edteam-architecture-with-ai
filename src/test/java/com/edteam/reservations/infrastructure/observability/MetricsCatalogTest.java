@@ -1,19 +1,18 @@
 package com.edteam.reservations.infrastructure.observability;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
-
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.stream.Collectors;
-
-import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * El catálogo de métricas es un contrato, y esto es lo que lo mantiene alineado
@@ -75,12 +74,13 @@ class MetricsCatalogTest {
                         (first, second) -> first));
 
         assertThat(published)
-                .withFailMessage("El código publica medidores que el catálogo no declara, o al revés.%n"
-                        + "  publicado: %s%n  declarado: %s", published.keySet(), EXPECTED_TAGS.keySet())
+                .withFailMessage(
+                        "El código publica medidores que el catálogo no declara, o al revés.%n"
+                                + "  publicado: %s%n  declarado: %s",
+                        published.keySet(), EXPECTED_TAGS.keySet())
                 .containsOnlyKeys(EXPECTED_TAGS.keySet().toArray(String[]::new));
         EXPECTED_TAGS.forEach((name, tags) -> assertThat(published.get(name))
-                .withFailMessage("El medidor '%s' publica %s y el catálogo declara %s",
-                        name, published.get(name), tags)
+                .withFailMessage("El medidor '%s' publica %s y el catálogo declara %s", name, published.get(name), tags)
                 .isEqualTo(tags));
     }
 
@@ -105,14 +105,14 @@ class MetricsCatalogTest {
 
     @ParameterizedTest(name = "{0} {1} → operation={2}")
     @CsvSource({
-            "POST,   /v1/reservations,                                create",
-            "GET,    /v1/reservations,                                list",
-            "GET,    /v1/reservations/{reservationId},                get",
-            "PUT,    /v1/reservations/{reservationId},                modify",
-            "DELETE, /v1/reservations/{reservationId},                cancel",
-            "POST,   /v1/reservations/{reservationId}/confirmation,   confirm",
-            "GET,    /swagger-ui.html,                                other",
-            "GET,    unmatched,                                       other",
+        "POST,   /v1/reservations,                                create",
+        "GET,    /v1/reservations,                                list",
+        "GET,    /v1/reservations/{reservationId},                get",
+        "PUT,    /v1/reservations/{reservationId},                modify",
+        "DELETE, /v1/reservations/{reservationId},                cancel",
+        "POST,   /v1/reservations/{reservationId}/confirmation,   confirm",
+        "GET,    /swagger-ui.html,                                other",
+        "GET,    unmatched,                                       other",
     })
     @DisplayName("las seis rutas de negocio mapean a una operación, y nada más entra al contador")
     void routesMapToBoundedOperations(String method, String route, String operation) {
@@ -121,21 +121,23 @@ class MetricsCatalogTest {
     }
 
     @ParameterizedTest(name = "status {0} con código {1} → outcome={2}")
-    @CsvSource(nullValues = "-", value = {
-            "201, -,                        ok",
-            "200, -,                        ok",
-            "409, CONCURRENT_UPDATE,        conflict",
-            "409, IDEMPOTENCY_KEY_REUSED,   duplicate",
-            "404, RESERVATION_NOT_FOUND,    not_found",
-            "403, FORBIDDEN,                denied",
-            "401, UNAUTHENTICATED,          denied",
-            "429, RATE_LIMIT_EXCEEDED,      throttled",
-            "400, VALIDATION_ERROR,         rejected",
-            "503, AIRPORT_CATALOG_UNAVAILABLE, unavailable",
-            "503, DATABASE_UNAVAILABLE,     unavailable",
-            "500, AIRPORT_CATALOG_ERROR,    error",
-            "500, INTERNAL_ERROR,           error",
-    })
+    @CsvSource(
+            nullValues = "-",
+            value = {
+                "201, -,                        ok",
+                "200, -,                        ok",
+                "409, CONCURRENT_UPDATE,        conflict",
+                "409, IDEMPOTENCY_KEY_REUSED,   duplicate",
+                "404, RESERVATION_NOT_FOUND,    not_found",
+                "403, FORBIDDEN,                denied",
+                "401, UNAUTHENTICATED,          denied",
+                "429, RATE_LIMIT_EXCEEDED,      throttled",
+                "400, VALIDATION_ERROR,         rejected",
+                "503, AIRPORT_CATALOG_UNAVAILABLE, unavailable",
+                "503, DATABASE_UNAVAILABLE,     unavailable",
+                "500, AIRPORT_CATALOG_ERROR,    error",
+                "500, INTERNAL_ERROR,           error",
+            })
     @DisplayName("los dos 409 y los dos 503 se separan por código de error, que es lo que http.server.requests no hace")
     void outcomeSeparatesTheTwoCausesOfTheSameStatus(int status, String errorCode, String outcome) {
         assertThat(BusinessMetrics.outcomeOf(status, errorCode, false)).isEqualTo(outcome);
@@ -160,8 +162,8 @@ class MetricsCatalogTest {
         List<String> reasons = registry.find(SecurityMetrics.AUTH_FAILURES).counters().stream()
                 .map(counter -> counter.getId().getTag("reason"))
                 .toList();
-        assertThat(reasons).allSatisfy(reason ->
-                assertThat(SecurityMetrics.REASONS).contains(reason));
+        assertThat(reasons)
+                .allSatisfy(reason -> assertThat(SecurityMetrics.REASONS).contains(reason));
         assertThat(reasons).noneMatch(reason -> reason.contains("eyJ"));
     }
 }

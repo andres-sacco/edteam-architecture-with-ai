@@ -4,11 +4,10 @@ import com.edteam.reservations.application.exception.UnprocessableEventException
 import com.edteam.reservations.application.port.in.InboundEvent;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.amqp.core.Message;
-
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.Objects;
+import org.springframework.amqp.core.Message;
 
 /**
  * Mensaje AMQP → {@link InboundEvent}.
@@ -57,7 +56,8 @@ public class InboundEnvelopeParser {
         }
 
         JsonNode data = envelope.path("data");
-        String messageId = required(envelope, "messageId", message.getMessageProperties().getMessageId());
+        String messageId =
+                required(envelope, "messageId", message.getMessageProperties().getMessageId());
         String type = required(envelope, "type", message.getMessageProperties().getType());
         String subject = required(envelope, "subject", null);
         String userId = text(data, "userId");
@@ -82,8 +82,7 @@ public class InboundEnvelopeParser {
     private static Instant instant(JsonNode envelope, String messageId) {
         String value = text(envelope, "occurredAt");
         if (value == null) {
-            throw new UnprocessableEventException(
-                    "El mensaje %s no trae 'occurredAt'".formatted(messageId));
+            throw new UnprocessableEventException("El mensaje %s no trae 'occurredAt'".formatted(messageId));
         }
         try {
             return Instant.parse(value);

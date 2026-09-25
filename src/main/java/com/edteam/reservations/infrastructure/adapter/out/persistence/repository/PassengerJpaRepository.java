@@ -12,5 +12,4 @@ import org.springframework.data.jpa.repository.JpaRepository;
  * escrituras del mismo valor producen columnas distintas—. Cada reserva
  * escribe sus propios pasajeros.
  */
-public interface PassengerJpaRepository extends JpaRepository<PassengerJpaEntity, Long> {
-}
+public interface PassengerJpaRepository extends JpaRepository<PassengerJpaEntity, Long> {}

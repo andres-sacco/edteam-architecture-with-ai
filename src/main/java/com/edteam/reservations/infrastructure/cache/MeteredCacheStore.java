@@ -3,7 +3,6 @@ package com.edteam.reservations.infrastructure.cache;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tags;
-
 import java.time.Duration;
 import java.util.Objects;
 import java.util.Optional;
@@ -54,17 +53,28 @@ public final class MeteredCacheStore implements CacheStore {
         Objects.requireNonNull(name, "El nombre del cache es obligatorio");
         Objects.requireNonNull(registry, "El registro de métricas es obligatorio");
 
-        this.hits = Counter.builder(GETS).tags(Tags.of("cache", name, "result", "hit"))
-                .description("Lecturas del cache resueltas con un valor vigente").register(registry);
-        this.misses = Counter.builder(GETS).tags(Tags.of("cache", name, "result", "miss"))
-                .description("Lecturas del cache que tuvieron que ir al origen").register(registry);
-        this.puts = Counter.builder(PUTS).tag("cache", name)
-                .description("Escrituras en el cache").register(registry);
-        this.evictions = Counter.builder(EVICTIONS).tag("cache", name)
-                .description("Invalidaciones explícitas de una clave").register(registry);
+        this.hits = Counter.builder(GETS)
+                .tags(Tags.of("cache", name, "result", "hit"))
+                .description("Lecturas del cache resueltas con un valor vigente")
+                .register(registry);
+        this.misses = Counter.builder(GETS)
+                .tags(Tags.of("cache", name, "result", "miss"))
+                .description("Lecturas del cache que tuvieron que ir al origen")
+                .register(registry);
+        this.puts = Counter.builder(PUTS)
+                .tag("cache", name)
+                .description("Escrituras en el cache")
+                .register(registry);
+        this.evictions = Counter.builder(EVICTIONS)
+                .tag("cache", name)
+                .description("Invalidaciones explícitas de una clave")
+                .register(registry);
 
-        delegate.estimatedSize().ifPresent(ignored ->
-                registry.gauge(SIZE, Tags.of("cache", name), delegate,
+        delegate.estimatedSize()
+                .ifPresent(ignored -> registry.gauge(
+                        SIZE,
+                        Tags.of("cache", name),
+                        delegate,
                         store -> store.estimatedSize().orElse(0L)));
     }
 

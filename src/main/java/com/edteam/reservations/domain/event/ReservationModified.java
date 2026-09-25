@@ -5,7 +5,6 @@ import com.edteam.reservations.domain.model.ItinerarySummary;
 import com.edteam.reservations.domain.model.Reservation;
 import com.edteam.reservations.domain.model.ReservationId;
 import com.edteam.reservations.domain.model.UserId;
-
 import java.time.Instant;
 import java.util.Objects;
 
@@ -16,11 +15,13 @@ import java.util.Objects;
  * pueda mostrar el cambio ("tu vuelo pasó del 12 al 14") en lugar de sólo el
  * estado final.
  */
-public record ReservationModified(ReservationId reservationId,
-                                  UserId userId,
-                                  ItinerarySummary previousItinerary,
-                                  ItinerarySummary itinerary,
-                                  Instant occurredAt) implements DomainEvent {
+public record ReservationModified(
+        ReservationId reservationId,
+        UserId userId,
+        ItinerarySummary previousItinerary,
+        ItinerarySummary itinerary,
+        Instant occurredAt)
+        implements DomainEvent {
 
     public static final String TYPE = "reservation.modified";
 

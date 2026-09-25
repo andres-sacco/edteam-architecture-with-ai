@@ -34,8 +34,7 @@ public final class CorrelationIdPropagation {
     /** Mismo nombre que el header de entrada: el id es uno solo en todo el camino. */
     public static final String HEADER = "X-Correlation-Id";
 
-    private CorrelationIdPropagation() {
-    }
+    private CorrelationIdPropagation() {}
 
     public static ClientHttpRequestInterceptor interceptor() {
         return (request, body, execution) -> {

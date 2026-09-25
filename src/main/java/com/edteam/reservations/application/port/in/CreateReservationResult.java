@@ -1,7 +1,6 @@
 package com.edteam.reservations.application.port.in;
 
 import com.edteam.reservations.domain.model.Reservation;
-
 import java.util.Objects;
 
 /**

@@ -36,8 +36,7 @@ import java.time.ZoneOffset;
  */
 public final class Utc {
 
-    private Utc() {
-    }
+    private Utc() {}
 
     /** Parámetro para un {@code TIMESTAMP} sin zona, en UTC. */
     public static LocalDateTime param(Instant instant) {

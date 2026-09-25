@@ -13,15 +13,14 @@ import com.edteam.reservations.domain.access.ReservationAccessPolicy;
 import com.edteam.reservations.domain.event.ReservationConfirmed;
 import com.edteam.reservations.domain.model.Reservation;
 import com.edteam.reservations.domain.model.ReservationId;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /** Confirmación de una reserva pendiente. */
 @Service
@@ -34,10 +33,11 @@ public class ConfirmReservationService implements ConfirmReservationUseCase {
     private final AuditTrailPort auditTrail;
     private final Clock clock;
 
-    public ConfirmReservationService(ReservationRepositoryPort reservationRepository,
-                                     EventOutboxPort eventOutbox,
-                                     AuditTrailPort auditTrail,
-                                     Clock clock) {
+    public ConfirmReservationService(
+            ReservationRepositoryPort reservationRepository,
+            EventOutboxPort eventOutbox,
+            AuditTrailPort auditTrail,
+            Clock clock) {
         this.reservationRepository = Objects.requireNonNull(reservationRepository);
         this.eventOutbox = Objects.requireNonNull(eventOutbox);
         this.auditTrail = Objects.requireNonNull(auditTrail);
@@ -51,12 +51,13 @@ public class ConfirmReservationService implements ConfirmReservationUseCase {
         ReservationId reservationId = ReservationId.of(command.reservationId());
         Instant now = clock.instant();
 
-        Reservation current = reservationRepository.findById(reservationId)
+        Reservation current = reservationRepository
+                .findById(reservationId)
                 .orElseThrow(() -> new ReservationNotFoundException(reservationId));
 
         if (!ReservationAccessPolicy.canWrite(command.actor(), current)) {
-            auditTrail.record(AuditEntry.denied(AuditAction.RESERVATION_ACCESS_DENIED,
-                    command.actor().email(), reservationId.toString(), now));
+            auditTrail.record(AuditEntry.denied(
+                    AuditAction.RESERVATION_ACCESS_DENIED, command.actor().email(), reservationId.toString(), now));
             throw new ReservationNotFoundException(reservationId);
         }
 
@@ -68,8 +69,12 @@ public class ConfirmReservationService implements ConfirmReservationUseCase {
         Reservation saved = reservationRepository.save(confirmed);
 
         eventOutbox.enqueue(List.of(ReservationConfirmed.of(saved)));
-        auditTrail.record(AuditEntry.allowed(AuditAction.RESERVATION_CONFIRMED,
-                command.actor().email(), saved.requireId().toString(), saved.version(), now));
+        auditTrail.record(AuditEntry.allowed(
+                AuditAction.RESERVATION_CONFIRMED,
+                command.actor().email(),
+                saved.requireId().toString(),
+                saved.version(),
+                now));
 
         // Con `userId` e itinerario, que antes no llevaba: los cuatro eventos
         // de dominio comparten el mismo juego de campos obligatorios.
@@ -79,7 +84,8 @@ public class ConfirmReservationService implements ConfirmReservationUseCase {
                 .addKeyValue("userId", saved.userId().value())
                 .addKeyValue("reservationVersion", saved.version())
                 .addKeyValue("itinerary.origin", saved.itinerary().origin().value())
-                .addKeyValue("itinerary.destination", saved.itinerary().destination().value())
+                .addKeyValue(
+                        "itinerary.destination", saved.itinerary().destination().value())
                 .log("Reserva confirmada");
         return saved;
     }

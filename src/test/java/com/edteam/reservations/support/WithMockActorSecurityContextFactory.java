@@ -3,11 +3,10 @@ package com.edteam.reservations.support;
 import com.edteam.reservations.domain.access.Actor;
 import com.edteam.reservations.domain.model.Email;
 import com.edteam.reservations.infrastructure.security.ActorAuthenticationToken;
+import java.util.Set;
 import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.test.context.support.WithSecurityContextFactory;
-
-import java.util.Set;
 
 /** Construye el contexto de seguridad que declara {@link WithMockActor}. */
 public class WithMockActorSecurityContextFactory implements WithSecurityContextFactory<WithMockActor> {

@@ -1,22 +1,21 @@
 package com.edteam.reservations.infrastructure.adapter.out.messaging;
 
-import com.rabbitmq.client.AMQP;
-import com.rabbitmq.client.GetResponse;
 import com.edteam.reservations.infrastructure.logging.LogFields;
 import com.edteam.reservations.infrastructure.logging.Throwables;
 import com.edteam.reservations.infrastructure.security.OpsActor;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.amqp.AmqpException;
-import org.springframework.amqp.rabbit.core.RabbitAdmin;
-import org.springframework.amqp.rabbit.core.RabbitTemplate;
-
+import com.rabbitmq.client.AMQP;
+import com.rabbitmq.client.GetResponse;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Properties;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.amqp.AmqpException;
+import org.springframework.amqp.rabbit.core.RabbitAdmin;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 
 /**
  * Dead letter del consumidor sobre RabbitMQ.
@@ -58,9 +57,8 @@ public class RabbitDeadLetterQueue implements DeadLetterQueue {
     private final RabbitTemplate inspectionTemplate;
     private final RabbitAdmin admin;
 
-    public RabbitDeadLetterQueue(RabbitTemplate transactedTemplate,
-                                 RabbitTemplate inspectionTemplate,
-                                 RabbitAdmin admin) {
+    public RabbitDeadLetterQueue(
+            RabbitTemplate transactedTemplate, RabbitTemplate inspectionTemplate, RabbitAdmin admin) {
         this.transactedTemplate = Objects.requireNonNull(transactedTemplate);
         this.inspectionTemplate = Objects.requireNonNull(inspectionTemplate);
         this.admin = Objects.requireNonNull(admin);
@@ -127,8 +125,8 @@ public class RabbitDeadLetterQueue implements DeadLetterQueue {
                 // Publicación directa a la cola y no al exchange: el replay
                 // reinyecta a este consumidor y no vuelve a hacer fan-out a
                 // otros, que quizá ya procesaron el mensaje sin problemas.
-                channel.basicPublish(DEFAULT_EXCHANGE, MessagingTopology.CONSUMER_QUEUE,
-                        properties, response.getBody());
+                channel.basicPublish(
+                        DEFAULT_EXCHANGE, MessagingTopology.CONSUMER_QUEUE, properties, response.getBody());
                 channel.basicAck(response.getEnvelope().getDeliveryTag(), false);
                 count++;
             }
@@ -145,9 +143,8 @@ public class RabbitDeadLetterQueue implements DeadLetterQueue {
     }
 
     private static AMQP.BasicProperties withAttemptReset(AMQP.BasicProperties original) {
-        Map<String, Object> headers = original.getHeaders() == null
-                ? new HashMap<>()
-                : new HashMap<>(original.getHeaders());
+        Map<String, Object> headers =
+                original.getHeaders() == null ? new HashMap<>() : new HashMap<>(original.getHeaders());
         headers.put(MessagingTopology.ATTEMPT_HEADER, 0);
         headers.remove(MessagingTopology.DEAD_LETTER_REASON_HEADER);
         // 'x-death' se saca: si queda, el x-delivery-limit de la cola quorum

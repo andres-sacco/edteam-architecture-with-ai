@@ -1,5 +1,12 @@
 package com.edteam.reservations.infrastructure.adapter.out.persistence;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
 import com.edteam.reservations.application.query.ReservationSearchCriteria;
 import com.edteam.reservations.application.query.ReservationSortBy;
 import com.edteam.reservations.application.query.SortDirection;
@@ -10,25 +17,17 @@ import com.edteam.reservations.infrastructure.cache.FailingCacheStore;
 import com.edteam.reservations.infrastructure.cache.InMemoryCacheStore;
 import com.edteam.reservations.support.MutableClock;
 import com.edteam.reservations.support.TestFixtures;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-
-import java.time.Duration;
-import java.time.Instant;
-import java.util.List;
-import java.util.Optional;
-import java.util.Set;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 @DisplayName("CachingReservationSearchQuery")
@@ -51,8 +50,8 @@ class CachingReservationSearchQueryTest {
     }
 
     private static ReservationSearchCriteria criteria(int page, int size, ReservationSortBy sortBy) {
-        return new ReservationSearchCriteria(Optional.empty(), Set.of(), Optional.empty(), Optional.empty(),
-                page, size, sortBy, SortDirection.DESC);
+        return new ReservationSearchCriteria(
+                Optional.empty(), Set.of(), Optional.empty(), Optional.empty(), page, size, sortBy, SortDirection.DESC);
     }
 
     @Test
@@ -73,7 +72,8 @@ class CachingReservationSearchQueryTest {
         when(delegate.count(org.mockito.ArgumentMatchers.any())).thenReturn(1_204L);
 
         assertThat(query.count(criteria(0, 20, ReservationSortBy.CREATED_AT))).isEqualTo(1_204L);
-        assertThat(query.count(criteria(3, 50, ReservationSortBy.FIRST_DEPARTURE_AT))).isEqualTo(1_204L);
+        assertThat(query.count(criteria(3, 50, ReservationSortBy.FIRST_DEPARTURE_AT)))
+                .isEqualTo(1_204L);
 
         verify(delegate, times(1)).count(org.mockito.ArgumentMatchers.any());
         assertThat(store.estimatedSize()).hasValue(1L);
@@ -84,8 +84,14 @@ class CachingReservationSearchQueryTest {
     void separatesDifferentFilters() {
         ReservationSearchCriteria unfiltered = ReservationSearchCriteria.unfiltered();
         ReservationSearchCriteria byUser = new ReservationSearchCriteria(
-                Optional.of(Email.of(TestFixtures.USER_EMAIL)), Set.of(), Optional.empty(), Optional.empty(),
-                0, 20, ReservationSortBy.CREATED_AT, SortDirection.DESC);
+                Optional.of(Email.of(TestFixtures.USER_EMAIL)),
+                Set.of(),
+                Optional.empty(),
+                Optional.empty(),
+                0,
+                20,
+                ReservationSortBy.CREATED_AT,
+                SortDirection.DESC);
 
         when(delegate.count(unfiltered)).thenReturn(1_204L);
         when(delegate.count(byUser)).thenReturn(7L);
@@ -104,16 +110,21 @@ class CachingReservationSearchQueryTest {
         ReservationSearchCriteria one = withStatuses(ReservationStatus.PENDING, ReservationStatus.CONFIRMED);
         ReservationSearchCriteria other = withStatuses(ReservationStatus.CONFIRMED, ReservationStatus.PENDING);
 
-        assertThat(CachingReservationSearchQuery.keyOf(one))
-                .isEqualTo(CachingReservationSearchQuery.keyOf(other));
+        assertThat(CachingReservationSearchQuery.keyOf(one)).isEqualTo(CachingReservationSearchQuery.keyOf(other));
     }
 
     @Test
     @DisplayName("el rango de fechas forma parte de la clave")
     void datesArePartOfTheKey() {
         ReservationSearchCriteria withRange = new ReservationSearchCriteria(
-                Optional.empty(), Set.of(), Optional.of(Instant.parse("2026-01-01T00:00:00Z")),
-                Optional.empty(), 0, 20, ReservationSortBy.CREATED_AT, SortDirection.DESC);
+                Optional.empty(),
+                Set.of(),
+                Optional.of(Instant.parse("2026-01-01T00:00:00Z")),
+                Optional.empty(),
+                0,
+                20,
+                ReservationSortBy.CREATED_AT,
+                SortDirection.DESC);
 
         assertThat(CachingReservationSearchQuery.keyOf(withRange))
                 .isNotEqualTo(CachingReservationSearchQuery.keyOf(ReservationSearchCriteria.unfiltered()));
@@ -177,8 +188,14 @@ class CachingReservationSearchQueryTest {
     @DisplayName("la clave no expone el email del filtro: va resumido")
     void keyDoesNotLeakTheEmail() {
         ReservationSearchCriteria byUser = new ReservationSearchCriteria(
-                Optional.of(Email.of(TestFixtures.USER_EMAIL)), Set.of(), Optional.empty(), Optional.empty(),
-                0, 20, ReservationSortBy.CREATED_AT, SortDirection.DESC);
+                Optional.of(Email.of(TestFixtures.USER_EMAIL)),
+                Set.of(),
+                Optional.empty(),
+                Optional.empty(),
+                0,
+                20,
+                ReservationSortBy.CREATED_AT,
+                SortDirection.DESC);
 
         String key = CachingReservationSearchQuery.keyOf(byUser);
 
@@ -226,7 +243,14 @@ class CachingReservationSearchQueryTest {
     }
 
     private static ReservationSearchCriteria withStatuses(ReservationStatus... statuses) {
-        return new ReservationSearchCriteria(Optional.empty(), Set.of(statuses), Optional.empty(), Optional.empty(),
-                0, 20, ReservationSortBy.CREATED_AT, SortDirection.DESC);
+        return new ReservationSearchCriteria(
+                Optional.empty(),
+                Set.of(statuses),
+                Optional.empty(),
+                Optional.empty(),
+                0,
+                20,
+                ReservationSortBy.CREATED_AT,
+                SortDirection.DESC);
     }
 }

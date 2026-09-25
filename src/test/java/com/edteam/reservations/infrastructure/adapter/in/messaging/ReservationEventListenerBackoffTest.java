@@ -1,18 +1,17 @@
 package com.edteam.reservations.infrastructure.adapter.in.messaging;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+
 import com.edteam.reservations.application.port.in.ProcessReservationEventUseCase;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-import org.springframework.amqp.rabbit.core.RabbitTemplate;
-
 import java.time.Duration;
 import java.util.HashSet;
 import java.util.Set;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.mock;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 
 /**
  * El backoff del consumidor: creciente y con jitter.
@@ -33,7 +32,10 @@ class ReservationEventListenerBackoffTest {
             mock(ProcessReservationEventUseCase.class),
             new InboundEnvelopeParser(new ObjectMapper()),
             mock(RabbitTemplate.class),
-            5, INITIAL, MAX, new SimpleMeterRegistry());
+            5,
+            INITIAL,
+            MAX,
+            new SimpleMeterRegistry());
 
     @Test
     @DisplayName("crece: la quinta vuelta espera mucho más que la primera")
@@ -62,9 +64,7 @@ class ReservationEventListenerBackoffTest {
     @DisplayName("nunca supera el techo, que es la TTL de la cola de espera")
     void theDelayNeverExceedsTheQueueTtl() {
         for (int round = 0; round < 20; round++) {
-            assertThat(listener.retryDelay(round))
-                    .as("vuelta %d", round)
-                    .isLessThanOrEqualTo(MAX);
+            assertThat(listener.retryDelay(round)).as("vuelta %d", round).isLessThanOrEqualTo(MAX);
         }
     }
 
@@ -90,8 +90,7 @@ class ReservationEventListenerBackoffTest {
         // superior acota ese retraso al 25 % del escalón, en lugar de dejarlo
         // crecer hasta el escalón entero.
         for (int i = 0; i < 200; i++) {
-            assertThat(listener.retryDelay(1))
-                    .isBetween(Duration.ofSeconds(45), Duration.ofSeconds(60));
+            assertThat(listener.retryDelay(1)).isBetween(Duration.ofSeconds(45), Duration.ofSeconds(60));
         }
     }
 }

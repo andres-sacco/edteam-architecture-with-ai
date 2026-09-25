@@ -6,14 +6,6 @@ import com.edteam.reservations.application.outbox.OutboxMessage;
 import com.edteam.reservations.application.port.out.EventPublisherPort;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.amqp.AmqpException;
-import org.springframework.amqp.core.MessageDeliveryMode;
-import org.springframework.amqp.core.MessageProperties;
-import org.springframework.amqp.rabbit.connection.CorrelationData;
-import org.springframework.amqp.rabbit.core.RabbitTemplate;
-
 import java.time.Clock;
 import java.time.Duration;
 import java.util.Date;
@@ -21,6 +13,13 @@ import java.util.Objects;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.amqp.AmqpException;
+import org.springframework.amqp.core.MessageDeliveryMode;
+import org.springframework.amqp.core.MessageProperties;
+import org.springframework.amqp.rabbit.connection.CorrelationData;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 
 /**
  * Publica los hechos al topic exchange de RabbitMQ.
@@ -68,12 +67,13 @@ public class RabbitEventPublisher implements EventPublisherPort {
     private final Duration confirmTimeout;
     private final Clock clock;
 
-    public RabbitEventPublisher(RabbitTemplate rabbitTemplate,
-                                ObjectMapper objectMapper,
-                                String exchange,
-                                String source,
-                                Duration confirmTimeout,
-                                Clock clock) {
+    public RabbitEventPublisher(
+            RabbitTemplate rabbitTemplate,
+            ObjectMapper objectMapper,
+            String exchange,
+            String source,
+            Duration confirmTimeout,
+            Clock clock) {
         this.rabbitTemplate = Objects.requireNonNull(rabbitTemplate);
         this.objectMapper = Objects.requireNonNull(objectMapper);
         this.exchange = Objects.requireNonNull(exchange);
@@ -95,15 +95,20 @@ public class RabbitEventPublisher implements EventPublisherPort {
             rabbitTemplate.send(exchange, message.type(), amqpMessage(message, body), confirm);
         } catch (AmqpException e) {
             throw new EventPublishException(
-                    "El broker no aceptó %s (mensaje %s): %s".formatted(message.type(), message.id(), e.getMessage()), e);
+                    "El broker no aceptó %s (mensaje %s): %s".formatted(message.type(), message.id(), e.getMessage()),
+                    e);
         }
 
         awaitConfirm(message, confirm);
 
         // INFO lleva lo que hace falta para operar y no identifica a nadie
         // fuera de nuestra base. El payload —ruta y fecha de viaje— va a DEBUG.
-        log.info("[mensajería] publicado type={} subject={} messageId={} sequence={}",
-                message.type(), message.subject(), message.id(), message.sequence());
+        log.info(
+                "[mensajería] publicado type={} subject={} messageId={} sequence={}",
+                message.type(),
+                message.subject(),
+                message.id(),
+                message.sequence());
         log.debug("[mensajería] messageId={} payload={}", message.id(), message.payload());
     }
 
@@ -122,7 +127,8 @@ public class RabbitEventPublisher implements EventPublisherPort {
         } catch (TimeoutException e) {
             reapAbandonedConfirms();
             throw new EventPublishException(
-                    "El broker no confirmó el mensaje %s en %d ms".formatted(message.id(), confirmTimeout.toMillis()), e);
+                    "El broker no confirmó el mensaje %s en %d ms".formatted(message.id(), confirmTimeout.toMillis()),
+                    e);
         } catch (ExecutionException e) {
             throw new EventPublishException(
                     "Falló la confirmación del mensaje %s: %s".formatted(message.id(), e.getMessage()), e);
@@ -139,13 +145,13 @@ public class RabbitEventPublisher implements EventPublisherPort {
         if (confirm.getReturned() != null) {
             throw new EventRoutingException(
                     ("El exchange '%s' devolvió el mensaje %s con routing key '%s': no hay ninguna cola atada. "
-                            + "Se reintenta; hay que revisar los bindings.")
+                                    + "Se reintenta; hay que revisar los bindings.")
                             .formatted(exchange, message.id(), message.type()));
         }
         if (ack == null || !ack.isAck()) {
             throw new EventPublishException(
                     ("El broker rechazó el mensaje %s (%s): con 'mandatory' un mensaje sin binding es un error, "
-                            + "no un descarte silencioso")
+                                    + "no un descarte silencioso")
                             .formatted(message.id(), ack == null ? "sin respuesta" : ack.getReason()));
         }
     }
@@ -170,8 +176,10 @@ public class RabbitEventPublisher implements EventPublisherPort {
         }
         int reaped = rabbitTemplate.getUnconfirmed(confirmTimeout.toMillis()).size();
         if (reaped > 0) {
-            log.warn("[mensajería] {} confirmaciones abandonadas descartadas del template ({} pendientes antes)",
-                    reaped, pending);
+            log.warn(
+                    "[mensajería] {} confirmaciones abandonadas descartadas del template ({} pendientes antes)",
+                    reaped,
+                    pending);
         }
     }
 
@@ -204,8 +212,8 @@ public class RabbitEventPublisher implements EventPublisherPort {
 
     private byte[] body(OutboxMessage message) {
         try {
-            EventEnvelope envelope = EventEnvelope.from(
-                    message, source, clock.instant(), objectMapper.readTree(message.payload()));
+            EventEnvelope envelope =
+                    EventEnvelope.from(message, source, clock.instant(), objectMapper.readTree(message.payload()));
             return objectMapper.writeValueAsBytes(envelope);
         } catch (JsonProcessingException e) {
             // Permanente: el payload guardado no es JSON válido. Reintentarlo

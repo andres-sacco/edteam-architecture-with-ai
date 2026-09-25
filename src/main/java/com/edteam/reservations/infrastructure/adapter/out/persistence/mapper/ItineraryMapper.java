@@ -6,11 +6,9 @@ import com.edteam.reservations.domain.model.Money;
 import com.edteam.reservations.domain.model.Segment;
 import com.edteam.reservations.infrastructure.adapter.out.persistence.entity.ItineraryJpaEntity;
 import com.edteam.reservations.infrastructure.adapter.out.persistence.entity.SegmentJpaEntity;
-import org.springframework.stereotype.Component;
-
 import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
+import org.springframework.stereotype.Component;
 
 /** Traduce itinerarios entre el dominio y JPA. */
 @Component
@@ -23,14 +21,11 @@ public class ItineraryMapper {
     }
 
     public Itinerary toDomain(ItineraryJpaEntity entity) {
-        List<Segment> segments = entity.getSegments().stream()
-                .map(segmentMapper::toDomain)
-                .toList();
+        List<Segment> segments =
+                entity.getSegments().stream().map(segmentMapper::toDomain).toList();
 
         return Itinerary.existing(
-                ItineraryId.of(entity.getId()),
-                new Money(entity.getPrice(), entity.getCurrency()),
-                segments);
+                ItineraryId.of(entity.getId()), new Money(entity.getPrice(), entity.getCurrency()), segments);
     }
 
     /**

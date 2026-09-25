@@ -1,16 +1,31 @@
 package com.edteam.reservations;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
 import com.edteam.reservations.domain.access.Actor;
 import com.edteam.reservations.domain.model.Email;
 import com.edteam.reservations.support.AbstractPostgresIT;
 import com.edteam.reservations.support.SecurityTestSupport;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nimbusds.jose.JWSAlgorithm;
 import com.nimbusds.jose.JWSHeader;
 import com.nimbusds.jose.crypto.MACSigner;
 import com.nimbusds.jwt.JWTClaimsSet;
 import com.nimbusds.jwt.SignedJWT;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.Date;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -21,22 +36,6 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
-
-import java.nio.charset.StandardCharsets;
-import java.time.Duration;
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
-import java.util.Date;
-import java.util.UUID;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
  * Flujo completo por HTTP contra los adaptadores reales.
@@ -80,7 +79,8 @@ class ReservationApiIT extends AbstractPostgresIT {
     @DisplayName("crea, consulta, lista, modifica y cancela una reserva de punta a punta")
     void runsTheFullFlowOverHttp() throws Exception {
         // --- alta ---
-        MvcResult created = mockMvc.perform(post("/v1/reservations").with(asUser(EMAIL))
+        MvcResult created = mockMvc.perform(post("/v1/reservations")
+                        .with(asUser(EMAIL))
                         .header(IDEMPOTENCY_KEY_HEADER, UUID.randomUUID().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(createBody("1250.50", "SCL", departure)))
@@ -106,7 +106,8 @@ class ReservationApiIT extends AbstractPostgresIT {
                 .andExpect(jsonPath("$.passengers[0].documentNumber").value("30123456"));
 
         // --- listado ---
-        mockMvc.perform(get("/v1/reservations").with(asUser(EMAIL))
+        mockMvc.perform(get("/v1/reservations")
+                        .with(asUser(EMAIL))
                         .param("userId", EMAIL)
                         .param("status", "PENDING"))
                 .andExpect(status().isOk())
@@ -115,7 +116,8 @@ class ReservationApiIT extends AbstractPostgresIT {
                 .andExpect(jsonPath("$.page.totalElements").value(1));
 
         // --- modificación con la versión que devolvió la lectura ---
-        MvcResult modified = mockMvc.perform(put("/v1/reservations/{id}", id).with(asUser(EMAIL))
+        MvcResult modified = mockMvc.perform(put("/v1/reservations/{id}", id)
+                        .with(asUser(EMAIL))
                         .header(IF_MATCH, "\"0\"")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(updateBody("1980.00", departure)))
@@ -126,7 +128,8 @@ class ReservationApiIT extends AbstractPostgresIT {
                 .andExpect(jsonPath("$.itinerary.segments[1].position").value(2))
                 .andReturn();
 
-        assertThat(jsonOf(modified).get("itinerary").get("price").get("amount").asText()).isEqualTo("1980.00");
+        assertThat(jsonOf(modified).get("itinerary").get("price").get("amount").asText())
+                .isEqualTo("1980.00");
 
         // --- cancelación: baja lógica, la reserva sigue estando ---
         mockMvc.perform(delete("/v1/reservations/{id}", id).with(asUser(EMAIL)).header(IF_MATCH, "\"1\""))
@@ -148,14 +151,16 @@ class ReservationApiIT extends AbstractPostgresIT {
         String key = UUID.randomUUID().toString();
         String body = createBody("1250.50", "SCL", departure);
 
-        MvcResult first = mockMvc.perform(post("/v1/reservations").with(asUser(EMAIL))
+        MvcResult first = mockMvc.perform(post("/v1/reservations")
+                        .with(asUser(EMAIL))
                         .header(IDEMPOTENCY_KEY_HEADER, key)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isCreated())
                 .andReturn();
 
-        mockMvc.perform(post("/v1/reservations").with(asUser(EMAIL))
+        mockMvc.perform(post("/v1/reservations")
+                        .with(asUser(EMAIL))
                         .header(IDEMPOTENCY_KEY_HEADER, key)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
@@ -171,13 +176,15 @@ class ReservationApiIT extends AbstractPostgresIT {
     void rejectsStaleETag() throws Exception {
         String id = createReservation();
 
-        mockMvc.perform(put("/v1/reservations/{id}", id).with(asUser(EMAIL))
+        mockMvc.perform(put("/v1/reservations/{id}", id)
+                        .with(asUser(EMAIL))
                         .header(IF_MATCH, "\"0\"")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(updateBody("1980.00", departure)))
                 .andExpect(status().isOk());
 
-        mockMvc.perform(put("/v1/reservations/{id}", id).with(asUser(EMAIL))
+        mockMvc.perform(put("/v1/reservations/{id}", id)
+                        .with(asUser(EMAIL))
                         .header(IF_MATCH, "\"0\"")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(updateBody("2500.00", departure)))
@@ -208,7 +215,8 @@ class ReservationApiIT extends AbstractPostgresIT {
 
         String nueva = "nueva.clienta@example.com";
 
-        MvcResult created = mockMvc.perform(post("/v1/reservations").with(asUser(nueva))
+        MvcResult created = mockMvc.perform(post("/v1/reservations")
+                        .with(asUser(nueva))
                         .header(IDEMPOTENCY_KEY_HEADER, UUID.randomUUID().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(createBody("1250.50", "SCL", departure)))
@@ -251,13 +259,15 @@ class ReservationApiIT extends AbstractPostgresIT {
         // caja se comería un 403.
         String email = "case.sensitive@example.com";
 
-        mockMvc.perform(post("/v1/reservations").with(asUser(email))
+        mockMvc.perform(post("/v1/reservations")
+                        .with(asUser(email))
                         .header(IDEMPOTENCY_KEY_HEADER, UUID.randomUUID().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(createBody("1250.50", "SCL", departure)))
                 .andExpect(status().isCreated());
 
-        mockMvc.perform(get("/v1/reservations").with(asUser(email))
+        mockMvc.perform(get("/v1/reservations")
+                        .with(asUser(email))
                         .param("userId", email.toUpperCase(java.util.Locale.ROOT)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.page.totalElements").value(1));
@@ -294,7 +304,8 @@ class ReservationApiIT extends AbstractPostgresIT {
     @Test
     @DisplayName("un aeropuerto fuera del catálogo responde 400 antes de tocar la base")
     void rejectsUnknownAirport() throws Exception {
-        mockMvc.perform(post("/v1/reservations").with(asUser(EMAIL))
+        mockMvc.perform(post("/v1/reservations")
+                        .with(asUser(EMAIL))
                         .header(IDEMPOTENCY_KEY_HEADER, UUID.randomUUID().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(createBody("1250.50", "XXX", departure)))
@@ -326,7 +337,8 @@ class ReservationApiIT extends AbstractPostgresIT {
         String idSegunda = createReservation(segunda);
 
         // Orden por salida ascendente: el orden de alta no importa.
-        mockMvc.perform(get("/v1/reservations").with(asUser(EMAIL))
+        mockMvc.perform(get("/v1/reservations")
+                        .with(asUser(EMAIL))
                         .param("sort", "firstDepartureAt,asc")
                         .param("size", "2"))
                 .andExpect(status().isOk())
@@ -337,7 +349,8 @@ class ReservationApiIT extends AbstractPostgresIT {
                 .andExpect(jsonPath("$.page.totalPages").value(2));
 
         // Segunda página del mismo orden.
-        mockMvc.perform(get("/v1/reservations").with(asUser(EMAIL))
+        mockMvc.perform(get("/v1/reservations")
+                        .with(asUser(EMAIL))
                         .param("sort", "firstDepartureAt,asc")
                         .param("size", "2")
                         .param("page", "1"))
@@ -346,8 +359,11 @@ class ReservationApiIT extends AbstractPostgresIT {
                 .andExpect(jsonPath("$.items[0].id").value(idTercera));
 
         // Filtro por rango: sólo la del medio.
-        mockMvc.perform(get("/v1/reservations").with(asUser(EMAIL))
-                        .param("departureFrom", segunda.minus(Duration.ofDays(1)).toString())
+        mockMvc.perform(get("/v1/reservations")
+                        .with(asUser(EMAIL))
+                        .param(
+                                "departureFrom",
+                                segunda.minus(Duration.ofDays(1)).toString())
                         .param("departureTo", segunda.plus(Duration.ofDays(1)).toString()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items", org.hamcrest.Matchers.hasSize(1)))
@@ -366,7 +382,9 @@ class ReservationApiIT extends AbstractPostgresIT {
         String cancelada = createReservation();
         createReservation(departure.plus(Duration.ofDays(5)));
 
-        mockMvc.perform(delete("/v1/reservations/{id}", cancelada).with(asUser(EMAIL)).header(IF_MATCH, "\"0\""))
+        mockMvc.perform(delete("/v1/reservations/{id}", cancelada)
+                        .with(asUser(EMAIL))
+                        .header(IF_MATCH, "\"0\""))
                 .andExpect(status().isOk());
 
         mockMvc.perform(get("/v1/reservations").with(asUser(EMAIL)).param("status", "PENDING"))
@@ -378,7 +396,8 @@ class ReservationApiIT extends AbstractPostgresIT {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items[0].id").value(cancelada));
 
-        mockMvc.perform(get("/v1/reservations").with(asUser(EMAIL))
+        mockMvc.perform(get("/v1/reservations")
+                        .with(asUser(EMAIL))
                         .param("status", "PENDING")
                         .param("status", "CANCELLED"))
                 .andExpect(status().isOk())
@@ -401,14 +420,18 @@ class ReservationApiIT extends AbstractPostgresIT {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.info.title").value("API de Reservas de Vuelos"))
                 .andExpect(jsonPath("$.paths['/v1/reservations'].post").exists())
-                .andExpect(jsonPath("$.paths['/v1/reservations/{reservationId}'].delete").exists())
+                .andExpect(jsonPath("$.paths['/v1/reservations/{reservationId}'].delete")
+                        .exists())
                 .andExpect(jsonPath("$.components.schemas.Reservation").exists())
-                .andExpect(jsonPath("$.components.schemas.Problem.properties.code").exists())
+                .andExpect(
+                        jsonPath("$.components.schemas.Problem.properties.code").exists())
                 // El esquema de seguridad tiene que estar declarado: es lo que
                 // hace que la UI muestre el botón "Authorize" y que los
                 // clientes generados sepan que hay que mandar el header.
-                .andExpect(jsonPath("$.components.securitySchemes.bearerAuth.scheme").value("bearer"))
-                .andExpect(jsonPath("$.paths['/v1/reservations'].post.security[0].bearerAuth").exists());
+                .andExpect(jsonPath("$.components.securitySchemes.bearerAuth.scheme")
+                        .value("bearer"))
+                .andExpect(jsonPath("$.paths['/v1/reservations'].post.security[0].bearerAuth")
+                        .exists());
 
         mockMvc.perform(get("/v3/api-docs.yaml"))
                 .andExpect(status().isOk())
@@ -417,10 +440,8 @@ class ReservationApiIT extends AbstractPostgresIT {
                         .contains("/v1/reservations/{reservationId}"));
 
         // La UI carga entera sin credencial: el index y el config que pide por XHR.
-        mockMvc.perform(get("/swagger-ui/index.html"))
-                .andExpect(status().isOk());
-        mockMvc.perform(get("/v3/api-docs/swagger-config"))
-                .andExpect(status().isOk());
+        mockMvc.perform(get("/swagger-ui/index.html")).andExpect(status().isOk());
+        mockMvc.perform(get("/v3/api-docs/swagger-config")).andExpect(status().isOk());
     }
 
     @Test
@@ -452,8 +473,7 @@ class ReservationApiIT extends AbstractPostgresIT {
     }
 
     private static RequestPostProcessor asBackoffice(String email) {
-        return bearer(SecurityTestSupport.bearer(
-                Actor.backoffice(Email.of(email), "Soporte", "Reservas")));
+        return bearer(SecurityTestSupport.bearer(Actor.backoffice(Email.of(email), "Soporte", "Reservas")));
     }
 
     private static RequestPostProcessor bearer(String authorization) {
@@ -486,7 +506,8 @@ class ReservationApiIT extends AbstractPostgresIT {
     }
 
     private String createReservation(Instant departureAt) throws Exception {
-        MvcResult result = mockMvc.perform(post("/v1/reservations").with(asUser(EMAIL))
+        MvcResult result = mockMvc.perform(post("/v1/reservations")
+                        .with(asUser(EMAIL))
                         .header(IDEMPOTENCY_KEY_HEADER, UUID.randomUUID().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(createBody("1250.50", "SCL", departureAt)))
@@ -496,7 +517,8 @@ class ReservationApiIT extends AbstractPostgresIT {
     }
 
     private String userIdOf(String reservationId) throws Exception {
-        MvcResult result = mockMvc.perform(get("/v1/reservations/{id}", reservationId).with(asUser(EMAIL)))
+        MvcResult result = mockMvc.perform(
+                        get("/v1/reservations/{id}", reservationId).with(asUser(EMAIL)))
                 .andExpect(status().isOk())
                 .andReturn();
         return jsonOf(result).get("userId").asText();

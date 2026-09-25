@@ -44,8 +44,7 @@ public final class Throwables {
     private static final String REDACTED = "redactado";
 
     /** Email. El patrón es el mismo que usa el gate de PII de la suite. */
-    private static final Pattern EMAIL =
-            Pattern.compile("[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}");
+    private static final Pattern EMAIL = Pattern.compile("[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}");
 
     /**
      * El {@code Detail: Key (columna)=(valor) …} de PostgreSQL. Es la forma
@@ -59,8 +58,7 @@ public final class Throwables {
     /** Un JWT, o cualquier fragmento que se le parezca. */
     private static final Pattern JWT = Pattern.compile("eyJ[A-Za-z0-9_-]{10,}");
 
-    private Throwables() {
-    }
+    private Throwables() {}
 
     /**
      * El nombre simple de la clase. Es lo que responde «¿qué salió mal?» sin

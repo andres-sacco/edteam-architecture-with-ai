@@ -40,17 +40,18 @@ import java.util.Objects;
  * @param attempts      intentos de publicación ya realizados
  * @param status        estado actual
  */
-public record OutboxMessage(String id,
-                            String type,
-                            int schemaVersion,
-                            String subject,
-                            long sequence,
-                            String payload,
-                            String correlationId,
-                            Instant occurredAt,
-                            Instant enqueuedAt,
-                            int attempts,
-                            OutboxStatus status) {
+public record OutboxMessage(
+        String id,
+        String type,
+        int schemaVersion,
+        String subject,
+        long sequence,
+        String payload,
+        String correlationId,
+        Instant occurredAt,
+        Instant enqueuedAt,
+        int attempts,
+        OutboxStatus status) {
 
     public OutboxMessage {
         Objects.requireNonNull(id, "id es obligatorio");

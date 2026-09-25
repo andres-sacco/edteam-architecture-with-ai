@@ -1,5 +1,7 @@
 package com.edteam.reservations.support;
 
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
+
 import com.edteam.reservations.domain.access.Actor;
 import com.edteam.reservations.domain.access.ActorRole;
 import com.edteam.reservations.domain.model.Email;
@@ -9,14 +11,11 @@ import com.nimbusds.jose.JWSHeader;
 import com.nimbusds.jose.crypto.MACSigner;
 import com.nimbusds.jwt.JWTClaimsSet;
 import com.nimbusds.jwt.SignedJWT;
-import org.springframework.test.web.servlet.request.RequestPostProcessor;
-
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Date;
 import java.util.List;
-
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
+import org.springframework.test.web.servlet.request.RequestPostProcessor;
 
 /**
  * Identidades para los tests del borde HTTP.
@@ -44,8 +43,7 @@ public final class SecurityTestSupport {
     /** La misma de {@code application.yml}: un placeholder, no un secreto. */
     public static final String DEV_SECRET = "dev-only-hmac-key-no-usar-fuera-de-local-0123456789";
 
-    private SecurityTestSupport() {
-    }
+    private SecurityTestSupport() {}
 
     /** Autenticación ya resuelta, para los tests de slice. */
     public static RequestPostProcessor as(Actor actor) {

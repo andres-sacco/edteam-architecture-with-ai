@@ -1,7 +1,6 @@
 package com.edteam.reservations.domain.model;
 
 import com.edteam.reservations.domain.exception.InvalidSegmentException;
-
 import java.time.Instant;
 import java.util.Locale;
 import java.util.Objects;
@@ -21,11 +20,8 @@ import java.util.Optional;
  *
  * @param id vacío mientras el segmento no esté persistido
  */
-public record Segment(Optional<SegmentId> id,
-                      AirportCode origin,
-                      AirportCode destination,
-                      String airline,
-                      Instant departureAt) {
+public record Segment(
+        Optional<SegmentId> id, AirportCode origin, AirportCode destination, String airline, Instant departureAt) {
 
     private static final int MAX_AIRLINE_LENGTH = 50;
 
@@ -55,11 +51,8 @@ public record Segment(Optional<SegmentId> id,
     }
 
     /** Segmento ya persistido. */
-    public static Segment existing(SegmentId id,
-                                   AirportCode origin,
-                                   AirportCode destination,
-                                   String airline,
-                                   Instant departureAt) {
+    public static Segment existing(
+            SegmentId id, AirportCode origin, AirportCode destination, String airline, Instant departureAt) {
         return new Segment(Optional.of(id), origin, destination, airline, departureAt);
     }
 

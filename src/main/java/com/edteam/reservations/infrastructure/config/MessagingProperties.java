@@ -1,9 +1,8 @@
 package com.edteam.reservations.infrastructure.config;
 
 import com.edteam.reservations.infrastructure.adapter.out.messaging.MessagingTopology;
-import org.springframework.boot.context.properties.ConfigurationProperties;
-
 import java.time.Duration;
+import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
  * Configuración de la mensajería.
@@ -49,18 +48,19 @@ import java.time.Duration;
  *                        medir y drenar
  */
 @ConfigurationProperties(prefix = "reservations.messaging")
-public record MessagingProperties(boolean enabled,
-                                  String exchange,
-                                  String source,
-                                  Duration confirmTimeout,
-                                  boolean declareConsumerTopology,
-                                  boolean consumerEnabled,
-                                  Duration retryDelay,
-                                  Duration maxRetryDelay,
-                                  int maxRetryRounds,
-                                  int queueMaxLength,
-                                  int retryQueueMaxLength,
-                                  CircuitBreakerProperties circuitBreaker) {
+public record MessagingProperties(
+        boolean enabled,
+        String exchange,
+        String source,
+        Duration confirmTimeout,
+        boolean declareConsumerTopology,
+        boolean consumerEnabled,
+        Duration retryDelay,
+        Duration maxRetryDelay,
+        int maxRetryRounds,
+        int queueMaxLength,
+        int retryQueueMaxLength,
+        CircuitBreakerProperties circuitBreaker) {
 
     /**
      * Umbrales por defecto del circuito del broker.
@@ -78,8 +78,7 @@ public record MessagingProperties(boolean enabled,
      * caro</em> (connect más confirm por cada prueba).
      */
     private static final CircuitBreakerProperties CIRCUIT_DEFAULTS = new CircuitBreakerProperties(
-            true, 20, 5, 60, Duration.ofSeconds(2), 60,
-            Duration.ofSeconds(60), 2, true, Duration.ofMinutes(30));
+            true, 20, 5, 60, Duration.ofSeconds(2), 60, Duration.ofSeconds(60), 2, true, Duration.ofMinutes(30));
 
     public MessagingProperties {
         if (exchange == null || exchange.isBlank()) {

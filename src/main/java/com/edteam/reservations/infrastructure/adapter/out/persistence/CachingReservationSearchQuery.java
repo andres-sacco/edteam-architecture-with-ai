@@ -7,13 +7,12 @@ import com.edteam.reservations.infrastructure.cache.CacheKeys;
 import com.edteam.reservations.infrastructure.cache.CacheStore;
 import com.edteam.reservations.infrastructure.logging.LogFields;
 import com.edteam.reservations.infrastructure.logging.LogSanitizer;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Decorador que cachea <strong>sólo el conteo</strong> del listado.
@@ -123,11 +122,17 @@ public class CachingReservationSearchQuery implements ReservationSearchQuery {
      */
     static String keyOf(ReservationSearchCriteria criteria) {
         String descriptor = new StringBuilder()
-                .append("user=").append(criteria.userEmail().map(Email::value).orElse(""))
-                .append("|statuses=").append(criteria.statuses().stream()
-                        .map(ReservationStatus::name).sorted().collect(Collectors.joining(",")))
-                .append("|from=").append(criteria.departureFrom().map(Object::toString).orElse(""))
-                .append("|to=").append(criteria.departureTo().map(Object::toString).orElse(""))
+                .append("user=")
+                .append(criteria.userEmail().map(Email::value).orElse(""))
+                .append("|statuses=")
+                .append(criteria.statuses().stream()
+                        .map(ReservationStatus::name)
+                        .sorted()
+                        .collect(Collectors.joining(",")))
+                .append("|from=")
+                .append(criteria.departureFrom().map(Object::toString).orElse(""))
+                .append("|to=")
+                .append(criteria.departureTo().map(Object::toString).orElse(""))
                 .toString();
         return CacheKeys.RESERVATION_COUNT_PREFIX + CacheKeys.digest(descriptor);
     }

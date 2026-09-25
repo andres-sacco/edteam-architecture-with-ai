@@ -10,15 +10,6 @@ import com.edteam.reservations.infrastructure.config.OutboxProperties;
 import com.edteam.reservations.infrastructure.jdbc.Utc;
 import com.edteam.reservations.infrastructure.logging.LogFields;
 import com.edteam.reservations.infrastructure.security.OpsActor;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.slf4j.MDC;
-import org.springframework.dao.support.DataAccessUtils;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.RowMapper;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
-
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -28,6 +19,14 @@ import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
+import org.springframework.dao.support.DataAccessUtils;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Outbox durable sobre PostgreSQL.
@@ -144,10 +143,11 @@ public class JdbcEventOutbox implements EventOutboxPort, OutboxAdmin {
     private final OutboxProperties properties;
     private final Clock clock;
 
-    public JdbcEventOutbox(JdbcTemplate jdbcTemplate,
-                           DomainEventPayloadMapper payloadMapper,
-                           OutboxProperties properties,
-                           Clock clock) {
+    public JdbcEventOutbox(
+            JdbcTemplate jdbcTemplate,
+            DomainEventPayloadMapper payloadMapper,
+            OutboxProperties properties,
+            Clock clock) {
         this.jdbcTemplate = Objects.requireNonNull(jdbcTemplate);
         this.payloadMapper = Objects.requireNonNull(payloadMapper);
         this.properties = Objects.requireNonNull(properties);
@@ -171,7 +171,8 @@ public class JdbcEventOutbox implements EventOutboxPort, OutboxAdmin {
         String correlationId = MDC.get(MDC_CORRELATION_ID);
 
         for (DomainEvent event : events) {
-            jdbcTemplate.update(INSERT,
+            jdbcTemplate.update(
+                    INSERT,
                     UUID.randomUUID(),
                     event.eventType(),
                     payloadMapper.schemaVersion(event),
@@ -196,8 +197,8 @@ public class JdbcEventOutbox implements EventOutboxPort, OutboxAdmin {
         Instant now = clock.instant();
         java.time.LocalDateTime nowUtc = Utc.param(now);
         java.time.LocalDateTime leaseLimit = Utc.param(now.minus(properties.claimLease()));
-        List<OutboxMessage> claimed = jdbcTemplate.query(CLAIM, MESSAGE_MAPPER,
-                nowUtc, nowUtc, leaseLimit, maxMessages);
+        List<OutboxMessage> claimed =
+                jdbcTemplate.query(CLAIM, MESSAGE_MAPPER, nowUtc, nowUtc, leaseLimit, maxMessages);
         // El ORDER BY del subselect decide CUÁLES se reclaman, no en qué orden
         // vuelven: el RETURNING de un UPDATE los devuelve en el orden en que el
         // motor los tocó. Se reordena acá porque el relay se apoya en este
@@ -260,16 +261,22 @@ public class JdbcEventOutbox implements EventOutboxPort, OutboxAdmin {
         if (attempt.status() != OutboxStatus.IN_FLIGHT) {
             // El reclamo venció y otro lo tomó —o ya lo despachó—. Contarle el
             // intento ahora sería contarlo dos veces.
-            log.warn("El mensaje {} está en {} y no en IN_FLIGHT: el reclamo ya no es nuestro",
-                    messageId, attempt.status());
+            log.warn(
+                    "El mensaje {} está en {} y no en IN_FLIGHT: el reclamo ya no es nuestro",
+                    messageId,
+                    attempt.status());
             return;
         }
         int attempts = attempt.attempts() + 1;
 
         String reason = deadLetterReason(failure, attempts, attempt.enqueuedAt(), now);
         if (reason != null) {
-            log.error("El mensaje {} ({}) va a la dead letter del productor: {}. Último error: {}",
-                    messageId, attempt.type(), reason, error);
+            log.error(
+                    "El mensaje {} ({}) va a la dead letter del productor: {}. Último error: {}",
+                    messageId,
+                    attempt.type(),
+                    reason,
+                    error);
             jdbcTemplate.update("""
                     UPDATE outbox_message
                        SET status = 'FAILED', attempts = ?, claimed_at = NULL,
@@ -287,7 +294,8 @@ public class JdbcEventOutbox implements EventOutboxPort, OutboxAdmin {
                  WHERE id = ?::uuid AND status = 'IN_FLIGHT'
                 """, attempts, Utc.param(nextAttempt), trim(error), messageId);
         if (updated == 0) {
-            log.warn("El mensaje {} ya no estaba reclamado por este relay: no se le cuenta el intento fallido",
+            log.warn(
+                    "El mensaje {} ya no estaba reclamado por este relay: no se le cuenta el intento fallido",
                     messageId);
         }
     }
@@ -326,32 +334,36 @@ public class JdbcEventOutbox implements EventOutboxPort, OutboxAdmin {
                   FROM outbox_message
                 """, (rs, row) -> {
             Instant oldest = Utc.read(rs, "mas_viejo");
-            Duration lag = oldest == null
-                    ? Duration.ZERO
-                    : Duration.between(oldest, clock.instant());
-            return new OutboxStats(rs.getLong("pendientes"), rs.getLong("muertos"),
-                    lag.isNegative() ? Duration.ZERO : lag, rs.getLong("despachados"));
+            Duration lag = oldest == null ? Duration.ZERO : Duration.between(oldest, clock.instant());
+            return new OutboxStats(
+                    rs.getLong("pendientes"),
+                    rs.getLong("muertos"),
+                    lag.isNegative() ? Duration.ZERO : lag,
+                    rs.getLong("despachados"));
         });
     }
 
     @Override
     public List<DeadOutboxMessage> deadLetter(int limit) {
         int capped = Math.clamp(limit, 1, 500);
-        return jdbcTemplate.query("""
+        return jdbcTemplate.query(
+                """
                 SELECT id, type, subject, sequence, attempts, enqueued_at, failed_at, last_error
                   FROM outbox_message
                  WHERE status = 'FAILED'
                  ORDER BY failed_at DESC
                  LIMIT ?
-                """, (rs, row) -> new DeadOutboxMessage(
-                rs.getString("id"),
-                rs.getString("type"),
-                rs.getString("subject"),
-                rs.getLong("sequence"),
-                rs.getInt("attempts"),
-                Utc.read(rs, "enqueued_at"),
-                Utc.read(rs, "failed_at"),
-                rs.getString("last_error")), capped);
+                """,
+                (rs, row) -> new DeadOutboxMessage(
+                        rs.getString("id"),
+                        rs.getString("type"),
+                        rs.getString("subject"),
+                        rs.getLong("sequence"),
+                        rs.getInt("attempts"),
+                        Utc.read(rs, "enqueued_at"),
+                        Utc.read(rs, "failed_at"),
+                        rs.getString("last_error")),
+                capped);
     }
 
     @Override
@@ -390,8 +402,7 @@ public class JdbcEventOutbox implements EventOutboxPort, OutboxAdmin {
     public int purgeDispatchedBefore(Instant limit) {
         Objects.requireNonNull(limit, "El límite es obligatorio");
         return jdbcTemplate.update(
-                "DELETE FROM outbox_message WHERE status = 'DISPATCHED' AND enqueued_at < ?",
-                Utc.param(limit));
+                "DELETE FROM outbox_message WHERE status = 'DISPATCHED' AND enqueued_at < ?", Utc.param(limit));
     }
 
     /**
@@ -443,17 +454,21 @@ public class JdbcEventOutbox implements EventOutboxPort, OutboxAdmin {
         long exponential = Math.min(maxMillis, initialMillis * (1L << exponent));
         // Nunca menos que el backoff inicial: con jitter puro, un sorteo bajo
         // dejaría el reintento casi en caliente, que es lo que se está evitando.
-        long jittered = initialMillis + ThreadLocalRandom.current()
-                .nextLong(Math.max(1L, exponential - initialMillis + 1L));
+        long jittered =
+                initialMillis + ThreadLocalRandom.current().nextLong(Math.max(1L, exponential - initialMillis + 1L));
         return Duration.ofMillis(Math.min(maxMillis, jittered));
     }
 
     private Attempt currentAttempt(String messageId) {
-        return DataAccessUtils.singleResult(jdbcTemplate.query("""
+        return DataAccessUtils.singleResult(jdbcTemplate.query(
+                """
                 SELECT type, attempts, enqueued_at, status FROM outbox_message WHERE id = ?::uuid
-                """, (rs, row) -> new Attempt(
-                rs.getString("type"), rs.getInt("attempts"), Utc.read(rs, "enqueued_at"),
-                OutboxStatus.valueOf(rs.getString("status"))),
+                """,
+                (rs, row) -> new Attempt(
+                        rs.getString("type"),
+                        rs.getInt("attempts"),
+                        Utc.read(rs, "enqueued_at"),
+                        OutboxStatus.valueOf(rs.getString("status"))),
                 messageId));
     }
 
@@ -465,6 +480,5 @@ public class JdbcEventOutbox implements EventOutboxPort, OutboxAdmin {
         return error.length() <= 500 ? error : error.substring(0, 497) + "...";
     }
 
-    private record Attempt(String type, int attempts, Instant enqueuedAt, OutboxStatus status) {
-    }
+    private record Attempt(String type, int attempts, Instant enqueuedAt, OutboxStatus status) {}
 }

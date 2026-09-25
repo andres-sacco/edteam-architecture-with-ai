@@ -3,12 +3,11 @@ package com.edteam.reservations.infrastructure.observability;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tags;
-import org.springframework.http.HttpMethod;
-
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import org.springframework.http.HttpMethod;
 
 /**
  * Las métricas del camino del pedido, en lenguaje de negocio.
@@ -58,9 +57,17 @@ public class BusinessMetrics {
      * el que hace que la métrica valga: cada valor lleva a una decisión
      * distinta.
      */
-    public static final Set<String> OUTCOME_VOCABULARY =
-            Set.of("ok", "duplicate", "conflict", "not_found", "denied", "rejected",
-                    "throttled", "degraded", "unavailable", "error");
+    public static final Set<String> OUTCOME_VOCABULARY = Set.of(
+            "ok",
+            "duplicate",
+            "conflict",
+            "not_found",
+            "denied",
+            "rejected",
+            "throttled",
+            "degraded",
+            "unavailable",
+            "error");
 
     /**
      * Plantilla de ruta a operación. La clave es la plantilla del
@@ -116,8 +123,7 @@ public class BusinessMetrics {
         if (method == null || route == null) {
             return "other";
         }
-        return OPERATIONS_BY_ROUTE.getOrDefault(
-                method.toUpperCase(Locale.ROOT) + " " + route, "other");
+        return OPERATIONS_BY_ROUTE.getOrDefault(method.toUpperCase(Locale.ROOT) + " " + route, "other");
     }
 
     /**
@@ -169,7 +175,9 @@ public class BusinessMetrics {
 
     /** Sólo para que el vocabulario del test de contrato no se escriba a mano dos veces. */
     public static boolean isWriteMethod(String method) {
-        return HttpMethod.POST.matches(method) || HttpMethod.PUT.matches(method)
-                || HttpMethod.DELETE.matches(method) || HttpMethod.PATCH.matches(method);
+        return HttpMethod.POST.matches(method)
+                || HttpMethod.PUT.matches(method)
+                || HttpMethod.DELETE.matches(method)
+                || HttpMethod.PATCH.matches(method);
     }
 }

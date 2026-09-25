@@ -1,20 +1,19 @@
 package com.edteam.reservations.architecture;
 
+import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
+import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
+import static org.assertj.core.api.Assertions.assertThat;
+
 import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.library.Architectures;
+import java.util.List;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.annotation.Transactional;
-
-import java.util.List;
-
-import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
-import static org.assertj.core.api.Assertions.assertThat;
-import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 
 /**
  * Verifica las reglas de dependencia de la arquitectura hexagonal.
@@ -43,23 +42,32 @@ class HexagonalArchitectureTest {
     void layersDependInwardsOnly() {
         Architectures.layeredArchitecture()
                 .consideringOnlyDependenciesInLayers()
-                .layer("Dominio").definedBy(BASE + ".domain..")
-                .layer("Aplicación").definedBy(BASE + ".application..")
-                .layer("Infraestructura").definedBy(BASE + ".infrastructure..")
-                .layer("Arranque").definedBy(BASE)
-                .whereLayer("Infraestructura").mayOnlyBeAccessedByLayers("Arranque")
-                .whereLayer("Aplicación").mayOnlyBeAccessedByLayers("Infraestructura", "Arranque")
-                .whereLayer("Dominio").mayOnlyBeAccessedByLayers("Aplicación", "Infraestructura", "Arranque")
+                .layer("Dominio")
+                .definedBy(BASE + ".domain..")
+                .layer("Aplicación")
+                .definedBy(BASE + ".application..")
+                .layer("Infraestructura")
+                .definedBy(BASE + ".infrastructure..")
+                .layer("Arranque")
+                .definedBy(BASE)
+                .whereLayer("Infraestructura")
+                .mayOnlyBeAccessedByLayers("Arranque")
+                .whereLayer("Aplicación")
+                .mayOnlyBeAccessedByLayers("Infraestructura", "Arranque")
+                .whereLayer("Dominio")
+                .mayOnlyBeAccessedByLayers("Aplicación", "Infraestructura", "Arranque")
                 .check(productionClasses);
     }
 
     @Test
     @DisplayName("el dominio no conoce la aplicación ni la infraestructura")
     void domainIsIndependent() {
-        noClasses().that().resideInAPackage(BASE + ".domain..")
-                .should().dependOnClassesThat().resideInAnyPackage(
-                        BASE + ".application..",
-                        BASE + ".infrastructure..")
+        noClasses()
+                .that()
+                .resideInAPackage(BASE + ".domain..")
+                .should()
+                .dependOnClassesThat()
+                .resideInAnyPackage(BASE + ".application..", BASE + ".infrastructure..")
                 .because("el dominio es el centro de la hexagonal: nada de afuera puede entrar")
                 .check(productionClasses);
     }
@@ -67,11 +75,12 @@ class HexagonalArchitectureTest {
     @Test
     @DisplayName("el dominio no depende de Spring ni de ningún framework")
     void domainHasNoFrameworkDependencies() {
-        noClasses().that().resideInAPackage(BASE + ".domain..")
-                .should().dependOnClassesThat().resideInAnyPackage(
-                        "org.springframework..",
-                        "jakarta..",
-                        "com.fasterxml..")
+        noClasses()
+                .that()
+                .resideInAPackage(BASE + ".domain..")
+                .should()
+                .dependOnClassesThat()
+                .resideInAnyPackage("org.springframework..", "jakarta..", "com.fasterxml..")
                 .because("el modelo de negocio tiene que poder testearse y sobrevivir a un cambio de framework")
                 .check(productionClasses);
     }
@@ -79,8 +88,12 @@ class HexagonalArchitectureTest {
     @Test
     @DisplayName("la aplicación no depende de la infraestructura: la inversión de dependencias va por los puertos")
     void applicationDoesNotDependOnInfrastructure() {
-        noClasses().that().resideInAPackage(BASE + ".application..")
-                .should().dependOnClassesThat().resideInAPackage(BASE + ".infrastructure..")
+        noClasses()
+                .that()
+                .resideInAPackage(BASE + ".application..")
+                .should()
+                .dependOnClassesThat()
+                .resideInAPackage(BASE + ".infrastructure..")
                 .because("los casos de uso dependen de puertos, no de adaptadores")
                 .check(productionClasses);
     }
@@ -93,8 +106,12 @@ class HexagonalArchitectureTest {
         // —o el almacén propio que lo envuelve— esa decisión deja de poder
         // revisarse sin tocar la lógica de negocio, y los puertos empiezan a
         // cambiar de firma para acomodarla.
-        noClasses().that().resideInAnyPackage(BASE + ".domain..", BASE + ".application..")
-                .should().dependOnClassesThat().resideInAnyPackage(
+        noClasses()
+                .that()
+                .resideInAnyPackage(BASE + ".domain..", BASE + ".application..")
+                .should()
+                .dependOnClassesThat()
+                .resideInAnyPackage(
                         "org.springframework.data.redis..",
                         "org.springframework.cache..",
                         BASE + ".infrastructure.cache..")
@@ -115,8 +132,12 @@ class HexagonalArchitectureTest {
         //
         // El dominio SÍ decide quién puede ver qué: eso es ReservationAccessPolicy,
         // que trabaja sobre un Actor propio y no conoce JWT ni Authentication.
-        noClasses().that().resideInAnyPackage(BASE + ".domain..", BASE + ".application..")
-                .should().dependOnClassesThat().resideInAnyPackage(
+        noClasses()
+                .that()
+                .resideInAnyPackage(BASE + ".domain..", BASE + ".application..")
+                .should()
+                .dependOnClassesThat()
+                .resideInAnyPackage(
                         "org.springframework.security..",
                         "com.nimbusds..",
                         "jakarta.servlet..",
@@ -132,10 +153,12 @@ class HexagonalArchitectureTest {
         // envolver un Jwt o una Authentication, la política de acceso dejaría de
         // poder probarse sin levantar un contexto y la regla de negocio pasaría
         // a depender del emisor de turno.
-        noClasses().that().resideInAPackage(BASE + ".domain.access..")
-                .should().dependOnClassesThat().resideOutsideOfPackages(
-                        BASE + ".domain..",
-                        "java..")
+        noClasses()
+                .that()
+                .resideInAPackage(BASE + ".domain.access..")
+                .should()
+                .dependOnClassesThat()
+                .resideOutsideOfPackages(BASE + ".domain..", "java..")
                 .because("el actor y la política de acceso son modelo de negocio, no del borde")
                 .check(productionClasses);
     }
@@ -153,8 +176,12 @@ class HexagonalArchitectureTest {
         //
         // El outbox y el mapper de payload también quedan afuera: el payload se
         // serializa en infraestructura porque el dominio no sabe serializarse.
-        noClasses().that().resideInAnyPackage(BASE + ".domain..", BASE + ".application..")
-                .should().dependOnClassesThat().resideInAnyPackage(
+        noClasses()
+                .that()
+                .resideInAnyPackage(BASE + ".domain..", BASE + ".application..")
+                .should()
+                .dependOnClassesThat()
+                .resideInAnyPackage(
                         "org.springframework.amqp..",
                         "com.rabbitmq..",
                         BASE + ".infrastructure.adapter.out.messaging..",
@@ -173,10 +200,12 @@ class HexagonalArchitectureTest {
         // outbox. Si vivieran en el evento, el mismo hecho tendría forma
         // distinta según por dónde sale, y cambiar de broker obligaría a tocar
         // el dominio.
-        noClasses().that().resideInAPackage(BASE + ".domain.event..")
-                .should().dependOnClassesThat().resideOutsideOfPackages(
-                        BASE + ".domain..",
-                        "java..")
+        noClasses()
+                .that()
+                .resideInAPackage(BASE + ".domain.event..")
+                .should()
+                .dependOnClassesThat()
+                .resideOutsideOfPackages(BASE + ".domain..", "java..")
                 .because("un hecho de negocio es el mismo hecho cualquiera sea el transporte")
                 .check(productionClasses);
     }
@@ -194,9 +223,12 @@ class HexagonalArchitectureTest {
         // La regla es estructural y no una convención: las clases que abren
         // transacción (*Transaction) no pueden depender del puerto del
         // catálogo. La validación ocurre antes, en el caso de uso.
-        noClasses().that().haveSimpleNameEndingWith("Transaction")
-                .should().dependOnClassesThat().haveFullyQualifiedName(
-                        BASE + ".application.port.out.AirportCatalogPort")
+        noClasses()
+                .that()
+                .haveSimpleNameEndingWith("Transaction")
+                .should()
+                .dependOnClassesThat()
+                .haveFullyQualifiedName(BASE + ".application.port.out.AirportCatalogPort")
                 .because("una llamada de red adentro de una transacción convierte la lentitud del proveedor "
                         + "en agotamiento del pool de conexiones y en una caída de toda la API")
                 .check(productionClasses);
@@ -221,8 +253,7 @@ class HexagonalArchitectureTest {
                 .sorted()
                 .toList();
 
-        assertThat(offenders)
-                .withFailMessage("""
+        assertThat(offenders).withFailMessage("""
                         Estas clases abren transacción y alcanzan el maestro de aeropuertos: %s
 
                         La validación es HTTP contra un servicio externo, con hasta 3 intentos y
@@ -232,8 +263,7 @@ class HexagonalArchitectureTest {
                         entera devuelve error, incluidos los GET que no tocan el catálogo.
 
                         Hay que validar primero y abrir la transacción después (ver
-                        CreateReservationService / CreateReservationTransaction).""", offenders)
-                .isEmpty();
+                        CreateReservationService / CreateReservationTransaction).""", offenders).isEmpty();
     }
 
     private static boolean isTransactional(JavaClass javaClass) {
@@ -267,10 +297,12 @@ class HexagonalArchitectureTest {
         // AirportCatalogThrottledException y EventPublisherUnavailableException
         // son excepciones propias que el clasificador de infraestructura lee,
         // no tipos de la libreria.
-        noClasses().that().resideInAnyPackage(BASE + ".domain..", BASE + ".application..")
-                .should().dependOnClassesThat().resideInAnyPackage(
-                        "io.github.resilience4j..",
-                        BASE + ".infrastructure.resilience..")
+        noClasses()
+                .that()
+                .resideInAnyPackage(BASE + ".domain..", BASE + ".application..")
+                .should()
+                .dependOnClassesThat()
+                .resideInAnyPackage("io.github.resilience4j..", BASE + ".infrastructure.resilience..")
                 .because("los umbrales de un circuito son configuracion de despliegue, no logica de negocio")
                 .check(productionClasses);
     }
@@ -291,15 +323,18 @@ class HexagonalArchitectureTest {
                 .flatMap(javaClass -> javaClass.getMethods().stream())
                 .filter(method -> method.isAnnotatedWith(Transactional.class))
                 .filter(method -> method.getOwner().getPackageName().startsWith(BASE + ".application"))
-                .filter(method -> method.getAnnotationOfType(Transactional.class).timeout() < 0)
+                .filter(method ->
+                        method.getAnnotationOfType(Transactional.class).timeout() < 0)
                 .map(method -> method.getOwner().getName() + "#" + method.getName())
                 .sorted()
                 .toList();
 
         assertThat(offenders)
-                .withFailMessage("Estos metodos transaccionales no declaran timeout: %s. "
-                        + "Una transaccion sin techo retiene una conexion del pool mientras la base este "
-                        + "lenta; con maximum-pool-size 20, unas pocas asi tumban la API entera.", offenders)
+                .withFailMessage(
+                        "Estos metodos transaccionales no declaran timeout: %s. "
+                                + "Una transaccion sin techo retiene una conexion del pool mientras la base este "
+                                + "lenta; con maximum-pool-size 20, unas pocas asi tumban la API entera.",
+                        offenders)
                 .isEmpty();
     }
 
@@ -323,8 +358,10 @@ class HexagonalArchitectureTest {
                 .toList();
 
         assertThat(retriers)
-                .withFailMessage("Clases que reintentan en proceso: %s. Solo puede haber una, y sobre "
-                        + "una lectura idempotente.", retriers)
+                .withFailMessage(
+                        "Clases que reintentan en proceso: %s. Solo puede haber una, y sobre "
+                                + "una lectura idempotente.",
+                        retriers)
                 .containsExactly(BASE + ".infrastructure.adapter.out.airport.catalog.RetryingCityCatalogClient");
 
         List<String> implemented = productionClasses.stream()
@@ -334,8 +371,9 @@ class HexagonalArchitectureTest {
                 .toList();
 
         assertThat(implemented)
-                .withFailMessage("El decorador de reintentos solo puede envolver el puerto de LECTURA "
-                        + "del catalogo: %s", implemented)
+                .withFailMessage(
+                        "El decorador de reintentos solo puede envolver el puerto de LECTURA " + "del catalogo: %s",
+                        implemented)
                 .containsExactly(BASE + ".infrastructure.adapter.out.airport.catalog.CityCatalogClient");
     }
 
@@ -352,8 +390,12 @@ class HexagonalArchitectureTest {
         // el dato completo. Los mensajes de excepción del dominio ya fueron el
         // canal de una fuga de PII (hallazgo 6 de la auditoría): darle además
         // un logger es abrir la puerta de al lado.
-        noClasses().that().resideInAPackage(BASE + ".domain..")
-                .should().dependOnClassesThat().resideInAnyPackage("org.slf4j..")
+        noClasses()
+                .that()
+                .resideInAPackage(BASE + ".domain..")
+                .should()
+                .dependOnClassesThat()
+                .resideInAnyPackage("org.slf4j..")
                 .because("el dominio ni siquiera se entera de que la observabilidad existe")
                 .check(productionClasses);
     }
@@ -373,8 +415,12 @@ class HexagonalArchitectureTest {
         // termine siendo un campo JSON, un campo de un formato binario o nada
         // lo decide el encoder, que vive en infraestructura y se configura en
         // un XML.
-        noClasses().that().resideInAnyPackage(BASE + ".domain..", BASE + ".application..")
-                .should().dependOnClassesThat().resideInAnyPackage(
+        noClasses()
+                .that()
+                .resideInAnyPackage(BASE + ".domain..", BASE + ".application..")
+                .should()
+                .dependOnClassesThat()
+                .resideInAnyPackage(
                         "ch.qos.logback..",
                         "net.logstash..",
                         "io.micrometer..",
@@ -388,16 +434,23 @@ class HexagonalArchitectureTest {
     @Test
     @DisplayName("los puertos son interfaces")
     void portsAreInterfaces() {
-        classes().that().resideInAPackage(BASE + ".application.port.out..")
-                .should().beInterfaces()
+        classes()
+                .that()
+                .resideInAPackage(BASE + ".application.port.out..")
+                .should()
+                .beInterfaces()
                 .check(productionClasses);
     }
 
     @Test
     @DisplayName("nadie depende directamente de los servicios de aplicación salvo el cableado de Spring")
     void adaptersDependOnUseCasePortsNotOnServices() {
-        noClasses().that().resideInAPackage(BASE + ".infrastructure.adapter.in..")
-                .should().dependOnClassesThat().resideInAPackage(BASE + ".application.service..")
+        noClasses()
+                .that()
+                .resideInAPackage(BASE + ".infrastructure.adapter.in..")
+                .should()
+                .dependOnClassesThat()
+                .resideInAPackage(BASE + ".application.service..")
                 .because("los adaptadores de entrada tienen que hablar con los puertos de entrada")
                 .check(productionClasses);
     }

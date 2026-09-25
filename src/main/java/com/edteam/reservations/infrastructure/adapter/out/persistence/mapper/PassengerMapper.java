@@ -3,9 +3,8 @@ package com.edteam.reservations.infrastructure.adapter.out.persistence.mapper;
 import com.edteam.reservations.domain.model.Passenger;
 import com.edteam.reservations.domain.model.PassengerId;
 import com.edteam.reservations.infrastructure.adapter.out.persistence.entity.PassengerJpaEntity;
-import org.springframework.stereotype.Component;
-
 import java.util.Optional;
+import org.springframework.stereotype.Component;
 
 /** Traduce pasajeros entre el dominio y JPA. */
 @Component

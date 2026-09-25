@@ -1,18 +1,17 @@
 package com.edteam.reservations.domain.model;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatNullPointerException;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
 import com.edteam.reservations.domain.exception.InvalidPassengerException;
+import java.time.LocalDate;
+import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
-
-import java.time.LocalDate;
-import java.util.Optional;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatNullPointerException;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @DisplayName("Passenger")
 class PassengerTest {
@@ -22,7 +21,9 @@ class PassengerTest {
     @Test
     @DisplayName("un pasajero nuevo no tiene id")
     void newPassengerHasNoId() {
-        assertThat(Passenger.newPassenger("Ana", "Pérez", BIRTH_DATE, "30123456").id()).isEmpty();
+        assertThat(Passenger.newPassenger("Ana", "Pérez", BIRTH_DATE, "30123456")
+                        .id())
+                .isEmpty();
     }
 
     @Test
@@ -82,10 +83,10 @@ class PassengerTest {
     @Test
     @DisplayName("exige id y documento explícitos en el constructor canónico")
     void rejectsNullOptionals() {
-        assertThatNullPointerException().isThrownBy(() -> new Passenger(
-                null, "Ana", "Pérez", BIRTH_DATE, Optional.of("1")));
-        assertThatNullPointerException().isThrownBy(() -> new Passenger(
-                Optional.empty(), "Ana", "Pérez", BIRTH_DATE, null));
+        assertThatNullPointerException()
+                .isThrownBy(() -> new Passenger(null, "Ana", "Pérez", BIRTH_DATE, Optional.of("1")));
+        assertThatNullPointerException()
+                .isThrownBy(() -> new Passenger(Optional.empty(), "Ana", "Pérez", BIRTH_DATE, null));
     }
 
     @Test

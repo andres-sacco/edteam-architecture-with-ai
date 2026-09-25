@@ -2,9 +2,8 @@ package com.edteam.reservations.infrastructure.security.crypto;
 
 import jakarta.persistence.AttributeConverter;
 import jakarta.persistence.Converter;
-import org.springframework.stereotype.Component;
-
 import java.util.Objects;
+import org.springframework.stereotype.Component;
 
 /**
  * Cifra y descifra una columna de texto de forma transparente para el mapeo.

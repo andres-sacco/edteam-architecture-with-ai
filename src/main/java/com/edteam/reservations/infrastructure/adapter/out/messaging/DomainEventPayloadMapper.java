@@ -9,11 +9,10 @@ import com.edteam.reservations.domain.model.ItinerarySummary;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import org.springframework.stereotype.Component;
-
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
+import org.springframework.stereotype.Component;
 
 /**
  * Evento de dominio → JSON del {@code data} del mensaje.
@@ -106,8 +105,7 @@ public class DomainEventPayloadMapper {
             // mismo resultado. Sube como IllegalStateException y el caso de uso
             // falla, que es lo correcto: es mejor no crear la reserva que
             // crearla con un evento que nunca va a poder publicarse.
-            throw new IllegalStateException(
-                    "No se pudo serializar el payload de %s".formatted(event.eventType()), e);
+            throw new IllegalStateException("No se pudo serializar el payload de %s".formatted(event.eventType()), e);
         }
     }
 

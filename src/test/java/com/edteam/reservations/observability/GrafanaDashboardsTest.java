@@ -1,15 +1,10 @@
 package com.edteam.reservations.observability;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import com.edteam.reservations.support.PublishedMetrics;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.MethodSource;
-import org.yaml.snakeyaml.Yaml;
-
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -20,8 +15,12 @@ import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.stream.Stream;
-
-import static org.assertj.core.api.Assertions.assertThat;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
+import org.yaml.snakeyaml.Yaml;
 
 /**
  * Los dashboards también son código, y esto es lo que impide que se rompan en
@@ -57,10 +56,8 @@ class GrafanaDashboardsTest {
     private static final ObjectMapper JSON = new ObjectMapper();
 
     private static final Path DASHBOARDS = Path.of("docker/grafana/dashboards");
-    private static final Path DATASOURCES =
-            Path.of("docker/grafana/provisioning/datasources/datasources.yml");
-    private static final Path PROVIDER =
-            Path.of("docker/grafana/provisioning/dashboards/dashboards.yml");
+    private static final Path DATASOURCES = Path.of("docker/grafana/provisioning/datasources/datasources.yml");
+    private static final Path PROVIDER = Path.of("docker/grafana/provisioning/dashboards/dashboards.yml");
 
     private static Map<String, JsonNode> dashboards;
     private static Set<String> datasourceUids;
@@ -73,7 +70,8 @@ class GrafanaDashboardsTest {
 
         dashboards = new LinkedHashMap<>();
         try (var files = Files.list(DASHBOARDS)) {
-            for (Path file : files.filter(f -> f.toString().endsWith(".json")).sorted().toList()) {
+            for (Path file :
+                    files.filter(f -> f.toString().endsWith(".json")).sorted().toList()) {
                 dashboards.put(file.getFileName().toString(), JSON.readTree(Files.readString(file)));
             }
         }
@@ -157,7 +155,9 @@ class GrafanaDashboardsTest {
     void everyDashboardIsIdentified(Map.Entry<String, JsonNode> entry) {
         JsonNode dash = entry.getValue();
         assertThat(dash.path("uid").asText()).as("uid de %s", entry.getKey()).isNotBlank();
-        assertThat(dash.path("title").asText()).as("title de %s", entry.getKey()).isNotBlank();
+        assertThat(dash.path("title").asText())
+                .as("title de %s", entry.getKey())
+                .isNotBlank();
         // La descripción es lo que hace que un panel sirva a alguien que no lo
         // escribió: sin ella, un número sin contexto es un número.
         assertThat(dash.path("description").asText())
@@ -177,12 +177,16 @@ class GrafanaDashboardsTest {
             }
             String uid = panel.path("datasource").path("uid").asText();
             assertThat(uid)
-                    .withFailMessage("El panel '%s' de %s apunta al datasource '%s', que no está "
-                            + "provisionado. Provisionados: %s", title, entry.getKey(), uid, datasourceUids)
+                    .withFailMessage(
+                            "El panel '%s' de %s apunta al datasource '%s', que no está "
+                                    + "provisionado. Provisionados: %s",
+                            title, entry.getKey(), uid, datasourceUids)
                     .isIn(datasourceUids);
             assertThat(panel.path("description").asText())
-                    .withFailMessage("El panel '%s' de %s no explica qué decisión habilita: un número "
-                            + "sin contexto no sirve a quien no escribió el panel", title, entry.getKey())
+                    .withFailMessage(
+                            "El panel '%s' de %s no explica qué decisión habilita: un número "
+                                    + "sin contexto no sirve a quien no escribió el panel",
+                            title, entry.getKey())
                     .hasSizeGreaterThan(40);
             assertThat(panel.path("targets"))
                     .withFailMessage("El panel '%s' de %s no tiene ninguna consulta", title, entry.getKey())
@@ -205,7 +209,8 @@ class GrafanaDashboardsTest {
                 continue;
             }
             for (JsonNode target : panel.path("targets")) {
-                Matcher matcher = PublishedMetrics.REFERENCE.matcher(target.path("expr").asText());
+                Matcher matcher =
+                        PublishedMetrics.REFERENCE.matcher(target.path("expr").asText());
                 while (matcher.find()) {
                     if (!PublishedMetrics.NAMES.contains(matcher.group())) {
                         unknown.add(panel.path("title").asText() + " → " + matcher.group());
@@ -214,10 +219,12 @@ class GrafanaDashboardsTest {
             }
         }
         assertThat(unknown)
-                .withFailMessage("En %s hay paneles que consultan series que el código no publica: %s.%n"
-                        + "Una consulta así es válida, no da error y devuelve vacío PARA SIEMPRE. "
-                        + "Ojo con los sufijos: los contadores llevan _total y los timers y los "
-                        + "gauges con baseUnit llevan el de la unidad.", entry.getKey(), unknown)
+                .withFailMessage(
+                        "En %s hay paneles que consultan series que el código no publica: %s.%n"
+                                + "Una consulta así es válida, no da error y devuelve vacío PARA SIEMPRE. "
+                                + "Ojo con los sufijos: los contadores llevan _total y los timers y los "
+                                + "gauges con baseUnit llevan el de la unidad.",
+                        entry.getKey(), unknown)
                 .isEmpty();
     }
 
@@ -239,7 +246,6 @@ class GrafanaDashboardsTest {
             }
         }
         assertThat(lokiQueries).isNotEmpty();
-        assertThat(lokiQueries).allSatisfy(query ->
-                assertThat(query).contains("service=\"flight-reservations\""));
+        assertThat(lokiQueries).allSatisfy(query -> assertThat(query).contains("service=\"flight-reservations\""));
     }
 }

@@ -1,5 +1,7 @@
 package com.edteam.reservations.infrastructure.adapter.in.rest.mapper;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import com.edteam.reservations.application.port.in.CreateReservationCommand;
 import com.edteam.reservations.application.query.ReservationSearchCriteria;
 import com.edteam.reservations.application.query.ReservationSortBy;
@@ -16,15 +18,12 @@ import com.edteam.reservations.infrastructure.adapter.in.rest.dto.ReservationRes
 import com.edteam.reservations.infrastructure.adapter.in.rest.dto.ReservationStatusDto;
 import com.edteam.reservations.infrastructure.adapter.in.rest.dto.SegmentRequest;
 import com.edteam.reservations.support.TestFixtures;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
-
-import static org.assertj.core.api.Assertions.assertThat;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 
 @DisplayName("ReservationRestMapper")
 class ReservationRestMapperTest {
@@ -37,8 +36,10 @@ class ReservationRestMapperTest {
     @DisplayName("arma el comando con la clave de idempotencia del header, no del cuerpo")
     void buildsCreateCommand() {
         CreateReservationRequest request = new CreateReservationRequest(
-                new ItineraryRequest("1250.50", "USD", List.of(
-                        new SegmentRequest("EZE", "SCL", "AEROLINEAS ARGENTINAS", TestFixtures.DEPARTURE))),
+                new ItineraryRequest(
+                        "1250.50",
+                        "USD",
+                        List.of(new SegmentRequest("EZE", "SCL", "AEROLINEAS ARGENTINAS", TestFixtures.DEPARTURE))),
                 List.of(new PassengerRequest("Ana", "Pérez", LocalDate.of(1990, 5, 20), "30123456")));
 
         CreateReservationCommand command = mapper.toCommand(request, KEY, TestFixtures.owner());
@@ -51,14 +52,13 @@ class ReservationRestMapperTest {
         assertThat(command.idempotencyKey()).isEqualTo(KEY.toString());
         assertThat(command.itinerary().price()).isEqualByComparingTo(new BigDecimal("1250.50"));
         assertThat(command.itinerary().currency()).isEqualTo("USD");
-        assertThat(command.itinerary().segments())
+        assertThat(command.itinerary().segments()).singleElement().satisfies(segment -> {
+            assertThat(segment.originAirportCode()).isEqualTo("EZE");
+            assertThat(segment.destinationAirportCode()).isEqualTo("SCL");
+            assertThat(segment.departureAt()).isEqualTo(TestFixtures.DEPARTURE);
+        });
+        assertThat(command.passengers())
                 .singleElement()
-                .satisfies(segment -> {
-                    assertThat(segment.originAirportCode()).isEqualTo("EZE");
-                    assertThat(segment.destinationAirportCode()).isEqualTo("SCL");
-                    assertThat(segment.departureAt()).isEqualTo(TestFixtures.DEPARTURE);
-                });
-        assertThat(command.passengers()).singleElement()
                 .satisfies(passenger -> assertThat(passenger.documentNumber()).isEqualTo("30123456"));
     }
 
@@ -66,11 +66,15 @@ class ReservationRestMapperTest {
     @DisplayName("el precio viaja como string y se convierte sin perder decimales")
     void keepsDecimalPrecision() {
         CreateReservationRequest request = new CreateReservationRequest(
-                new ItineraryRequest("0.10", "usd".toUpperCase(java.util.Locale.ROOT), List.of(
-                        new SegmentRequest("EZE", "SCL", "AR", TestFixtures.DEPARTURE))),
+                new ItineraryRequest(
+                        "0.10",
+                        "usd".toUpperCase(java.util.Locale.ROOT),
+                        List.of(new SegmentRequest("EZE", "SCL", "AR", TestFixtures.DEPARTURE))),
                 List.of(new PassengerRequest("Ana", "Pérez", LocalDate.of(1990, 5, 20), null)));
 
-        assertThat(mapper.toCommand(request, KEY, TestFixtures.owner()).itinerary().price())
+        assertThat(mapper.toCommand(request, KEY, TestFixtures.owner())
+                        .itinerary()
+                        .price())
                 .isEqualByComparingTo(new BigDecimal("0.10"))
                 .hasToString("0.10");
     }
@@ -89,8 +93,8 @@ class ReservationRestMapperTest {
         // agregara, este assert sobre la forma del record lo delata.
         assertThat(ReservationResponse.class.getRecordComponents())
                 .extracting(java.lang.reflect.RecordComponent::getName)
-                .containsExactly("id", "status", "userId", "itinerary", "passengers",
-                        "createdAt", "updatedAt", "cancelledAt");
+                .containsExactly(
+                        "id", "status", "userId", "itinerary", "passengers", "createdAt", "updatedAt", "cancelledAt");
     }
 
     @Test
@@ -114,8 +118,7 @@ class ReservationRestMapperTest {
     @Test
     @DisplayName("la página lleva los metadatos calculados, no sólo los elementos")
     void mapsPageMetadata() {
-        ResultPage<Reservation> page = new ResultPage<>(
-                List.of(TestFixtures.storedReservation(0L)), 2, 5, 37L);
+        ResultPage<Reservation> page = new ResultPage<>(List.of(TestFixtures.storedReservation(0L)), 2, 5, 37L);
 
         ReservationPageResponse response = mapper.toResponse(page);
 
@@ -129,8 +132,8 @@ class ReservationRestMapperTest {
     @Test
     @DisplayName("traduce el orden del contrato al vocabulario de la aplicación")
     void translatesSort() {
-        ReservationSearchCriteria byDeparture = mapper.toCriteria(new ListReservationsParams(
-                null, null, null, null, null, null, "firstDepartureAt,asc"));
+        ReservationSearchCriteria byDeparture = mapper.toCriteria(
+                new ListReservationsParams(null, null, null, null, null, null, "firstDepartureAt,asc"));
 
         assertThat(byDeparture.sortBy()).isEqualTo(ReservationSortBy.FIRST_DEPARTURE_AT);
         assertThat(byDeparture.direction()).isEqualTo(SortDirection.ASC);
@@ -159,10 +162,16 @@ class ReservationRestMapperTest {
     @DisplayName("traduce los estados del contrato a los del dominio")
     void translatesStatuses() {
         ReservationSearchCriteria criteria = mapper.toCriteria(new ListReservationsParams(
-                "ana.perez@example.com", List.of(ReservationStatusDto.PENDING, ReservationStatusDto.CANCELLED),
-                null, null, 1, 50, null));
+                "ana.perez@example.com",
+                List.of(ReservationStatusDto.PENDING, ReservationStatusDto.CANCELLED),
+                null,
+                null,
+                1,
+                50,
+                null));
 
-        assertThat(criteria.userEmail()).map(com.edteam.reservations.domain.model.Email::value)
+        assertThat(criteria.userEmail())
+                .map(com.edteam.reservations.domain.model.Email::value)
                 .contains("ana.perez@example.com");
         assertThat(criteria.statuses())
                 .containsExactlyInAnyOrder(ReservationStatus.PENDING, ReservationStatus.CANCELLED);

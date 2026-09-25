@@ -58,7 +58,5 @@ public interface DeadLetterQueue {
      * @param attempts  vueltas de reintento consumidas
      * @param reason    por qué terminó acá
      */
-    record DeadLetter(String messageId, String type, String subject, long sequence,
-                      int attempts, String reason) {
-    }
+    record DeadLetter(String messageId, String type, String subject, long sequence, int attempts, String reason) {}
 }

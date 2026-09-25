@@ -1,18 +1,16 @@
 package com.edteam.reservations.infrastructure.security.crypto;
 
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-
-import java.util.Base64;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import java.util.Base64;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 
 @DisplayName("Cifrado de datos personales en reposo")
 class PiiCipherTest {
 
-    private static final String KEY =
-            Base64.getEncoder().encodeToString("0123456789abcdef0123456789abcdef".getBytes());
+    private static final String KEY = Base64.getEncoder().encodeToString("0123456789abcdef0123456789abcdef".getBytes());
 
     private final PiiCipher cipher = new PiiCipher(new PiiCipherProperties(KEY));
 
@@ -96,8 +94,8 @@ class PiiCipherTest {
         // La detección es lo que permite avisar en cada arranque: una clave que
         // está en el repositorio no es un secreto, cualquiera que lea el código
         // puede descifrar la columna.
-        assertThat(new PiiCipherProperties("ZGV2LW9ubHkta2V5LTMyLWJ5dGVzLWRlbW8tMDEyMzQ=")
-                .usesPublishedDevKey()).isTrue();
+        assertThat(new PiiCipherProperties("ZGV2LW9ubHkta2V5LTMyLWJ5dGVzLWRlbW8tMDEyMzQ=").usesPublishedDevKey())
+                .isTrue();
         assertThat(new PiiCipherProperties(KEY).usesPublishedDevKey()).isFalse();
     }
 }

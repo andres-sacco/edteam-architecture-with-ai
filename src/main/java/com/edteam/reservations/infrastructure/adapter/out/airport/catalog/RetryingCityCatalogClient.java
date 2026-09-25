@@ -10,14 +10,13 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tags;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.time.Clock;
 import java.time.Duration;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ThreadLocalRandom;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Reintenta {@code GET /city/{code}} cuando el fallo es transitorio.
@@ -93,12 +92,13 @@ public class RetryingCityCatalogClient implements CityCatalogClient {
     private final Counter exhausted;
     private final Counter skippedByBudget;
 
-    public RetryingCityCatalogClient(CityCatalogClient delegate,
-                                     Retry retry,
-                                     Sleeper sleeper,
-                                     Duration attemptCost,
-                                     Clock clock,
-                                     MeterRegistry registry) {
+    public RetryingCityCatalogClient(
+            CityCatalogClient delegate,
+            Retry retry,
+            Sleeper sleeper,
+            Duration attemptCost,
+            Clock clock,
+            MeterRegistry registry) {
         this.delegate = Objects.requireNonNull(delegate, "El delegado es obligatorio");
         this.retry = Objects.requireNonNull(retry, "La política de reintentos es obligatoria");
         this.sleeper = Objects.requireNonNull(sleeper, "El sleeper es obligatorio");
@@ -109,7 +109,9 @@ public class RetryingCityCatalogClient implements CityCatalogClient {
         this.attempted = counter(registry, "attempted", "Reintentos disparados contra el catálogo");
         this.recovered = counter(registry, "recovered", "Reintentos que resolvieron la consulta");
         this.exhausted = counter(registry, "exhausted", "Resoluciones que agotaron todos los intentos");
-        this.skippedByBudget = counter(registry, "skipped_by_budget",
+        this.skippedByBudget = counter(
+                registry,
+                "skipped_by_budget",
                 "Reintentos NO disparados porque el presupuesto del itinerario no alcanzaba");
     }
 
@@ -126,8 +128,10 @@ public class RetryingCityCatalogClient implements CityCatalogClient {
     }
 
     private static Counter counter(MeterRegistry registry, String result, String description) {
-        return Counter.builder(RETRIES).tags(Tags.of("result", result))
-                .description(description).register(registry);
+        return Counter.builder(RETRIES)
+                .tags(Tags.of("result", result))
+                .description(description)
+                .register(registry);
     }
 
     @Override
@@ -207,8 +211,7 @@ public class RetryingCityCatalogClient implements CityCatalogClient {
                 .addKeyValue(LogFields.REASON, Throwables.reasonOf(last))
                 .log("El catálogo no respondió después de todos los intentos");
         throw new AirportCatalogUnavailableException(
-                "El catálogo no respondió por '%s' después de %d intentos".formatted(code, retry.maxAttempts()),
-                last);
+                "El catálogo no respondió por '%s' después de %d intentos".formatted(code, retry.maxAttempts()), last);
     }
 
     /**

@@ -2,7 +2,6 @@ package com.edteam.reservations.infrastructure.adapter.in.rest.dto;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 
-
 /**
  * Importe con su moneda.
  *
@@ -15,10 +14,8 @@ import io.swagger.v3.oas.annotations.media.Schema;
  */
 @Schema(name = "Money", description = "Importe con su moneda. Nunca se envía un monto sin moneda.")
 public record MoneyResponse(
-
         @Schema(description = "Importe en decimal exacto, con dos decimales.", example = "1350.00")
         String amount,
 
         @Schema(description = "Código de moneda ISO 4217.", example = "USD")
-        String currency) {
-}
+        String currency) {}

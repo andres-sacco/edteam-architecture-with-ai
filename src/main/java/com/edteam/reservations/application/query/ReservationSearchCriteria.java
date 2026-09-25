@@ -2,7 +2,6 @@ package com.edteam.reservations.application.query;
 
 import com.edteam.reservations.domain.model.Email;
 import com.edteam.reservations.domain.model.ReservationStatus;
-
 import java.time.Instant;
 import java.util.Objects;
 import java.util.Optional;
@@ -30,14 +29,15 @@ import java.util.Set;
  * @param sortBy        campo de orden
  * @param direction     sentido del orden
  */
-public record ReservationSearchCriteria(Optional<Email> userEmail,
-                                        Set<ReservationStatus> statuses,
-                                        Optional<Instant> departureFrom,
-                                        Optional<Instant> departureTo,
-                                        int page,
-                                        int size,
-                                        ReservationSortBy sortBy,
-                                        SortDirection direction) {
+public record ReservationSearchCriteria(
+        Optional<Email> userEmail,
+        Set<ReservationStatus> statuses,
+        Optional<Instant> departureFrom,
+        Optional<Instant> departureTo,
+        int page,
+        int size,
+        ReservationSortBy sortBy,
+        SortDirection direction) {
 
     /** Cota dura del tamaño de página: protege a la base de un pedido abusivo. */
     public static final int MAX_PAGE_SIZE = 100;
@@ -56,10 +56,10 @@ public record ReservationSearchCriteria(Optional<Email> userEmail,
             throw new IllegalArgumentException("El número de página no puede ser negativo");
         }
         if (size <= 0 || size > MAX_PAGE_SIZE) {
-            throw new IllegalArgumentException(
-                    "El tamaño de página debe estar entre 1 y %d".formatted(MAX_PAGE_SIZE));
+            throw new IllegalArgumentException("El tamaño de página debe estar entre 1 y %d".formatted(MAX_PAGE_SIZE));
         }
-        if (departureFrom.isPresent() && departureTo.isPresent()
+        if (departureFrom.isPresent()
+                && departureTo.isPresent()
                 && departureFrom.get().isAfter(departureTo.get())) {
             throw new IllegalArgumentException("departureFrom no puede ser posterior a departureTo");
         }
@@ -68,8 +68,15 @@ public record ReservationSearchCriteria(Optional<Email> userEmail,
 
     /** Primera página sin filtros, ordenada por fecha de alta descendente. */
     public static ReservationSearchCriteria unfiltered() {
-        return new ReservationSearchCriteria(Optional.empty(), Set.of(), Optional.empty(), Optional.empty(),
-                0, DEFAULT_PAGE_SIZE, ReservationSortBy.CREATED_AT, SortDirection.DESC);
+        return new ReservationSearchCriteria(
+                Optional.empty(),
+                Set.of(),
+                Optional.empty(),
+                Optional.empty(),
+                0,
+                DEFAULT_PAGE_SIZE,
+                ReservationSortBy.CREATED_AT,
+                SortDirection.DESC);
     }
 
     /** {@code true} si hay que restringir por estado. */
@@ -86,8 +93,8 @@ public record ReservationSearchCriteria(Optional<Email> userEmail,
      */
     public ReservationSearchCriteria restrictedTo(Optional<Email> owner) {
         Objects.requireNonNull(owner, "El filtro es obligatorio (usar Optional.empty() si no se filtra)");
-        return new ReservationSearchCriteria(owner, statuses, departureFrom, departureTo,
-                page, size, sortBy, direction);
+        return new ReservationSearchCriteria(
+                owner, statuses, departureFrom, departureTo, page, size, sortBy, direction);
     }
 
     public boolean filtersByStatus() {

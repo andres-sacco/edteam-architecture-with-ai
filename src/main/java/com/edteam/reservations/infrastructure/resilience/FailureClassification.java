@@ -16,10 +16,8 @@ public record FailureClassification(FailureKind kind, boolean retryable) {
             new FailureClassification(FailureKind.TRANSIENT, true);
     public static final FailureClassification TRANSIENT_NOT_RETRYABLE =
             new FailureClassification(FailureKind.TRANSIENT, false);
-    public static final FailureClassification PERMANENT =
-            new FailureClassification(FailureKind.PERMANENT, false);
-    public static final FailureClassification SHED =
-            new FailureClassification(FailureKind.SHED, false);
+    public static final FailureClassification PERMANENT = new FailureClassification(FailureKind.PERMANENT, false);
+    public static final FailureClassification SHED = new FailureClassification(FailureKind.SHED, false);
 
     /** Lo que el circuito pregunta: sólo lo transitorio mueve su ventana. */
     public boolean countsForCircuit() {

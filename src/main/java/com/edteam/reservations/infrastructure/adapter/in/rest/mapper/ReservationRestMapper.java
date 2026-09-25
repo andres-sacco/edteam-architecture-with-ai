@@ -6,11 +6,11 @@ import com.edteam.reservations.application.port.in.ItineraryData;
 import com.edteam.reservations.application.port.in.ModifyReservationCommand;
 import com.edteam.reservations.application.port.in.PassengerData;
 import com.edteam.reservations.application.port.in.SegmentData;
-import com.edteam.reservations.domain.access.Actor;
 import com.edteam.reservations.application.query.ReservationSearchCriteria;
 import com.edteam.reservations.application.query.ReservationSortBy;
 import com.edteam.reservations.application.query.ResultPage;
 import com.edteam.reservations.application.query.SortDirection;
+import com.edteam.reservations.domain.access.Actor;
 import com.edteam.reservations.domain.model.Email;
 import com.edteam.reservations.domain.model.Itinerary;
 import com.edteam.reservations.domain.model.Passenger;
@@ -30,8 +30,6 @@ import com.edteam.reservations.infrastructure.adapter.in.rest.dto.ReservationRes
 import com.edteam.reservations.infrastructure.adapter.in.rest.dto.ReservationStatusDto;
 import com.edteam.reservations.infrastructure.adapter.in.rest.dto.SegmentRequest;
 import com.edteam.reservations.infrastructure.adapter.in.rest.dto.SegmentResponse;
-import org.springframework.stereotype.Component;
-
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -42,6 +40,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import org.springframework.stereotype.Component;
 
 /**
  * Traduce entre los DTOs del contrato HTTP y los tipos de la aplicación.
@@ -68,9 +67,7 @@ public class ReservationRestMapper {
      * de otro: no hay ningún camino por el que un dato del pedido termine
      * siendo la identidad del titular.
      */
-    public CreateReservationCommand toCommand(CreateReservationRequest request,
-                                              UUID idempotencyKey,
-                                              Actor actor) {
+    public CreateReservationCommand toCommand(CreateReservationRequest request, UUID idempotencyKey, Actor actor) {
         Objects.requireNonNull(request, "El pedido es obligatorio");
         Objects.requireNonNull(idempotencyKey, "La clave de idempotencia es obligatoria");
         Objects.requireNonNull(actor, "El solicitante es obligatorio");
@@ -79,13 +76,13 @@ public class ReservationRestMapper {
                 actor,
                 idempotencyKey.toString(),
                 toItineraryData(request.itinerary()),
-                request.passengers().stream().map(ReservationRestMapper::toPassengerData).toList());
+                request.passengers().stream()
+                        .map(ReservationRestMapper::toPassengerData)
+                        .toList());
     }
 
-    public ModifyReservationCommand toCommand(long reservationId,
-                                              long expectedVersion,
-                                              ItineraryRequest itinerary,
-                                              Actor actor) {
+    public ModifyReservationCommand toCommand(
+            long reservationId, long expectedVersion, ItineraryRequest itinerary, Actor actor) {
         return new ModifyReservationCommand(reservationId, expectedVersion, toItineraryData(itinerary), actor);
     }
 
@@ -109,9 +106,8 @@ public class ReservationRestMapper {
                 : ReservationSortBy.CREATED_AT;
         SortDirection direction = "asc".equals(sort[1]) ? SortDirection.ASC : SortDirection.DESC;
 
-        Set<ReservationStatus> statuses = params.status().stream()
-                .map(ReservationStatusDto::toDomain)
-                .collect(Collectors.toUnmodifiableSet());
+        Set<ReservationStatus> statuses =
+                params.status().stream().map(ReservationStatusDto::toDomain).collect(Collectors.toUnmodifiableSet());
 
         return new ReservationSearchCriteria(
                 // Un 'userId=' vacío significa "sin filtro", no "usuario con email
@@ -133,7 +129,9 @@ public class ReservationRestMapper {
         return new ItineraryData(
                 new BigDecimal(request.price()),
                 request.currency().toUpperCase(Locale.ROOT),
-                request.segments().stream().map(ReservationRestMapper::toSegmentData).toList());
+                request.segments().stream()
+                        .map(ReservationRestMapper::toSegmentData)
+                        .toList());
     }
 
     private static SegmentData toSegmentData(SegmentRequest request) {
@@ -146,10 +144,7 @@ public class ReservationRestMapper {
 
     private static PassengerData toPassengerData(PassengerRequest request) {
         return new PassengerData(
-                request.firstName(),
-                request.lastName(),
-                request.birthDate(),
-                request.documentNumber());
+                request.firstName(), request.lastName(), request.birthDate(), request.documentNumber());
     }
 
     // ------------------------------------------------------------------
@@ -164,7 +159,9 @@ public class ReservationRestMapper {
                 ReservationStatusDto.from(reservation.status()),
                 reservation.user().email().value(),
                 toResponse(reservation.itinerary()),
-                reservation.passengers().stream().map(ReservationRestMapper::toResponse).toList(),
+                reservation.passengers().stream()
+                        .map(ReservationRestMapper::toResponse)
+                        .toList(),
                 reservation.createdAt(),
                 reservation.updatedAt(),
                 cancelledAt(reservation));
@@ -196,7 +193,9 @@ public class ReservationRestMapper {
 
         return new ItineraryResponse(
                 itinerary.id().map(Object::toString).orElse(null),
-                new MoneyResponse(itinerary.price().amount().toPlainString(), itinerary.price().currency()),
+                new MoneyResponse(
+                        itinerary.price().amount().toPlainString(),
+                        itinerary.price().currency()),
                 itinerary.origin().value(),
                 itinerary.destination().value(),
                 itinerary.firstDeparture(),

@@ -3,7 +3,6 @@ package com.edteam.reservations.infrastructure.adapter.out.messaging;
 import com.edteam.reservations.application.outbox.OutboxMessage;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
-
 import java.time.Instant;
 import java.util.Objects;
 
@@ -39,18 +38,29 @@ import java.util.Objects;
  * @param data          el payload, tal como se serializó al encolar
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
-@JsonPropertyOrder({"messageId", "type", "version", "source", "subject", "sequence",
-        "occurredAt", "publishedAt", "correlationId", "data"})
-public record EventEnvelope(String messageId,
-                            String type,
-                            int version,
-                            String source,
-                            String subject,
-                            long sequence,
-                            Instant occurredAt,
-                            Instant publishedAt,
-                            String correlationId,
-                            com.fasterxml.jackson.databind.JsonNode data) {
+@JsonPropertyOrder({
+    "messageId",
+    "type",
+    "version",
+    "source",
+    "subject",
+    "sequence",
+    "occurredAt",
+    "publishedAt",
+    "correlationId",
+    "data"
+})
+public record EventEnvelope(
+        String messageId,
+        String type,
+        int version,
+        String source,
+        String subject,
+        long sequence,
+        Instant occurredAt,
+        Instant publishedAt,
+        String correlationId,
+        com.fasterxml.jackson.databind.JsonNode data) {
 
     public EventEnvelope {
         Objects.requireNonNull(messageId, "messageId es obligatorio");
@@ -66,10 +76,8 @@ public record EventEnvelope(String messageId,
      *
      * @param publishedAt reloj del relay, no del hecho
      */
-    public static EventEnvelope from(OutboxMessage message,
-                                     String source,
-                                     Instant publishedAt,
-                                     com.fasterxml.jackson.databind.JsonNode data) {
+    public static EventEnvelope from(
+            OutboxMessage message, String source, Instant publishedAt, com.fasterxml.jackson.databind.JsonNode data) {
         return new EventEnvelope(
                 message.id(),
                 message.type(),

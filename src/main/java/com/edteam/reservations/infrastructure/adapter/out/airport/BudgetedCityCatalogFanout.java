@@ -8,9 +8,6 @@ import io.micrometer.context.ContextSnapshotFactory;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -26,6 +23,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * El techo de latencia del pedido, y la pieza que lo hace posible.
@@ -79,10 +78,7 @@ public class BudgetedCityCatalogFanout implements CityResolver {
     private final Counter budgetExhausted;
     private final Timer fanout;
 
-    public BudgetedCityCatalogFanout(CityResolver delegate,
-                                     Duration budget,
-                                     Clock clock,
-                                     MeterRegistry registry) {
+    public BudgetedCityCatalogFanout(CityResolver delegate, Duration budget, Clock clock, MeterRegistry registry) {
         this.delegate = Objects.requireNonNull(delegate, "El delegado es obligatorio");
         this.budget = Objects.requireNonNull(budget, "El presupuesto es obligatorio");
         if (budget.isNegative() || budget.isZero()) {
@@ -134,18 +130,23 @@ public class BudgetedCityCatalogFanout implements CityResolver {
             ContextSnapshot snapshot = ContextSnapshotFactory.builder().build().captureAll();
             List<CompletableFuture<Map.Entry<String, CityResolution>>> futures = new ArrayList<>(pending.size());
             for (String code : pending) {
-                futures.add(CompletableFuture.supplyAsync(() -> {
-                    // `setThreadLocals()` restituye el contexto capturado en el
-                    // hilo llamador —el MDC entre otros— y el try-with-resources
-                    // lo deshace al terminar. Sin el cierre, el hilo virtual
-                    // quedaría con el correlationId de este pedido pegado, y el
-                    // ejecutor los reusa.
-                    try (ContextSnapshot.Scope ignored = snapshot.setThreadLocals()) {
-                        return Map.entry(code, CatalogDeadline.within(deadline,
-                                () -> delegate.resolve(List.of(code))
-                                        .getOrDefault(code, CityResolution.absent())));
-                    }
-                }, workers));
+                futures.add(CompletableFuture.supplyAsync(
+                        () -> {
+                            // `setThreadLocals()` restituye el contexto capturado en el
+                            // hilo llamador —el MDC entre otros— y el try-with-resources
+                            // lo deshace al terminar. Sin el cierre, el hilo virtual
+                            // quedaría con el correlationId de este pedido pegado, y el
+                            // ejecutor los reusa.
+                            try (ContextSnapshot.Scope ignored = snapshot.setThreadLocals()) {
+                                return Map.entry(
+                                        code,
+                                        CatalogDeadline.within(
+                                                deadline,
+                                                () -> delegate.resolve(List.of(code))
+                                                        .getOrDefault(code, CityResolution.absent())));
+                            }
+                        },
+                        workers));
             }
 
             int outOfBudget = 0;

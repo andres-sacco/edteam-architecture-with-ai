@@ -10,7 +10,6 @@ import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tags;
-
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -99,7 +98,8 @@ public class CatalogCityResolver implements CityResolver {
     }
 
     private void count(String kind) {
-        Counter.builder(ERRORS).tags(Tags.of("kind", kind))
+        Counter.builder(ERRORS)
+                .tags(Tags.of("kind", kind))
                 .description("Fallos del catálogo de ciudades, por clase")
                 .register(registry)
                 .increment();

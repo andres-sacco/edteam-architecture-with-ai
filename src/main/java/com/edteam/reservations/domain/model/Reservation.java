@@ -4,7 +4,6 @@ import com.edteam.reservations.domain.exception.InvalidReservationException;
 import com.edteam.reservations.domain.exception.ItineraryAlreadyDepartedException;
 import com.edteam.reservations.domain.exception.ReservationAlreadyCancelledException;
 import com.edteam.reservations.domain.exception.ReservationNotModifiableException;
-
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.HashSet;
@@ -55,15 +54,16 @@ public final class Reservation {
     private final Instant updatedAt;
     private final long version;
 
-    private Reservation(Optional<ReservationId> id,
-                        User user,
-                        IdempotencyKey idempotencyKey,
-                        Itinerary itinerary,
-                        List<Passenger> passengers,
-                        ReservationStatus status,
-                        Instant createdAt,
-                        Instant updatedAt,
-                        long version) {
+    private Reservation(
+            Optional<ReservationId> id,
+            User user,
+            IdempotencyKey idempotencyKey,
+            Itinerary itinerary,
+            List<Passenger> passengers,
+            ReservationStatus status,
+            Instant createdAt,
+            Instant updatedAt,
+            long version) {
         this.id = Objects.requireNonNull(id, "El id es obligatorio (usar Optional.empty() si no está asignado)");
         this.user = Objects.requireNonNull(user, "El usuario es obligatorio");
         if (user.id().isEmpty()) {
@@ -97,11 +97,8 @@ public final class Reservation {
      *                                            o si alguno tiene fecha de nacimiento futura
      * @throws ItineraryAlreadyDepartedException si el itinerario ya arrancó
      */
-    public static Reservation create(User user,
-                                     IdempotencyKey idempotencyKey,
-                                     Itinerary itinerary,
-                                     List<Passenger> passengers,
-                                     Instant now) {
+    public static Reservation create(
+            User user, IdempotencyKey idempotencyKey, Itinerary itinerary, List<Passenger> passengers, Instant now) {
         Objects.requireNonNull(itinerary, "El itinerario es obligatorio");
         Objects.requireNonNull(passengers, "Los pasajeros son obligatorios");
         Objects.requireNonNull(now, "El instante actual es obligatorio");
@@ -113,8 +110,8 @@ public final class Reservation {
                             .formatted(itinerary.origin(), itinerary.destination(), itinerary.firstDeparture()));
         }
 
-        return new Reservation(Optional.empty(), user, idempotencyKey, itinerary, passengers,
-                ReservationStatus.PENDING, now, now, 0L);
+        return new Reservation(
+                Optional.empty(), user, idempotencyKey, itinerary, passengers, ReservationStatus.PENDING, now, now, 0L);
     }
 
     /**
@@ -123,21 +120,22 @@ public final class Reservation {
      * las reglas de creación, así que puede leer reservas históricas cuyo vuelo
      * ya pasó.
      */
-    public static Reservation rehydrate(ReservationId id,
-                                        User user,
-                                        IdempotencyKey idempotencyKey,
-                                        Itinerary itinerary,
-                                        List<Passenger> passengers,
-                                        ReservationStatus status,
-                                        Instant createdAt,
-                                        Instant updatedAt,
-                                        long version) {
+    public static Reservation rehydrate(
+            ReservationId id,
+            User user,
+            IdempotencyKey idempotencyKey,
+            Itinerary itinerary,
+            List<Passenger> passengers,
+            ReservationStatus status,
+            Instant createdAt,
+            Instant updatedAt,
+            long version) {
         Objects.requireNonNull(id, "El id es obligatorio al reconstruir una reserva");
         if (passengers.isEmpty()) {
             throw new InvalidReservationException("La reserva %s no tiene pasajeros".formatted(id));
         }
-        return new Reservation(Optional.of(id), user, idempotencyKey, itinerary, passengers,
-                status, createdAt, updatedAt, version);
+        return new Reservation(
+                Optional.of(id), user, idempotencyKey, itinerary, passengers, status, createdAt, updatedAt, version);
     }
 
     /**
@@ -175,8 +173,8 @@ public final class Reservation {
         if (newItinerary.hasDeparted(now)) {
             throw new ItineraryAlreadyDepartedException(
                     "No se puede reservar el itinerario %s-%s: el primer tramo ya salió (%s)"
-                            .formatted(newItinerary.origin(), newItinerary.destination(),
-                                    newItinerary.firstDeparture()));
+                            .formatted(
+                                    newItinerary.origin(), newItinerary.destination(), newItinerary.firstDeparture()));
         }
 
         return copyWith(newItinerary, status, now);
@@ -205,14 +203,22 @@ public final class Reservation {
      */
     public Reservation withId(ReservationId assignedId) {
         Objects.requireNonNull(assignedId, "El id asignado es obligatorio");
-        return new Reservation(Optional.of(assignedId), user, idempotencyKey, itinerary, passengers,
-                status, createdAt, updatedAt, version);
+        return new Reservation(
+                Optional.of(assignedId),
+                user,
+                idempotencyKey,
+                itinerary,
+                passengers,
+                status,
+                createdAt,
+                updatedAt,
+                version);
     }
 
     /** Devuelve una copia con la versión indicada, tal como quedó almacenada. */
     public Reservation withVersion(long newVersion) {
-        return new Reservation(id, user, idempotencyKey, itinerary, passengers,
-                status, createdAt, updatedAt, newVersion);
+        return new Reservation(
+                id, user, idempotencyKey, itinerary, passengers, status, createdAt, updatedAt, newVersion);
     }
 
     /**
@@ -226,15 +232,15 @@ public final class Reservation {
             throw new IllegalArgumentException(
                     "La lista de pasajeros resueltos debe tener el mismo tamaño que la original");
         }
-        return new Reservation(id, user, idempotencyKey, itinerary, resolvedPassengers,
-                status, createdAt, updatedAt, version);
+        return new Reservation(
+                id, user, idempotencyKey, itinerary, resolvedPassengers, status, createdAt, updatedAt, version);
     }
 
     /** Devuelve una copia con el itinerario indicado, ya persistido y con su id. */
     public Reservation withItinerary(Itinerary persistedItinerary) {
         Objects.requireNonNull(persistedItinerary, "El itinerario es obligatorio");
-        return new Reservation(id, user, idempotencyKey, persistedItinerary, passengers,
-                status, createdAt, updatedAt, version);
+        return new Reservation(
+                id, user, idempotencyKey, persistedItinerary, passengers, status, createdAt, updatedAt, version);
     }
 
     public Optional<ReservationId> id() {
@@ -247,8 +253,8 @@ public final class Reservation {
      * @throws IllegalStateException si la reserva todavía no se persistió
      */
     public ReservationId requireId() {
-        return id.orElseThrow(() -> new IllegalStateException(
-                "La reserva %s todavía no tiene id asignado".formatted(idempotencyKey)));
+        return id.orElseThrow(() ->
+                new IllegalStateException("La reserva %s todavía no tiene id asignado".formatted(idempotencyKey)));
     }
 
     /**
@@ -298,15 +304,13 @@ public final class Reservation {
     }
 
     private Reservation copyWith(Itinerary newItinerary, ReservationStatus newStatus, Instant now) {
-        return new Reservation(id, user, idempotencyKey, newItinerary, passengers,
-                newStatus, createdAt, now, version);
+        return new Reservation(id, user, idempotencyKey, newItinerary, passengers, newStatus, createdAt, now, version);
     }
 
     private void requireNotDeparted(Instant now, String operation) {
         if (itinerary.hasDeparted(now)) {
-            throw new ItineraryAlreadyDepartedException(
-                    "No se puede %s la reserva %s: el itinerario ya arrancó el %s"
-                            .formatted(operation, describeId(), itinerary.firstDeparture()));
+            throw new ItineraryAlreadyDepartedException("No se puede %s la reserva %s: el itinerario ya arrancó el %s"
+                    .formatted(operation, describeId(), itinerary.firstDeparture()));
         }
     }
 
@@ -371,7 +375,13 @@ public final class Reservation {
     @Override
     public String toString() {
         return "Reservation[id=%s, userId=%s, estado=%s, itinerario=%s-%s, pasajeros=%d, version=%d]"
-                .formatted(describeId(), user.id().map(Object::toString).orElse("<nuevo>"), status,
-                        itinerary.origin(), itinerary.destination(), passengers.size(), version);
+                .formatted(
+                        describeId(),
+                        user.id().map(Object::toString).orElse("<nuevo>"),
+                        status,
+                        itinerary.origin(),
+                        itinerary.destination(),
+                        passengers.size(),
+                        version);
     }
 }

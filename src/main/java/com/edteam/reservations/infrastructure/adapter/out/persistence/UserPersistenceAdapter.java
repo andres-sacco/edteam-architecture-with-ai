@@ -4,14 +4,13 @@ import com.edteam.reservations.application.port.out.UserRepositoryPort;
 import com.edteam.reservations.domain.model.Email;
 import com.edteam.reservations.domain.model.User;
 import com.edteam.reservations.infrastructure.adapter.out.persistence.mapper.UserMapper;
-import com.edteam.reservations.infrastructure.logging.PiiMasker;
 import com.edteam.reservations.infrastructure.adapter.out.persistence.repository.UserJpaRepository;
+import com.edteam.reservations.infrastructure.logging.PiiMasker;
+import java.util.Objects;
+import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Repository;
-
-import java.util.Objects;
-import java.util.Optional;
 
 /**
  * Adaptador de salida que implementa {@link UserRepositoryPort} sobre
@@ -59,9 +58,7 @@ public class UserPersistenceAdapter implements UserRepositoryPort {
         Objects.requireNonNull(candidate, "El usuario es obligatorio");
 
         String email = candidate.email().value();
-        return userRepository.findByEmail(email)
-                .map(userMapper::toDomain)
-                .orElseGet(() -> register(candidate, email));
+        return userRepository.findByEmail(email).map(userMapper::toDomain).orElseGet(() -> register(candidate, email));
     }
 
     private User register(User candidate, String email) {
@@ -74,13 +71,14 @@ public class UserPersistenceAdapter implements UserRepositoryPort {
         // producción es ruido, y el dato que importa —cuántos usuarios se dan
         // de alta— ya está en las métricas.
         if (inserted == 0) {
-            log.debug("Otra transacción dio de alta al usuario {} primero; se reutiliza su fila",
-                    PiiMasker.mask(email));
+            log.debug(
+                    "Otra transacción dio de alta al usuario {} primero; se reutiliza su fila", PiiMasker.mask(email));
         } else {
             log.debug("Usuario dado de alta al reservar: {}", PiiMasker.mask(email));
         }
 
-        return userRepository.findByEmail(email)
+        return userRepository
+                .findByEmail(email)
                 .map(userMapper::toDomain)
                 // Enmascarado, como las dos líneas de arriba. Sin esto el email
                 // salía en claro por el camino de la excepción no controlada,
@@ -88,7 +86,6 @@ public class UserPersistenceAdapter implements UserRepositoryPort {
                 // mismo archivo declaraba la regla seis líneas antes y la
                 // rompía acá (hallazgo 2).
                 .orElseThrow(() -> new IllegalStateException(
-                        "El usuario %s no quedó disponible después del insert"
-                                .formatted(PiiMasker.mask(email))));
+                        "El usuario %s no quedó disponible después del insert".formatted(PiiMasker.mask(email))));
     }
 }

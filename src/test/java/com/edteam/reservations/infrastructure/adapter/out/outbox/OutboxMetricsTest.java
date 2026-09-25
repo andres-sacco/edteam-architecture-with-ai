@@ -1,18 +1,17 @@
 package com.edteam.reservations.infrastructure.adapter.out.outbox;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-import org.springframework.dao.QueryTimeoutException;
-
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
-
-import static org.assertj.core.api.Assertions.assertThat;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.springframework.dao.QueryTimeoutException;
 
 /**
  * Un gauge no puede afirmar lo que no puede verificar.
@@ -33,8 +32,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @DisplayName("Gauges del outbox")
 class OutboxMetricsTest {
 
-    private static final OutboxStats HEALTHY =
-            new OutboxStats(12, 3, Duration.ofSeconds(42), 500);
+    private static final OutboxStats HEALTHY = new OutboxStats(12, 3, Duration.ofSeconds(42), 500);
 
     /**
      * El binder se conserva en un campo a propósito: Micrometer guarda una

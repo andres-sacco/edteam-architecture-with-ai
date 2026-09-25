@@ -4,9 +4,8 @@ import com.edteam.reservations.domain.model.AirportCode;
 import com.edteam.reservations.domain.model.Segment;
 import com.edteam.reservations.domain.model.SegmentId;
 import com.edteam.reservations.infrastructure.adapter.out.persistence.entity.SegmentJpaEntity;
-import org.springframework.stereotype.Component;
-
 import java.util.Optional;
+import org.springframework.stereotype.Component;
 
 /**
  * Traduce segmentos entre el dominio y JPA.

@@ -17,5 +17,4 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
  * <p>Es un DTO del adaptador, no un modelo de dominio: no cruza el puerto.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
-public record CatalogCity(String code, String name) {
-}
+public record CatalogCity(String code, String name) {}

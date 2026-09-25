@@ -2,7 +2,6 @@ package com.edteam.reservations.infrastructure.adapter.in.rest.dto;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 
-
 /**
  * Metadatos de paginación.
  *
@@ -13,7 +12,6 @@ import io.swagger.v3.oas.annotations.media.Schema;
  */
 @Schema(name = "PageMetadata", description = "Metadatos de paginación de un listado.")
 public record PageMetadataResponse(
-
         @Schema(description = "Número de la página devuelta, base 0.", example = "0")
         int number,
 
@@ -24,5 +22,4 @@ public record PageMetadataResponse(
         long totalElements,
 
         @Schema(description = "Cantidad total de páginas para el tamaño pedido.", example = "7")
-        int totalPages) {
-}
+        int totalPages) {}

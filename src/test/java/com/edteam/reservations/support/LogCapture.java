@@ -4,13 +4,12 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
-import org.slf4j.LoggerFactory;
-import org.slf4j.event.KeyValuePair;
-
 import java.util.List;
 import java.util.Map;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
+import org.slf4j.LoggerFactory;
+import org.slf4j.event.KeyValuePair;
 
 /**
  * Captura de los registros emitidos, para poder afirmar sobre ellos.
@@ -130,10 +129,9 @@ public final class LogCapture implements AutoCloseable {
             if (pairs == null) {
                 return Map.of();
             }
-            return pairs.stream().collect(Collectors.toMap(
-                    pair -> pair.key,
-                    pair -> pair.value == null ? "" : pair.value,
-                    (first, second) -> first));
+            return pairs.stream()
+                    .collect(Collectors.toMap(
+                            pair -> pair.key, pair -> pair.value == null ? "" : pair.value, (first, second) -> first));
         }
 
         /**
@@ -146,13 +144,11 @@ public final class LogCapture implements AutoCloseable {
          */
         public String allText() {
             StringBuilder text = new StringBuilder(message());
-            fields().forEach((key, value) -> text.append(' ').append(key).append('=').append(value));
-            Throwable cause = event.getThrowableProxy() == null
-                    ? null
-                    : throwableOf(event);
+            fields().forEach((key, value) ->
+                    text.append(' ').append(key).append('=').append(value));
+            Throwable cause = event.getThrowableProxy() == null ? null : throwableOf(event);
             while (cause != null) {
-                text.append(' ').append(cause.getClass().getName())
-                        .append(": ").append(cause.getMessage());
+                text.append(' ').append(cause.getClass().getName()).append(": ").append(cause.getMessage());
                 cause = cause.getCause() == cause ? null : cause.getCause();
             }
             return text.toString();

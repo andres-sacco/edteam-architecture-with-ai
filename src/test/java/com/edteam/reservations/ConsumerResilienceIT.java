@@ -1,5 +1,12 @@
 package com.edteam.reservations;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
 import com.edteam.reservations.application.exception.UnprocessableEventException;
 import com.edteam.reservations.application.port.in.EventProcessingOutcome;
 import com.edteam.reservations.application.port.in.InboundEvent;
@@ -8,6 +15,12 @@ import com.edteam.reservations.infrastructure.adapter.out.messaging.DeadLetterQu
 import com.edteam.reservations.infrastructure.adapter.out.messaging.MessagingTopology;
 import com.edteam.reservations.support.AbstractRabbitIT;
 import com.edteam.reservations.support.TestFixtures;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.awaitility.Awaitility;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -22,20 +35,6 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
-
-import java.nio.charset.StandardCharsets;
-import java.time.Duration;
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
-import java.util.UUID;
-import java.util.concurrent.atomic.AtomicInteger;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doAnswer;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
  * Qué pasa cuando el consumidor no puede procesar: reintentos acotados, dead
@@ -130,14 +129,17 @@ class ConsumerResilienceIT extends AbstractRabbitIT {
     void aMessageThatExhaustsItsRetriesEndsUpInTheDeadLetterQueue() {
         AtomicInteger attempts = new AtomicInteger();
         doAnswer(invocation -> {
-            attempts.incrementAndGet();
-            // Transitorio: el proveedor de email contestó 503.
-            throw new IllegalStateException("el proveedor de email no responde");
-        }).when(processEvent).process(any(InboundEvent.class));
+                    attempts.incrementAndGet();
+                    // Transitorio: el proveedor de email contestó 503.
+                    throw new IllegalStateException("el proveedor de email no responde");
+                })
+                .when(processEvent)
+                .process(any(InboundEvent.class));
 
         publishEvent("4242", "reservation.confirmed", 1L);
 
-        Awaitility.await().atMost(Duration.ofSeconds(30))
+        Awaitility.await()
+                .atMost(Duration.ofSeconds(30))
                 .untilAsserted(() -> assertThat(deadLetterQueue.depth()).isEqualTo(1L));
 
         // Se intentó más de una vez (el mecanismo de reintento funciona) y
@@ -161,13 +163,16 @@ class ConsumerResilienceIT extends AbstractRabbitIT {
     void aPermanentFailureGoesStraightToTheDeadLetterQueue() {
         AtomicInteger attempts = new AtomicInteger();
         doAnswer(invocation -> {
-            attempts.incrementAndGet();
-            throw new UnprocessableEventException("el payload no cumple el esquema");
-        }).when(processEvent).process(any(InboundEvent.class));
+                    attempts.incrementAndGet();
+                    throw new UnprocessableEventException("el payload no cumple el esquema");
+                })
+                .when(processEvent)
+                .process(any(InboundEvent.class));
 
         publishEvent("4343", "reservation.confirmed", 1L);
 
-        Awaitility.await().atMost(Duration.ofSeconds(20))
+        Awaitility.await()
+                .atMost(Duration.ofSeconds(20))
                 .untilAsserted(() -> assertThat(deadLetterQueue.depth()).isEqualTo(1L));
 
         assertThat(attempts.get()).isEqualTo(1);
@@ -178,12 +183,14 @@ class ConsumerResilienceIT extends AbstractRabbitIT {
     @DisplayName("un mensaje venenoso no bloquea a los sanos que van detrás")
     void aPoisonMessageDoesNotBlockTheHealthyOnesBehindIt() {
         doAnswer(invocation -> {
-            InboundEvent event = invocation.getArgument(0, InboundEvent.class);
-            if (event.subject().equals("6666")) {
-                throw new UnprocessableEventException("mensaje venenoso");
-            }
-            return invocation.callRealMethod();
-        }).when(processEvent).process(any(InboundEvent.class));
+                    InboundEvent event = invocation.getArgument(0, InboundEvent.class);
+                    if (event.subject().equals("6666")) {
+                        throw new UnprocessableEventException("mensaje venenoso");
+                    }
+                    return invocation.callRealMethod();
+                })
+                .when(processEvent)
+                .process(any(InboundEvent.class));
 
         publishEvent("6666", "reservation.confirmed", 1L);
         publishEvent("7777", "reservation.confirmed", 2L);
@@ -210,14 +217,17 @@ class ConsumerResilienceIT extends AbstractRabbitIT {
     void aBrokenConsumerDoesNotAffectTheApi() throws Exception {
         // Consumidor caído: todo lo que reciba falla.
         doAnswer(invocation -> {
-            throw new IllegalStateException("el consumidor está caído");
-        }).when(processEvent).process(any(InboundEvent.class));
+                    throw new IllegalStateException("el consumidor está caído");
+                })
+                .when(processEvent)
+                .process(any(InboundEvent.class));
 
         long slowest = 0L;
         for (int i = 0; i < 10; i++) {
             long startedAt = System.nanoTime();
             String id = createReservationOverHttp();
-            mockMvc.perform(get("/v1/reservations/{id}", id).with(com.edteam.reservations.support.SecurityTestSupport.asOwner()))
+            mockMvc.perform(get("/v1/reservations/{id}", id)
+                            .with(com.edteam.reservations.support.SecurityTestSupport.asOwner()))
                     .andExpect(status().isOk());
             slowest = Math.max(slowest, (System.nanoTime() - startedAt) / 1_000_000);
         }
@@ -236,8 +246,10 @@ class ConsumerResilienceIT extends AbstractRabbitIT {
     @DisplayName("con el consumidor caído los hechos se despachan igual: el productor no lo espera")
     void theProducerDoesNotWaitForTheConsumer() throws Exception {
         doAnswer(invocation -> {
-            throw new IllegalStateException("el consumidor está caído");
-        }).when(processEvent).process(any(InboundEvent.class));
+                    throw new IllegalStateException("el consumidor está caído");
+                })
+                .when(processEvent)
+                .process(any(InboundEvent.class));
 
         createReservationOverHttp();
         // El relay se dispara a mano: en los tests el scheduler está apagado
@@ -247,13 +259,15 @@ class ConsumerResilienceIT extends AbstractRabbitIT {
         // El relay publica y marca DISPATCHED: su trabajo termina con el ack
         // del BROKER, no con el procesamiento del consumidor. Que el consumidor
         // no pueda procesar es su problema, y lo resuelve su DLQ.
-        Awaitility.await().atMost(Duration.ofSeconds(20))
+        Awaitility.await()
+                .atMost(Duration.ofSeconds(20))
                 .untilAsserted(() -> assertThat(countOutbox("DISPATCHED")).isEqualTo(1L));
         assertThat(countOutbox("FAILED")).isZero();
 
         // Y el hecho no se pierde: termina en la dead letter del consumidor,
         // que es de donde se reprocesa después de arreglar la causa.
-        Awaitility.await().atMost(Duration.ofSeconds(30))
+        Awaitility.await()
+                .atMost(Duration.ofSeconds(30))
                 .untilAsserted(() -> assertThat(deadLetterQueue.depth()).isEqualTo(1L));
     }
 
@@ -262,11 +276,19 @@ class ConsumerResilienceIT extends AbstractRabbitIT {
     void aHealthyConsumerAppliesTheEvent() {
         publishEvent("8888", "reservation.created", 1L);
 
-        Awaitility.await().atMost(Duration.ofSeconds(20))
+        Awaitility.await()
+                .atMost(Duration.ofSeconds(20))
                 .untilAsserted(() -> assertThat(deliveriesFor("8888")).isEqualTo(1L));
         assertThat(processEvent.process(new InboundEvent(
-                UUID.randomUUID().toString(), "reservation.created", 1, "urn:test",
-                "8888", 2L, "317", Instant.now(), null)))
+                        UUID.randomUUID().toString(),
+                        "reservation.created",
+                        1,
+                        "urn:test",
+                        "8888",
+                        2L,
+                        "317",
+                        Instant.now(),
+                        null)))
                 .isEqualTo(EventProcessingOutcome.APPLIED);
     }
 
@@ -290,7 +312,9 @@ class ConsumerResilienceIT extends AbstractRabbitIT {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isCreated())
-                .andReturn().getResponse().getHeader(HttpHeaders.LOCATION);
+                .andReturn()
+                .getResponse()
+                .getHeader(HttpHeaders.LOCATION);
         return location == null ? "" : location.substring(location.lastIndexOf('/') + 1);
     }
 
@@ -315,7 +339,9 @@ class ConsumerResilienceIT extends AbstractRabbitIT {
         MessageProperties properties = new MessageProperties();
         properties.setContentType(MessageProperties.CONTENT_TYPE_JSON);
         properties.setHeader(MessagingTopology.SUBJECT_HEADER, subject);
-        rabbitTemplate.send(MessagingTopology.EVENTS_EXCHANGE, type,
+        rabbitTemplate.send(
+                MessagingTopology.EVENTS_EXCHANGE,
+                type,
                 new Message(body.getBytes(StandardCharsets.UTF_8), properties));
     }
 }

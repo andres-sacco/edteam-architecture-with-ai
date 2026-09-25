@@ -4,16 +4,13 @@ import com.edteam.reservations.domain.model.ItinerarySummary;
 import com.edteam.reservations.domain.model.Reservation;
 import com.edteam.reservations.domain.model.ReservationId;
 import com.edteam.reservations.domain.model.UserId;
-
 import java.time.Instant;
 import java.util.Objects;
 
 /** Se creó una reserva. */
-public record ReservationCreated(ReservationId reservationId,
-                                 UserId userId,
-                                 ItinerarySummary itinerary,
-                                 int passengerCount,
-                                 Instant occurredAt) implements DomainEvent {
+public record ReservationCreated(
+        ReservationId reservationId, UserId userId, ItinerarySummary itinerary, int passengerCount, Instant occurredAt)
+        implements DomainEvent {
 
     public static final String TYPE = "reservation.created";
 

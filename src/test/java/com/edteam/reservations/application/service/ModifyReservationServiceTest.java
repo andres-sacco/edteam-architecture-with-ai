@@ -1,5 +1,15 @@
 package com.edteam.reservations.application.service;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
+
 import com.edteam.reservations.application.exception.ConcurrentUpdateException;
 import com.edteam.reservations.application.exception.ReservationNotFoundException;
 import com.edteam.reservations.application.exception.UnknownAirportException;
@@ -11,10 +21,12 @@ import com.edteam.reservations.application.port.out.ReservationRepositoryPort;
 import com.edteam.reservations.domain.event.DomainEvent;
 import com.edteam.reservations.domain.event.ReservationModified;
 import com.edteam.reservations.domain.exception.ReservationNotModifiableException;
-import com.edteam.reservations.domain.model.AirportCode;
 import com.edteam.reservations.domain.model.Reservation;
 import com.edteam.reservations.domain.model.ReservationStatus;
 import com.edteam.reservations.support.TestFixtures;
+import java.util.Collection;
+import java.util.Optional;
+import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -22,21 +34,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-
-import java.util.Collection;
-import java.util.Optional;
-import java.util.Set;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyCollection;
-import static org.mockito.ArgumentMatchers.anyCollection;
-import static org.mockito.Mockito.lenient;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
-import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 @DisplayName("ModifyReservationService")
@@ -70,14 +67,17 @@ class ModifyReservationServiceTest {
                 auditTrail,
                 TestFixtures.fixedClock());
         lenient().when(airportCatalog.unknown(anyCollection())).thenReturn(Set.of());
-        lenient().when(reservationRepository.save(any(Reservation.class)))
+        lenient()
+                .when(reservationRepository.save(any(Reservation.class)))
                 .thenAnswer(invocation -> invocation.<Reservation>getArgument(0).withVersion(3L));
     }
 
     private ModifyReservationCommand command(long expectedVersion) {
         return new ModifyReservationCommand(
-                TestFixtures.RESERVATION_ID.value(), expectedVersion,
-                TestFixtures.connectingItineraryData(), TestFixtures.owner());
+                TestFixtures.RESERVATION_ID.value(),
+                expectedVersion,
+                TestFixtures.connectingItineraryData(),
+                TestFixtures.owner());
     }
 
     @Test
@@ -107,14 +107,12 @@ class ModifyReservationServiceTest {
 
         ArgumentCaptor<Collection<DomainEvent>> events = ArgumentCaptor.captor();
         verify(eventOutbox).enqueue(events.capture());
-        assertThat(events.getValue())
-                .singleElement()
-                .isInstanceOfSatisfying(ReservationModified.class, event -> {
-                    assertThat(event.reservationId()).isEqualTo(TestFixtures.RESERVATION_ID);
-                    assertThat(event.previousItinerary().destination()).isEqualTo(TestFixtures.SCL);
-                    assertThat(event.itinerary().destination()).isEqualTo(TestFixtures.MAD);
-                    assertThat(event.itinerary().segmentCount()).isEqualTo(2);
-                });
+        assertThat(events.getValue()).singleElement().isInstanceOfSatisfying(ReservationModified.class, event -> {
+            assertThat(event.reservationId()).isEqualTo(TestFixtures.RESERVATION_ID);
+            assertThat(event.previousItinerary().destination()).isEqualTo(TestFixtures.SCL);
+            assertThat(event.itinerary().destination()).isEqualTo(TestFixtures.MAD);
+            assertThat(event.itinerary().segmentCount()).isEqualTo(2);
+        });
     }
 
     @Test
@@ -166,8 +164,7 @@ class ModifyReservationServiceTest {
         when(reservationRepository.findById(TestFixtures.RESERVATION_ID))
                 .thenReturn(Optional.of(TestFixtures.storedReservation(0L, ReservationStatus.CANCELLED)));
 
-        assertThatThrownBy(() -> service.modify(command(0L)))
-                .isInstanceOf(ReservationNotModifiableException.class);
+        assertThatThrownBy(() -> service.modify(command(0L))).isInstanceOf(ReservationNotModifiableException.class);
 
         verify(reservationRepository, never()).save(any());
     }

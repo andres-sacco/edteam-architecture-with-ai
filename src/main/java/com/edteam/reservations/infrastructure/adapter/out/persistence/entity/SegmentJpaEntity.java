@@ -7,10 +7,9 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
+import java.time.Instant;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
-
-import java.time.Instant;
 
 /**
  * Tabla {@code segmento}.
@@ -24,8 +23,12 @@ import java.time.Instant;
  * UTC la garantiza {@code hibernate.jdbc.time_zone}.
  */
 @Entity
-@Table(name = "segmento", uniqueConstraints = @UniqueConstraint(
-        name = "uq_segmento", columnNames = {"origen", "destino", "aerolinea", "fecha_vuelo"}))
+@Table(
+        name = "segmento",
+        uniqueConstraints =
+                @UniqueConstraint(
+                        name = "uq_segmento",
+                        columnNames = {"origen", "destino", "aerolinea", "fecha_vuelo"}))
 public class SegmentJpaEntity {
 
     @Id

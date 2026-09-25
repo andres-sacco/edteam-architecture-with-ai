@@ -1,7 +1,6 @@
 package com.edteam.reservations.domain.model;
 
 import com.edteam.reservations.domain.exception.InvalidUserException;
-
 import java.time.Instant;
 import java.util.Objects;
 import java.util.Optional;
@@ -52,8 +51,8 @@ public record User(Optional<UserId> id, Email email, String firstName, String la
      * @throws IllegalStateException si el usuario todavía no se persistió
      */
     public UserId requireId() {
-        return id.orElseThrow(() -> new IllegalStateException(
-                "El usuario %s todavía no tiene id asignado".formatted(email)));
+        return id.orElseThrow(
+                () -> new IllegalStateException("El usuario %s todavía no tiene id asignado".formatted(email)));
     }
 
     public String fullName() {

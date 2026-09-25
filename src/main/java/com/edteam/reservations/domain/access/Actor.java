@@ -2,7 +2,6 @@ package com.edteam.reservations.domain.access;
 
 import com.edteam.reservations.domain.exception.InvalidUserException;
 import com.edteam.reservations.domain.model.Email;
-
 import java.util.Objects;
 import java.util.Set;
 
@@ -105,7 +104,8 @@ public record Actor(Email email, String firstName, String lastName, Set<ActorRol
     public String reference() {
         try {
             java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(email.value().trim()
+            byte[] hash = digest.digest(email.value()
+                    .trim()
                     .toLowerCase(java.util.Locale.ROOT)
                     .getBytes(java.nio.charset.StandardCharsets.UTF_8));
             return java.util.HexFormat.of().formatHex(hash).substring(0, REFERENCE_LENGTH);

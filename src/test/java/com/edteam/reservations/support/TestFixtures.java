@@ -6,6 +6,7 @@ import com.edteam.reservations.application.port.in.PassengerData;
 import com.edteam.reservations.application.port.in.SegmentData;
 import com.edteam.reservations.domain.access.Actor;
 import com.edteam.reservations.domain.model.AirportCode;
+import com.edteam.reservations.domain.model.Email;
 import com.edteam.reservations.domain.model.IdempotencyKey;
 import com.edteam.reservations.domain.model.Itinerary;
 import com.edteam.reservations.domain.model.ItineraryId;
@@ -15,12 +16,10 @@ import com.edteam.reservations.domain.model.PassengerId;
 import com.edteam.reservations.domain.model.Reservation;
 import com.edteam.reservations.domain.model.ReservationId;
 import com.edteam.reservations.domain.model.ReservationStatus;
-import com.edteam.reservations.domain.model.Email;
 import com.edteam.reservations.domain.model.Segment;
 import com.edteam.reservations.domain.model.SegmentId;
 import com.edteam.reservations.domain.model.User;
 import com.edteam.reservations.domain.model.UserId;
-
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -55,12 +54,12 @@ public final class TestFixtures {
 
     /** Otro titular, para probar que no alcanza las reservas de la primera. */
     public static final String OTHER_USER_EMAIL = "bruno.diaz@example.com";
+
     public static final ReservationId RESERVATION_ID = ReservationId.of(10L);
     public static final IdempotencyKey IDEMPOTENCY_KEY =
             IdempotencyKey.of(UUID.fromString("11111111-1111-1111-1111-111111111111"));
 
-    private TestFixtures() {
-    }
+    private TestFixtures() {}
 
     public static Clock fixedClock() {
         return Clock.fixed(NOW, ZoneOffset.UTC);
@@ -90,9 +89,8 @@ public final class TestFixtures {
 
     /** Itinerario con escala: EZE-SCL y SCL-MAD, sin persistir. */
     public static Itinerary connectingItinerary() {
-        return Itinerary.newItinerary(price(), List.of(
-                newSegment(EZE, SCL, DEPARTURE),
-                newSegment(SCL, MAD, CONNECTION_DEPARTURE)));
+        return Itinerary.newItinerary(
+                price(), List.of(newSegment(EZE, SCL, DEPARTURE), newSegment(SCL, MAD, CONNECTION_DEPARTURE)));
     }
 
     /** Itinerario ya persistido, de un tramo. */
@@ -102,8 +100,7 @@ public final class TestFixtures {
 
     /** Itinerario cuyo primer tramo ya salió respecto de {@link #NOW}. */
     public static Itinerary departedItinerary() {
-        return Itinerary.newItinerary(price(),
-                List.of(newSegment(EZE, SCL, NOW.minus(Duration.ofDays(1)))));
+        return Itinerary.newItinerary(price(), List.of(newSegment(EZE, SCL, NOW.minus(Duration.ofDays(1)))));
     }
 
     public static Passenger newPassenger() {
@@ -132,13 +129,14 @@ public final class TestFixtures {
 
     /** Itinerario de entrada, un tramo EZE-SCL. */
     public static ItineraryData itineraryData() {
-        return new ItineraryData(new java.math.BigDecimal("1250.50"), "USD",
-                List.of(segmentData(EZE, SCL, DEPARTURE)));
+        return new ItineraryData(new java.math.BigDecimal("1250.50"), "USD", List.of(segmentData(EZE, SCL, DEPARTURE)));
     }
 
     /** Itinerario de entrada con escala, EZE-SCL-MAD. */
     public static ItineraryData connectingItineraryData() {
-        return new ItineraryData(new java.math.BigDecimal("1980.00"), "USD",
+        return new ItineraryData(
+                new java.math.BigDecimal("1980.00"),
+                "USD",
                 List.of(segmentData(EZE, SCL, DEPARTURE), segmentData(SCL, MAD, CONNECTION_DEPARTURE)));
     }
 

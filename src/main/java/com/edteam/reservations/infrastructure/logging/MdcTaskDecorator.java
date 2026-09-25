@@ -1,11 +1,10 @@
 package com.edteam.reservations.infrastructure.logging;
 
-import org.slf4j.MDC;
-import org.springframework.core.task.TaskDecorator;
-
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import org.slf4j.MDC;
+import org.springframework.core.task.TaskDecorator;
 
 /**
  * Le da identidad de correlación a lo que no nace de un pedido HTTP.

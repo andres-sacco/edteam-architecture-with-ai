@@ -11,6 +11,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tags;
 import io.micrometer.core.instrument.config.MeterFilter;
 import jakarta.servlet.DispatcherType;
+import java.util.EnumSet;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -18,8 +19,6 @@ import org.springframework.boot.actuate.autoconfigure.metrics.MeterRegistryCusto
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-
-import java.util.EnumSet;
 
 /**
  * El cableado de la observabilidad: etiquetas comunes, el filtro de acceso y
@@ -48,6 +47,7 @@ public class ObservabilityConfiguration {
      * cifrando documentos de pasajeros es exactamente lo que hay que alertar.
      */
     public static final String PII_DEV_KEY = "reservations.security.pii.dev_key";
+
     public static final String JWT_DEV_TOKENS = "reservations.security.jwt.dev_tokens";
 
     /**
@@ -81,10 +81,11 @@ public class ObservabilityConfiguration {
             @Value("${spring.application.name:flight-reservations}") String application,
             @Value("${reservations.environment:local}") String environment,
             @Value("${HOSTNAME:local}") String instance) {
-        return registry -> registry.config().commonTags(Tags.of(
-                "application", application,
-                "env", environment,
-                "instance", instance));
+        return registry -> registry.config()
+                .commonTags(Tags.of(
+                        "application", application,
+                        "env", environment,
+                        "instance", instance));
     }
 
     /**
@@ -99,8 +100,9 @@ public class ObservabilityConfiguration {
      */
     @Bean
     public MeterRegistryCustomizer<MeterRegistry> cardinalityCeiling() {
-        return registry -> registry.config().meterFilter(MeterFilter.maximumAllowableTags(
-                "reservations", "tag", MAX_SERIES_PER_METER, MeterFilter.deny()));
+        return registry -> registry.config()
+                .meterFilter(MeterFilter.maximumAllowableTags(
+                        "reservations", "tag", MAX_SERIES_PER_METER, MeterFilter.deny()));
     }
 
     private static final int MAX_SERIES_PER_METER = 1_000;
@@ -133,8 +135,7 @@ public class ObservabilityConfiguration {
         FilterRegistrationBean<RequestLogFilter> registration =
                 new FilterRegistrationBean<>(new RequestLogFilter(metrics));
         registration.setOrder(Integer.MIN_VALUE + 10);
-        registration.setDispatcherTypes(EnumSet.of(DispatcherType.REQUEST, DispatcherType.ASYNC,
-                DispatcherType.ERROR));
+        registration.setDispatcherTypes(EnumSet.of(DispatcherType.REQUEST, DispatcherType.ASYNC, DispatcherType.ERROR));
         return registration;
     }
 

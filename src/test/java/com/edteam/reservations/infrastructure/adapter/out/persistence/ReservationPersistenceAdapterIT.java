@@ -1,5 +1,8 @@
 package com.edteam.reservations.infrastructure.adapter.out.persistence;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
 import com.edteam.reservations.application.exception.ConcurrentUpdateException;
 import com.edteam.reservations.application.exception.DuplicateReservationException;
 import com.edteam.reservations.application.exception.UnknownUserException;
@@ -14,12 +17,6 @@ import com.edteam.reservations.domain.model.User;
 import com.edteam.reservations.domain.model.UserId;
 import com.edteam.reservations.support.AbstractPostgresIT;
 import com.edteam.reservations.support.TestFixtures;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.Timeout;
-import org.springframework.beans.factory.annotation.Autowired;
-
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
@@ -29,9 +26,11 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.stream.IntStream;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
+import org.springframework.beans.factory.annotation.Autowired;
 
 @DisplayName("ReservationPersistenceAdapter (PostgreSQL)")
 class ReservationPersistenceAdapterIT extends AbstractPostgresIT {
@@ -43,8 +42,12 @@ class ReservationPersistenceAdapterIT extends AbstractPostgresIT {
 
     @BeforeEach
     void createUser() {
-        user = User.of(UserId.of(insertUser(TestFixtures.USER_EMAIL)),
-                Email.of(TestFixtures.USER_EMAIL), "Ana", "Pérez", TestFixtures.NOW);
+        user = User.of(
+                UserId.of(insertUser(TestFixtures.USER_EMAIL)),
+                Email.of(TestFixtures.USER_EMAIL),
+                "Ana",
+                "Pérez",
+                TestFixtures.NOW);
     }
 
     private Reservation newReservation(IdempotencyKey key, Itinerary itinerary, List<Passenger> passengers) {
@@ -84,11 +87,10 @@ class ReservationPersistenceAdapterIT extends AbstractPostgresIT {
         assertThat(reservation.user().email()).isEqualTo(user.email());
         assertThat(reservation.idempotencyKey()).isEqualTo(key);
         assertThat(reservation.status()).isEqualTo(ReservationStatus.PENDING);
-        assertThat(reservation.passengers()).singleElement()
-                .satisfies(passenger -> {
-                    assertThat(passenger.documentNumber()).contains("30123456");
-                    assertThat(passenger.birthDate()).isEqualTo(LocalDate.of(1990, 5, 20));
-                });
+        assertThat(reservation.passengers()).singleElement().satisfies(passenger -> {
+            assertThat(passenger.documentNumber()).contains("30123456");
+            assertThat(passenger.birthDate()).isEqualTo(LocalDate.of(1990, 5, 20));
+        });
         assertThat(reservation.itinerary().price()).isEqualTo(TestFixtures.price());
         // Las columnas son TIMESTAMP sin zona: si la conversión a UTC no fuera
         // consistente, el Instant volvería corrido.
@@ -102,13 +104,13 @@ class ReservationPersistenceAdapterIT extends AbstractPostgresIT {
         Reservation saved = inTransaction(() -> adapter.save(newReservation(
                 IdempotencyKey.newKey(), TestFixtures.connectingItinerary(), TestFixtures.newPassengers())));
 
-        Reservation found = inTransaction(() -> adapter.findById(saved.requireId())).orElseThrow();
+        Reservation found =
+                inTransaction(() -> adapter.findById(saved.requireId())).orElseThrow();
 
         assertThat(found.itinerary().segments()).hasSize(2);
         assertThat(found.itinerary().origin()).isEqualTo(TestFixtures.EZE);
         assertThat(found.itinerary().destination()).isEqualTo(TestFixtures.MAD);
-        assertThat(jdbcTemplate.queryForList(
-                "SELECT orden FROM itinerario_segmento ORDER BY orden", Integer.class))
+        assertThat(jdbcTemplate.queryForList("SELECT orden FROM itinerario_segmento ORDER BY orden", Integer.class))
                 .containsExactly(0, 1);
     }
 
@@ -164,8 +166,12 @@ class ReservationPersistenceAdapterIT extends AbstractPostgresIT {
         IdempotencyKey key = IdempotencyKey.newKey();
         inTransaction(() -> adapter.save(newReservation(key)));
 
-        User otro = User.of(UserId.of(insertUser(TestFixtures.OTHER_USER_EMAIL)),
-                Email.of(TestFixtures.OTHER_USER_EMAIL), "Bruno", "Díaz", TestFixtures.NOW);
+        User otro = User.of(
+                UserId.of(insertUser(TestFixtures.OTHER_USER_EMAIL)),
+                Email.of(TestFixtures.OTHER_USER_EMAIL),
+                "Bruno",
+                "Díaz",
+                TestFixtures.NOW);
 
         inTransaction(() -> adapter.save(Reservation.create(
                 otro, key, TestFixtures.connectingItinerary(), TestFixtures.newPassengers(), TestFixtures.NOW)));
@@ -176,7 +182,8 @@ class ReservationPersistenceAdapterIT extends AbstractPostgresIT {
     @Test
     @DisplayName("devuelve vacío si el id no existe")
     void returnsEmptyForUnknownId() {
-        assertThat(inTransaction(() -> adapter.findById(ReservationId.of(999_999L)))).isEmpty();
+        assertThat(inTransaction(() -> adapter.findById(ReservationId.of(999_999L))))
+                .isEmpty();
     }
 
     @Test
@@ -184,7 +191,8 @@ class ReservationPersistenceAdapterIT extends AbstractPostgresIT {
     void reusesSharedSegments() {
         inTransaction(() -> adapter.save(newReservation(IdempotencyKey.newKey())));
         inTransaction(() -> adapter.save(newReservation(
-                IdempotencyKey.newKey(), TestFixtures.newItinerary(),
+                IdempotencyKey.newKey(),
+                TestFixtures.newItinerary(),
                 List.of(TestFixtures.newPassenger("Juan", "30999888")))));
 
         assertThat(countRows("reserva")).isEqualTo(2L);
@@ -215,7 +223,8 @@ class ReservationPersistenceAdapterIT extends AbstractPostgresIT {
 
         assertThat(countRows("pasajero")).isEqualTo(2L);
         assertThat(countRows("reserva_pasajero")).isEqualTo(2L);
-        assertThat(segunda.passengers()).singleElement()
+        assertThat(segunda.passengers())
+                .singleElement()
                 .satisfies(passenger -> assertThat(passenger.id()).isPresent());
     }
 
@@ -236,9 +245,10 @@ class ReservationPersistenceAdapterIT extends AbstractPostgresIT {
         // Y sin embargo la aplicación lo lee: el cifrado es transparente para
         // el mapeo, no para quien mira la tabla.
         Reservation found = inTransaction(() -> adapter.findById(
-                ReservationId.of(jdbcTemplate.queryForObject("SELECT id FROM reserva", Long.class))))
+                        ReservationId.of(jdbcTemplate.queryForObject("SELECT id FROM reserva", Long.class))))
                 .orElseThrow();
-        assertThat(found.passengers()).singleElement()
+        assertThat(found.passengers())
+                .singleElement()
                 .satisfies(passenger -> assertThat(passenger.documentNumber()).contains("30123456"));
     }
 
@@ -247,10 +257,10 @@ class ReservationPersistenceAdapterIT extends AbstractPostgresIT {
     void insertsPassengerWithoutDocument() {
         Passenger sinDocumento = Passenger.newPassenger("Ana", "Pérez", LocalDate.of(1990, 5, 20), null);
 
-        inTransaction(() -> adapter.save(newReservation(
-                IdempotencyKey.newKey(), TestFixtures.newItinerary(), List.of(sinDocumento))));
-        inTransaction(() -> adapter.save(newReservation(
-                IdempotencyKey.newKey(), TestFixtures.connectingItinerary(), List.of(sinDocumento))));
+        inTransaction(() -> adapter.save(
+                newReservation(IdempotencyKey.newKey(), TestFixtures.newItinerary(), List.of(sinDocumento))));
+        inTransaction(() -> adapter.save(
+                newReservation(IdempotencyKey.newKey(), TestFixtures.connectingItinerary(), List.of(sinDocumento))));
 
         assertThat(countRows("pasajero")).isEqualTo(2L);
     }
@@ -259,11 +269,12 @@ class ReservationPersistenceAdapterIT extends AbstractPostgresIT {
     @DisplayName("guarda una reserva con varios pasajeros")
     void savesReservationWithSeveralPassengers() {
         Reservation saved = inTransaction(() -> adapter.save(newReservation(
-                IdempotencyKey.newKey(), TestFixtures.newItinerary(),
-                List.of(TestFixtures.newPassenger("Ana", "30123456"),
-                        TestFixtures.newPassenger("Juan", "30999888")))));
+                IdempotencyKey.newKey(),
+                TestFixtures.newItinerary(),
+                List.of(TestFixtures.newPassenger("Ana", "30123456"), TestFixtures.newPassenger("Juan", "30999888")))));
 
-        Reservation found = inTransaction(() -> adapter.findById(saved.requireId())).orElseThrow();
+        Reservation found =
+                inTransaction(() -> adapter.findById(saved.requireId())).orElseThrow();
 
         assertThat(found.passengers()).hasSize(2);
         assertThat(countRows("reserva_pasajero")).isEqualTo(2L);
@@ -288,10 +299,16 @@ class ReservationPersistenceAdapterIT extends AbstractPostgresIT {
         // Un usuario con id asignado pero cuya fila no existe: es lo que pasaría
         // si lo borraran entre el alta y la escritura de la reserva.
         Reservation huerfana = Reservation.create(
-                User.of(UserId.of(999_999L), Email.of("fantasma@example.com"), "Fantasma", "Sin Fila",
+                User.of(
+                        UserId.of(999_999L),
+                        Email.of("fantasma@example.com"),
+                        "Fantasma",
+                        "Sin Fila",
                         TestFixtures.NOW),
-                IdempotencyKey.newKey(), TestFixtures.newItinerary(),
-                TestFixtures.newPassengers(), TestFixtures.NOW);
+                IdempotencyKey.newKey(),
+                TestFixtures.newItinerary(),
+                TestFixtures.newPassengers(),
+                TestFixtures.NOW);
 
         assertThatThrownBy(() -> inTransaction(() -> adapter.save(huerfana)))
                 .isInstanceOf(UnknownUserException.class)
@@ -309,8 +326,10 @@ class ReservationPersistenceAdapterIT extends AbstractPostgresIT {
 
         assertThat(confirmada.version()).isEqualTo(1L);
         assertThat(confirmada.status()).isEqualTo(ReservationStatus.CONFIRMED);
-        assertThat(jdbcTemplate.queryForObject("SELECT estado FROM reserva", String.class)).isEqualTo("CONFIRMADA");
-        assertThat(jdbcTemplate.queryForObject("SELECT version FROM reserva", Integer.class)).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject("SELECT estado FROM reserva", String.class))
+                .isEqualTo("CONFIRMADA");
+        assertThat(jdbcTemplate.queryForObject("SELECT version FROM reserva", Integer.class))
+                .isEqualTo(1);
     }
 
     @Test
@@ -318,15 +337,16 @@ class ReservationPersistenceAdapterIT extends AbstractPostgresIT {
     void updateWithNewItineraryReusesSegments() {
         Reservation saved = inTransaction(() -> adapter.save(newReservation(IdempotencyKey.newKey())));
 
-        Reservation modificada = inTransaction(() ->
-                adapter.save(saved.changeItinerary(TestFixtures.connectingItinerary(), TestFixtures.NOW)));
+        Reservation modificada = inTransaction(
+                () -> adapter.save(saved.changeItinerary(TestFixtures.connectingItinerary(), TestFixtures.NOW)));
 
         assertThat(modificada.itinerary().destination()).isEqualTo(TestFixtures.MAD);
         assertThat(countRows("itinerario")).isEqualTo(2L);
         // EZE-SCL ya existía; sólo se agrega SCL-MAD.
         assertThat(countRows("segmento")).isEqualTo(2L);
 
-        Reservation found = inTransaction(() -> adapter.findById(saved.requireId())).orElseThrow();
+        Reservation found =
+                inTransaction(() -> adapter.findById(saved.requireId())).orElseThrow();
         assertThat(found.itinerary().segments()).hasSize(2);
     }
 
@@ -339,7 +359,8 @@ class ReservationPersistenceAdapterIT extends AbstractPostgresIT {
 
         assertThat(countRows("reserva")).isEqualTo(1L);
         assertThat(countRows("reserva_pasajero")).isEqualTo(1L);
-        assertThat(jdbcTemplate.queryForObject("SELECT estado FROM reserva", String.class)).isEqualTo("CANCELADA");
+        assertThat(jdbcTemplate.queryForObject("SELECT estado FROM reserva", String.class))
+                .isEqualTo("CANCELADA");
     }
 
     @Test
@@ -353,7 +374,8 @@ class ReservationPersistenceAdapterIT extends AbstractPostgresIT {
                 .isInstanceOf(ConcurrentUpdateException.class)
                 .hasMessageContaining("versión esperada 0, actual 1");
 
-        assertThat(jdbcTemplate.queryForObject("SELECT estado FROM reserva", String.class)).isEqualTo("CONFIRMADA");
+        assertThat(jdbcTemplate.queryForObject("SELECT estado FROM reserva", String.class))
+                .isEqualTo("CONFIRMADA");
     }
 
     @Test
@@ -390,7 +412,8 @@ class ReservationPersistenceAdapterIT extends AbstractPostgresIT {
         }
 
         assertThat(winners).isEqualTo(1L);
-        assertThat(jdbcTemplate.queryForObject("SELECT version FROM reserva", Integer.class)).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject("SELECT version FROM reserva", Integer.class))
+                .isEqualTo(1);
     }
 
     @Test
@@ -404,7 +427,8 @@ class ReservationPersistenceAdapterIT extends AbstractPostgresIT {
                 .<Callable<Reservation>>mapToObj(index -> () -> {
                     startTogether.await();
                     return inTransaction(() -> adapter.save(newReservation(
-                            IdempotencyKey.newKey(), TestFixtures.newItinerary(),
+                            IdempotencyKey.newKey(),
+                            TestFixtures.newItinerary(),
                             List.of(TestFixtures.newPassenger("Pasajero" + index, "DOC" + index)))));
                 })
                 .toList();

@@ -1,11 +1,11 @@
 package com.edteam.reservations.infrastructure.adapter.in.rest;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @DisplayName("EntityVersion")
 class EntityVersionTest {
@@ -51,7 +51,8 @@ class EntityVersionTest {
         @Test
         @DisplayName("acepta la lista separada por comas")
         void acceptsAList() {
-            assertThat(EntityVersion.matchesIfNoneMatch("\"5\", \"7\", W/\"9\"", 7L)).isTrue();
+            assertThat(EntityVersion.matchesIfNoneMatch("\"5\", \"7\", W/\"9\"", 7L))
+                    .isTrue();
             assertThat(EntityVersion.matchesIfNoneMatch("\"5\", \"6\"", 7L)).isFalse();
         }
 

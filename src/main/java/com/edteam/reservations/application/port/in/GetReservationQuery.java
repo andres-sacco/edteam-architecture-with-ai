@@ -2,7 +2,6 @@ package com.edteam.reservations.application.port.in;
 
 import com.edteam.reservations.domain.access.Actor;
 import com.edteam.reservations.domain.model.ReservationId;
-
 import java.util.Objects;
 
 /**

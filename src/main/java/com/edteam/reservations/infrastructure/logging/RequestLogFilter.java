@@ -6,16 +6,15 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
+import java.util.Objects;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.slf4j.spi.LoggingEventBuilder;
 import org.springframework.web.filter.OncePerRequestFilter;
 import org.springframework.web.servlet.HandlerMapping;
-
-import java.io.IOException;
-import java.util.Objects;
-import java.util.Set;
 
 /**
  * Una línea por pedido: {@code event=http.request}.
@@ -94,9 +93,8 @@ public class RequestLogFilter extends OncePerRequestFilter {
     }
 
     @Override
-    protected void doFilterInternal(HttpServletRequest request,
-                                    HttpServletResponse response,
-                                    FilterChain chain) throws ServletException, IOException {
+    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
+            throws ServletException, IOException {
         long startedAt = System.nanoTime();
         try {
             chain.doFilter(request, response);
@@ -162,5 +160,4 @@ public class RequestLogFilter extends OncePerRequestFilter {
         Object code = request.getAttribute(ERROR_CODE_ATTRIBUTE);
         return code instanceof String text && !text.isBlank() ? text : null;
     }
-
 }

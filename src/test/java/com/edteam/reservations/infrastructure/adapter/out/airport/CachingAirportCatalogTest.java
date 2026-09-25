@@ -1,5 +1,8 @@
 package com.edteam.reservations.infrastructure.adapter.out.airport;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
 import com.edteam.reservations.application.exception.AirportCatalogIntegrationException;
 import com.edteam.reservations.application.exception.AirportCatalogUnavailableException;
 import com.edteam.reservations.domain.model.AirportCode;
@@ -13,12 +16,6 @@ import com.edteam.reservations.support.TestFixtures;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tags;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Nested;
-import org.junit.jupiter.api.Test;
-
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -27,9 +24,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
 
 /**
  * El decorador de cache y el <em>stale-while-error</em>, reescrito sobre la
@@ -63,8 +62,7 @@ class CachingAirportCatalogTest {
         store = new InMemoryCacheStore(clock, 1_000);
         delegate = new RecordingResolver();
         registry = new SimpleMeterRegistry();
-        catalog = new CachingAirportCatalog(delegate, store, TTL, clock,
-                new DegradationRecorder(registry), () -> true);
+        catalog = new CachingAirportCatalog(delegate, store, TTL, clock, new DegradationRecorder(registry), () -> true);
         Degradation.clear();
     }
 
@@ -259,8 +257,7 @@ class CachingAirportCatalogTest {
             clock.advance(POSITIVE_TTL.plus(STALE_WINDOW));
             delegate.answer(TestFixtures.EZE, CityResolution.unavailable("retries_exhausted"));
 
-            assertThatThrownBy(() -> unknown(TestFixtures.EZE))
-                    .isInstanceOf(AirportCatalogUnavailableException.class);
+            assertThatThrownBy(() -> unknown(TestFixtures.EZE)).isInstanceOf(AirportCatalogUnavailableException.class);
         }
 
         @Test
@@ -273,15 +270,15 @@ class CachingAirportCatalogTest {
                     .hasMessageContaining("EZE");
 
             assertThat(registry.find(DegradationRecorder.EXHAUSTED).counter()).isNotNull();
-            assertThat(registry.find(DegradationRecorder.EXHAUSTED).counter().count()).isEqualTo(1);
+            assertThat(registry.find(DegradationRecorder.EXHAUSTED).counter().count())
+                    .isEqualTo(1);
         }
 
         @Test
         @DisplayName("no guarda las excepciones: una caída del catálogo no envenena el cache")
         void doesNotCacheFailures() {
             delegate.answer(TestFixtures.EZE, CityResolution.unavailable("retries_exhausted"));
-            assertThatThrownBy(() -> unknown(TestFixtures.EZE))
-                    .isInstanceOf(AirportCatalogUnavailableException.class);
+            assertThatThrownBy(() -> unknown(TestFixtures.EZE)).isInstanceOf(AirportCatalogUnavailableException.class);
 
             delegate.answer(TestFixtures.EZE, CityResolution.present());
             assertThat(unknown(TestFixtures.EZE)).isEmpty();
@@ -333,8 +330,9 @@ class CachingAirportCatalogTest {
             assertThat(degradedCount("budget_exhausted"))
                     .as("la métrica lleva el motivo, no sólo la cuenta")
                     .isEqualTo(1);
-            assertThat(registry.find(DegradationRecorder.STALE_AGE).timer().totalTime(
-                    java.util.concurrent.TimeUnit.MINUTES))
+            assertThat(registry.find(DegradationRecorder.STALE_AGE)
+                            .timer()
+                            .totalTime(java.util.concurrent.TimeUnit.MINUTES))
                     .as("y la edad del dato servido")
                     .isEqualTo(30.0);
             assertThat(Degradation.sources())

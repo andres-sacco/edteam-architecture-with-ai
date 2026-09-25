@@ -8,11 +8,10 @@ import com.edteam.reservations.application.query.ResultPage;
 import com.edteam.reservations.domain.access.ReservationAccessPolicy;
 import com.edteam.reservations.domain.model.Email;
 import com.edteam.reservations.domain.model.Reservation;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
 import java.util.Objects;
 import java.util.Optional;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Listado paginado de reservas.

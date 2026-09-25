@@ -4,9 +4,8 @@ import com.edteam.reservations.domain.model.Email;
 import com.edteam.reservations.domain.model.User;
 import com.edteam.reservations.domain.model.UserId;
 import com.edteam.reservations.infrastructure.adapter.out.persistence.entity.UserJpaEntity;
-import org.springframework.stereotype.Component;
-
 import java.util.Optional;
+import org.springframework.stereotype.Component;
 
 /**
  * Traduce usuarios entre el dominio y JPA.
@@ -30,11 +29,6 @@ public class UserMapper {
 
     /** Crea la entidad para un usuario nuevo; el id lo asigna la base. */
     public UserJpaEntity toNewEntity(User user) {
-        return new UserJpaEntity(
-                null,
-                user.email().value(),
-                user.firstName(),
-                user.lastName(),
-                user.registeredAt());
+        return new UserJpaEntity(null, user.email().value(), user.firstName(), user.lastName(), user.registeredAt());
     }
 }

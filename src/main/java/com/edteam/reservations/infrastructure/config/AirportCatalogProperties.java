@@ -2,9 +2,8 @@ package com.edteam.reservations.infrastructure.config;
 
 import com.edteam.reservations.infrastructure.adapter.out.airport.CachingAirportCatalog;
 import com.edteam.reservations.infrastructure.adapter.out.airport.catalog.RetryingCityCatalogClient;
-import org.springframework.boot.context.properties.ConfigurationProperties;
-
 import java.time.Duration;
+import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
  * Todo lo configurable del maestro de aeropuertos: plazos del cache, timeouts
@@ -17,18 +16,19 @@ import java.time.Duration;
  * justamente lo que fija los umbrales.
  */
 @ConfigurationProperties(prefix = "reservations.airport-catalog")
-public record AirportCatalogProperties(Duration cacheTtl,
-                                       Duration negativeCacheTtl,
-                                       Duration staleWhileError,
-                                       Duration connectTimeout,
-                                       Duration readTimeout,
-                                       Duration itineraryBudget,
-                                       RetryProperties retry,
-                                       BulkheadProperties bulkhead,
-                                       CircuitBreakerProperties circuitBreaker,
-                                       String baseUrl,
-                                       String apiKey,
-                                       String apiKeyHeader) {
+public record AirportCatalogProperties(
+        Duration cacheTtl,
+        Duration negativeCacheTtl,
+        Duration staleWhileError,
+        Duration connectTimeout,
+        Duration readTimeout,
+        Duration itineraryBudget,
+        RetryProperties retry,
+        BulkheadProperties bulkhead,
+        CircuitBreakerProperties circuitBreaker,
+        String baseUrl,
+        String apiKey,
+        String apiKeyHeader) {
 
     /**
      * Umbrales por defecto del circuito del catálogo.
@@ -43,8 +43,7 @@ public record AirportCatalogProperties(Duration cacheTtl,
      * segundo abierto cuesta frescura, y probar es barato (4 llamadas de ≤ 1 s).
      */
     private static final CircuitBreakerProperties CIRCUIT_DEFAULTS = new CircuitBreakerProperties(
-            true, 50, 20, 50, Duration.ofMillis(900), 60,
-            Duration.ofSeconds(5), 4, true, Duration.ofMinutes(10));
+            true, 50, 20, 50, Duration.ofMillis(900), 60, Duration.ofSeconds(5), 4, true, Duration.ofMinutes(10));
 
     public AirportCatalogProperties {
         if (cacheTtl == null) {
@@ -111,8 +110,7 @@ public record AirportCatalogProperties(Duration cacheTtl,
     }
 
     public RetryingCityCatalogClient.Retry retryPolicy() {
-        return new RetryingCityCatalogClient.Retry(
-                retry.maxAttempts(), retry.initialBackoff(), retry.maxBackoff());
+        return new RetryingCityCatalogClient.Retry(retry.maxAttempts(), retry.initialBackoff(), retry.maxBackoff());
     }
 
     /**
@@ -135,7 +133,9 @@ public record AirportCatalogProperties(Duration cacheTtl,
      * alguien cambie un timeout sin rehacer la cuenta.
      */
     public Duration worstCasePerCity() {
-        return attemptCost().multipliedBy(retry.maxAttempts()).plus(retryPolicy().worstCaseBackoff());
+        return attemptCost()
+                .multipliedBy(retry.maxAttempts())
+                .plus(retryPolicy().worstCaseBackoff());
     }
 
     /**

@@ -5,9 +5,6 @@ import com.edteam.reservations.infrastructure.logging.LogSanitizer;
 import com.edteam.reservations.infrastructure.logging.Throwables;
 import com.edteam.reservations.infrastructure.resilience.Circuit;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.time.Duration;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -16,6 +13,8 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.function.Consumer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Convierte un almacén que falla en uno que degrada, y le pone un circuito.
@@ -88,11 +87,12 @@ public final class CircuitBreakingCacheStore implements CacheStore {
      *                      {@code localPrefix}, o {@code null} si esta
      *                      instancia no tiene fallback local
      */
-    public CircuitBreakingCacheStore(CacheStore remote,
-                                     Circuit circuit,
-                                     Consumer<String> onFailure,
-                                     CacheStore localFallback,
-                                     String localPrefix) {
+    public CircuitBreakingCacheStore(
+            CacheStore remote,
+            Circuit circuit,
+            Consumer<String> onFailure,
+            CacheStore localFallback,
+            String localPrefix) {
         this.remote = Objects.requireNonNull(remote, "El almacén remoto es obligatorio");
         this.circuit = Objects.requireNonNull(circuit, "El circuito es obligatorio");
         this.onFailure = Objects.requireNonNull(onFailure, "El callback de fallo es obligatorio");

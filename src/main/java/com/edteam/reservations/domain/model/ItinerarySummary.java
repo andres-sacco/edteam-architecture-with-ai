@@ -11,11 +11,8 @@ import java.util.Objects;
  * Mandar menos también evita romper a los consumidores cada vez que cambia el
  * detalle interno del itinerario.
  */
-public record ItinerarySummary(AirportCode origin,
-                               AirportCode destination,
-                               Instant firstDeparture,
-                               int segmentCount,
-                               Money price) {
+public record ItinerarySummary(
+        AirportCode origin, AirportCode destination, Instant firstDeparture, int segmentCount, Money price) {
 
     public ItinerarySummary {
         Objects.requireNonNull(origin, "El origen es obligatorio");

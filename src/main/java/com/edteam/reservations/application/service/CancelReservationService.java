@@ -13,15 +13,14 @@ import com.edteam.reservations.domain.access.ReservationAccessPolicy;
 import com.edteam.reservations.domain.event.ReservationCancelled;
 import com.edteam.reservations.domain.model.Reservation;
 import com.edteam.reservations.domain.model.ReservationId;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Cancelación de una reserva.
@@ -41,10 +40,11 @@ public class CancelReservationService implements CancelReservationUseCase {
     private final AuditTrailPort auditTrail;
     private final Clock clock;
 
-    public CancelReservationService(ReservationRepositoryPort reservationRepository,
-                                    EventOutboxPort eventOutbox,
-                                    AuditTrailPort auditTrail,
-                                    Clock clock) {
+    public CancelReservationService(
+            ReservationRepositoryPort reservationRepository,
+            EventOutboxPort eventOutbox,
+            AuditTrailPort auditTrail,
+            Clock clock) {
         this.reservationRepository = Objects.requireNonNull(reservationRepository);
         this.eventOutbox = Objects.requireNonNull(eventOutbox);
         this.auditTrail = Objects.requireNonNull(auditTrail);
@@ -58,14 +58,15 @@ public class CancelReservationService implements CancelReservationUseCase {
         ReservationId reservationId = ReservationId.of(command.reservationId());
         Instant now = clock.instant();
 
-        Reservation current = reservationRepository.findById(reservationId)
+        Reservation current = reservationRepository
+                .findById(reservationId)
                 .orElseThrow(() -> new ReservationNotFoundException(reservationId));
 
         // Autorización antes que concurrencia: un 409 sobre una reserva ajena
         // ya confirmaría que existe y qué versión tiene.
         if (!ReservationAccessPolicy.canWrite(command.actor(), current)) {
-            auditTrail.record(AuditEntry.denied(AuditAction.RESERVATION_ACCESS_DENIED,
-                    command.actor().email(), reservationId.toString(), now));
+            auditTrail.record(AuditEntry.denied(
+                    AuditAction.RESERVATION_ACCESS_DENIED, command.actor().email(), reservationId.toString(), now));
             throw new ReservationNotFoundException(reservationId);
         }
 
@@ -77,8 +78,12 @@ public class CancelReservationService implements CancelReservationUseCase {
         Reservation saved = reservationRepository.save(cancelled);
 
         eventOutbox.enqueue(List.of(ReservationCancelled.of(saved)));
-        auditTrail.record(AuditEntry.allowed(AuditAction.RESERVATION_CANCELLED,
-                command.actor().email(), saved.requireId().toString(), saved.version(), now));
+        auditTrail.record(AuditEntry.allowed(
+                AuditAction.RESERVATION_CANCELLED,
+                command.actor().email(),
+                saved.requireId().toString(),
+                saved.version(),
+                now));
 
         // Era la línea con menos campos de las cuatro, y es la del reclamo más
         // frecuente («yo no cancelé»): sin `userId` no se podía responder
@@ -89,7 +94,8 @@ public class CancelReservationService implements CancelReservationUseCase {
                 .addKeyValue("userId", saved.userId().value())
                 .addKeyValue("reservationVersion", saved.version())
                 .addKeyValue("itinerary.origin", saved.itinerary().origin().value())
-                .addKeyValue("itinerary.destination", saved.itinerary().destination().value())
+                .addKeyValue(
+                        "itinerary.destination", saved.itinerary().destination().value())
                 .log("Reserva cancelada");
         return saved;
     }

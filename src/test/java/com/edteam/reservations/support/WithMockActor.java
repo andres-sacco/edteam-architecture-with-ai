@@ -1,13 +1,12 @@
 package com.edteam.reservations.support;
 
 import com.edteam.reservations.domain.access.ActorRole;
-import org.springframework.security.test.context.support.WithSecurityContext;
-
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Inherited;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
+import org.springframework.security.test.context.support.WithSecurityContext;
 
 /**
  * Corre el test con un {@code Actor} autenticado.

@@ -1,5 +1,11 @@
 package com.edteam.reservations;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
 import com.edteam.reservations.application.outbox.OutboxDispatchResult;
 import com.edteam.reservations.application.port.in.CreateReservationCommand;
 import com.edteam.reservations.application.port.in.CreateReservationUseCase;
@@ -13,24 +19,17 @@ import com.edteam.reservations.support.AbstractPostgresIT;
 import com.edteam.reservations.support.SecurityTestSupport;
 import com.edteam.reservations.support.TestFixtures;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.math.BigDecimal;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.context.ApplicationContext;
 import org.springframework.test.web.servlet.MockMvc;
-
-import java.math.BigDecimal;
-import java.time.Duration;
-import java.time.Instant;
-import java.util.List;
-import java.util.UUID;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
  * Las herramientas de operación de la mensajería, enchufadas: contexto real,
@@ -71,7 +70,9 @@ class OutboxOpsIT extends AbstractPostgresIT {
         return new CreateReservationCommand(
                 TestFixtures.owner(),
                 UUID.randomUUID().toString(),
-                new ItineraryData(new BigDecimal("1250.50"), "USD",
+                new ItineraryData(
+                        new BigDecimal("1250.50"),
+                        "USD",
                         List.of(TestFixtures.segmentData(TestFixtures.EZE, TestFixtures.SCL, departure))),
                 TestFixtures.passengerData());
     }
@@ -83,13 +84,12 @@ class OutboxOpsIT extends AbstractPostgresIT {
     @Test
     @DisplayName("arranca sin broker: el publicador es el que sólo loguea y el outbox está instrumentado")
     void startsWithoutABroker() {
-        assertThat(context.getBean(EventPublisherPort.class))
-                .isInstanceOf(LoggingEventPublisher.class);
+        assertThat(context.getBean(EventPublisherPort.class)).isInstanceOf(LoggingEventPublisher.class);
         assertThat(context.getBean(com.edteam.reservations.application.port.out.EventOutboxPort.class))
                 .isInstanceOf(MeteredEventOutbox.class);
         // El consumidor no se levanta: es otro servicio.
         assertThat(context.getBeanNamesForType(
-                com.edteam.reservations.infrastructure.adapter.in.messaging.ReservationEventListener.class))
+                        com.edteam.reservations.infrastructure.adapter.in.messaging.ReservationEventListener.class))
                 .isEmpty();
     }
 
@@ -178,11 +178,10 @@ class OutboxOpsIT extends AbstractPostgresIT {
     @DisplayName("H2: el endpoint de gestión lista la dead letter y la reencola")
     void theManagementEndpointListsAndReplaysTheDeadLetter() throws Exception {
         createReservation.create(createCommand());
-        String messageId = jdbcTemplate.queryForObject(
-                "SELECT id::text FROM outbox_message", String.class);
+        String messageId = jdbcTemplate.queryForObject("SELECT id::text FROM outbox_message", String.class);
         // Se lo mata a mano, que es lo que haría el relay con un payload roto.
-        jdbcTemplate.update("UPDATE outbox_message SET status = 'FAILED', attempts = 3, failed_at = "
-                + NOW_UTC + ", last_error = 'el payload guardado no es JSON válido'");
+        jdbcTemplate.update("UPDATE outbox_message SET status = 'FAILED', attempts = 3, failed_at = " + NOW_UTC
+                + ", last_error = 'el payload guardado no es JSON válido'");
 
         // Antes esto era un 404: el endpoint no existía y el único rastro era
         // una línea de log que se perdía al reiniciar.
@@ -192,8 +191,7 @@ class OutboxOpsIT extends AbstractPostgresIT {
                 .andExpect(jsonPath("$.pending").value(0))
                 .andExpect(jsonPath("$.deadLetter[0].id").value(messageId))
                 .andExpect(jsonPath("$.deadLetter[0].type").value("reservation.created"))
-                .andExpect(jsonPath("$.deadLetter[0].lastError")
-                        .value("el payload guardado no es JSON válido"));
+                .andExpect(jsonPath("$.deadLetter[0].lastError").value("el payload guardado no es JSON válido"));
 
         mockMvc.perform(get("/actuator/outbox/{id}", messageId).with(SecurityTestSupport.asOwner()))
                 .andExpect(status().isOk())
@@ -228,8 +226,9 @@ class OutboxOpsIT extends AbstractPostgresIT {
         dispatchNotifications.dispatchPending(10);
         jdbcTemplate.update("UPDATE outbox_message SET enqueued_at = " + NOW_UTC + " - interval '30 days'");
 
-        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
-                        .delete("/actuator/outbox?olderThanDays=7").with(SecurityTestSupport.asOwner()))
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete(
+                                "/actuator/outbox?olderThanDays=7")
+                        .with(SecurityTestSupport.asOwner()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.purged").value(1));
 

@@ -1,7 +1,6 @@
 package com.edteam.reservations.domain.model;
 
 import com.edteam.reservations.domain.exception.InvalidPassengerException;
-
 import java.time.LocalDate;
 import java.util.Objects;
 import java.util.Optional;
@@ -20,11 +19,12 @@ import java.util.Optional;
  *
  * @param id vacío mientras el pasajero no esté persistido
  */
-public record Passenger(Optional<PassengerId> id,
-                        String firstName,
-                        String lastName,
-                        LocalDate birthDate,
-                        Optional<String> documentNumber) {
+public record Passenger(
+        Optional<PassengerId> id,
+        String firstName,
+        String lastName,
+        LocalDate birthDate,
+        Optional<String> documentNumber) {
 
     /** Cota de sanidad: descarta fechas de nacimiento evidentemente erróneas. */
     private static final LocalDate EARLIEST_BIRTH_DATE = LocalDate.of(1900, 1, 1);
@@ -41,16 +41,17 @@ public record Passenger(Optional<PassengerId> id,
             throw new InvalidPassengerException("La fecha de nacimiento del pasajero es obligatoria");
         }
         if (birthDate.isBefore(EARLIEST_BIRTH_DATE)) {
-            throw new InvalidPassengerException(
-                    "La fecha de nacimiento %s es anterior al mínimo admitido (%s)"
-                            .formatted(birthDate, EARLIEST_BIRTH_DATE));
+            throw new InvalidPassengerException("La fecha de nacimiento %s es anterior al mínimo admitido (%s)"
+                    .formatted(birthDate, EARLIEST_BIRTH_DATE));
         }
 
         Optional<String> normalizedDocument = documentNumber.map(String::trim);
         if (normalizedDocument.filter(String::isBlank).isPresent()) {
             throw new InvalidPassengerException("El documento, si se informa, no puede estar vacío");
         }
-        if (normalizedDocument.filter(document -> document.length() > MAX_DOCUMENT_LENGTH).isPresent()) {
+        if (normalizedDocument
+                .filter(document -> document.length() > MAX_DOCUMENT_LENGTH)
+                .isPresent()) {
             throw new InvalidPassengerException(
                     "El documento no puede superar los %d caracteres".formatted(MAX_DOCUMENT_LENGTH));
         }
@@ -58,19 +59,15 @@ public record Passenger(Optional<PassengerId> id,
     }
 
     /** Pasajero nuevo, todavía sin id. */
-    public static Passenger newPassenger(String firstName, String lastName, LocalDate birthDate, String documentNumber) {
-        return new Passenger(Optional.empty(), firstName, lastName, birthDate,
-                Optional.ofNullable(documentNumber));
+    public static Passenger newPassenger(
+            String firstName, String lastName, LocalDate birthDate, String documentNumber) {
+        return new Passenger(Optional.empty(), firstName, lastName, birthDate, Optional.ofNullable(documentNumber));
     }
 
     /** Pasajero ya persistido. */
-    public static Passenger existing(PassengerId id,
-                                     String firstName,
-                                     String lastName,
-                                     LocalDate birthDate,
-                                     String documentNumber) {
-        return new Passenger(Optional.of(id), firstName, lastName, birthDate,
-                Optional.ofNullable(documentNumber));
+    public static Passenger existing(
+            PassengerId id, String firstName, String lastName, LocalDate birthDate, String documentNumber) {
+        return new Passenger(Optional.of(id), firstName, lastName, birthDate, Optional.ofNullable(documentNumber));
     }
 
     public String fullName() {

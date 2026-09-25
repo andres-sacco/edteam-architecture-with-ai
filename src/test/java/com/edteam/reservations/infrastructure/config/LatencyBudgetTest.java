@@ -1,6 +1,10 @@
 package com.edteam.reservations.infrastructure.config;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import com.edteam.reservations.infrastructure.security.RateLimitFilter;
+import java.time.Duration;
+import java.util.Arrays;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
@@ -8,11 +12,6 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.boot.test.context.ConfigDataApplicationContextInitializer;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Configuration;
-
-import java.time.Duration;
-import java.util.Arrays;
-
-import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * El presupuesto de latencia, <strong>generado</strong> a partir de
@@ -86,8 +85,7 @@ class LatencyBudgetTest {
 
     @Configuration(proxyBeanMethods = false)
     @EnableConfigurationProperties(AirportCatalogProperties.class)
-    static class Properties {
-    }
+    static class Properties {}
 
     @Test
     @DisplayName("el peor caso por ciudad sale de los timeouts configurados, no de una constante")
@@ -100,7 +98,8 @@ class LatencyBudgetTest {
             assertThat(properties.attemptCost())
                     .isEqualTo(properties.connectTimeout().plus(properties.readTimeout()));
 
-            Duration expected = properties.attemptCost()
+            Duration expected = properties
+                    .attemptCost()
                     .multipliedBy(properties.retry().maxAttempts())
                     .plus(properties.retryPolicy().worstCaseBackoff());
             assertThat(properties.worstCasePerCity()).isEqualTo(expected);
@@ -114,8 +113,7 @@ class LatencyBudgetTest {
             AirportCatalogProperties properties = context.getBean(AirportCatalogProperties.class);
 
             assertThat(properties.worstCaseItinerary())
-                    .as("el presupuesto es del itinerario, así que %d ciudades cuestan lo mismo que una",
-                            MAX_CITIES)
+                    .as("el presupuesto es del itinerario, así que %d ciudades cuestan lo mismo que una", MAX_CITIES)
                     .isLessThanOrEqualTo(properties.itineraryBudget());
         });
     }
@@ -148,10 +146,12 @@ class LatencyBudgetTest {
 
             Duration worstCase = RATE_LIMIT
                     .plus(CACHE_READ)
-                    .plus(POOL).plus(READ_QUERY)            // findById fuera de transacción
+                    .plus(POOL)
+                    .plus(READ_QUERY) // findById fuera de transacción
                     .plus(properties.worstCaseItinerary())
                     .plus(CACHE_WRITE)
-                    .plus(POOL).plus(WRITE_TRANSACTION)     // la transacción de escritura
+                    .plus(POOL)
+                    .plus(WRITE_TRANSACTION) // la transacción de escritura
                     .plus(SERIALIZATION);
 
             assertThat(worstCase)
@@ -169,7 +169,7 @@ class LatencyBudgetTest {
         // red, y el catálogo deja de aportar al peor caso.
         Duration worstCase = RATE_LIMIT
                 .plus(CACHE_READ)
-                .plus(Duration.ZERO)            // el catálogo no se consulta
+                .plus(Duration.ZERO) // el catálogo no se consulta
                 .plus(CACHE_WRITE)
                 .plus(POOL)
                 .plus(WRITE_TRANSACTION)
@@ -187,13 +187,15 @@ class LatencyBudgetTest {
         // detrás de ellos había transacciones a punto de abrirse.
         runner.run(context -> {
             AirportCatalogProperties properties = context.getBean(AirportCatalogProperties.class);
-            Duration gracefulShutdown = Duration.parse("PT" + context.getEnvironment()
-                    .getProperty("spring.lifecycle.timeout-per-shutdown-phase", "25s")
-                    .replace("s", "S"));
+            Duration gracefulShutdown = Duration.parse("PT"
+                    + context.getEnvironment()
+                            .getProperty("spring.lifecycle.timeout-per-shutdown-phase", "25s")
+                            .replace("s", "S"));
 
-            Duration worstCase = properties.worstCaseItinerary()
-                    .plus(Duration.ofSeconds(1))   // conexión del pool
-                    .plus(Duration.ofSeconds(2))   // transacción
+            Duration worstCase = properties
+                    .worstCaseItinerary()
+                    .plus(Duration.ofSeconds(1)) // conexión del pool
+                    .plus(Duration.ofSeconds(2)) // transacción
                     .plus(Duration.ofMillis(600)); // cache y serialización
 
             assertThat(worstCase)
@@ -211,7 +213,7 @@ class LatencyBudgetTest {
         // escondía el costo real: una cuota por instancia, N veces la nominal
         // con N instancias.
         assertThat(Arrays.stream(RateLimitFilter.class.getDeclaredFields())
-                .map(field -> field.getType().getName()))
+                        .map(field -> field.getType().getName()))
                 .as("ningún campo del filtro es un cliente de Redis")
                 .noneMatch(type -> type.startsWith("org.springframework.data.redis"));
     }

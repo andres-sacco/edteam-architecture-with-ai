@@ -1,5 +1,8 @@
 package com.edteam.reservations.infrastructure.cache;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+
 import com.edteam.reservations.infrastructure.config.CircuitBreakerProperties;
 import com.edteam.reservations.infrastructure.resilience.Circuit;
 import com.edteam.reservations.infrastructure.resilience.Failures;
@@ -7,11 +10,6 @@ import com.edteam.reservations.support.MutableClock;
 import com.edteam.reservations.support.TestFixtures;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-import org.springframework.data.redis.RedisConnectionFailureException;
-
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -20,9 +18,10 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatCode;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.springframework.data.redis.RedisConnectionFailureException;
 
 /**
  * El decorador que le devuelve al cache el contrato de «nunca falla» y, de
@@ -110,8 +109,7 @@ class CircuitBreakingCacheStoreTest {
         // llevaría puesto al stale-while-error del catálogo, que es la única
         // defensa del camino del pedido.
         Circuit circuit = circuit("redis-l1", 10, 5, 50);
-        CacheStore store = new CircuitBreakingCacheStore(
-                redis, circuit, failures::add, local, CacheKeys.CITY_PREFIX);
+        CacheStore store = new CircuitBreakingCacheStore(redis, circuit, failures::add, local, CacheKeys.CITY_PREFIX);
 
         store.put(CITY_KEY, "true@999", TTL);
         assertThat(local.get(CITY_KEY))
@@ -134,8 +132,7 @@ class CircuitBreakingCacheStoreTest {
         // recurso que cambió—. Un cache degradado puede ser lento; no puede
         // ser incoherente.
         Circuit circuit = circuit("redis-version", 10, 5, 50);
-        CacheStore store = new CircuitBreakingCacheStore(
-                redis, circuit, failures::add, local, CacheKeys.CITY_PREFIX);
+        CacheStore store = new CircuitBreakingCacheStore(redis, circuit, failures::add, local, CacheKeys.CITY_PREFIX);
 
         store.put(VERSION_KEY, "7", TTL);
         assertThat(local.get(VERSION_KEY)).isEmpty();
@@ -150,23 +147,33 @@ class CircuitBreakingCacheStoreTest {
     @DisplayName("getAll degrada al L1 para las ciudades y a vacío para el resto")
     void bulkReadFallsBackByPrefix() {
         Circuit circuit = circuit("redis-bulk", 10, 5, 50);
-        CacheStore store = new CircuitBreakingCacheStore(
-                redis, circuit, failures::add, local, CacheKeys.CITY_PREFIX);
+        CacheStore store = new CircuitBreakingCacheStore(redis, circuit, failures::add, local, CacheKeys.CITY_PREFIX);
         store.put(CITY_KEY, "true@999", TTL);
         store.put(VERSION_KEY, "7", TTL);
 
         redis.broken(true);
 
-        assertThat(store.getAll(List.of(CITY_KEY, VERSION_KEY)))
-                .containsExactly(Map.entry(CITY_KEY, "true@999"));
+        assertThat(store.getAll(List.of(CITY_KEY, VERSION_KEY))).containsExactly(Map.entry(CITY_KEY, "true@999"));
     }
 
     private static Circuit circuit(String name, int window, int minimum, int failureRate) {
         CircuitBreakerProperties properties = new CircuitBreakerProperties(
-                true, window, minimum, failureRate, Duration.ofSeconds(10), 100,
-                Duration.ofSeconds(30), 2, true, Duration.ofHours(1));
-        return Circuit.of(name, properties, Failures::cache,
-                CircuitBreakerRegistry.ofDefaults(), MutableClock.at(TestFixtures.NOW));
+                true,
+                window,
+                minimum,
+                failureRate,
+                Duration.ofSeconds(10),
+                100,
+                Duration.ofSeconds(30),
+                2,
+                true,
+                Duration.ofHours(1));
+        return Circuit.of(
+                name,
+                properties,
+                Failures::cache,
+                CircuitBreakerRegistry.ofDefaults(),
+                MutableClock.at(TestFixtures.NOW));
     }
 
     /** Un Redis que se puede romper y despejar a voluntad, y que cuenta accesos. */

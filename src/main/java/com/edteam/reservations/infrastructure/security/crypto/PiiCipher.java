@@ -1,18 +1,17 @@
 package com.edteam.reservations.infrastructure.security.crypto;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import javax.crypto.Cipher;
-import javax.crypto.SecretKey;
-import javax.crypto.spec.GCMParameterSpec;
-import javax.crypto.spec.SecretKeySpec;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.SecureRandom;
 import java.util.Base64;
 import java.util.Objects;
+import javax.crypto.Cipher;
+import javax.crypto.SecretKey;
+import javax.crypto.spec.GCMParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Cifrado a nivel de columna para los datos personales que se guardan.
@@ -77,9 +76,8 @@ public class PiiCipher {
         }
         byte[] material = decodeKey(properties.key());
         if (material.length != KEY_BYTES) {
-            throw new IllegalStateException(
-                    "La clave de cifrado tiene que ser AES-256 (%d bytes en Base64) y tiene %d"
-                            .formatted(KEY_BYTES, material.length));
+            throw new IllegalStateException("La clave de cifrado tiene que ser AES-256 (%d bytes en Base64) y tiene %d"
+                    .formatted(KEY_BYTES, material.length));
         }
         if (properties.usesPublishedDevKey()) {
             // Un evento de log, un registro físico. El banner ASCII de seis
@@ -139,8 +137,7 @@ public class PiiCipher {
                 throw new IllegalStateException("El valor cifrado está truncado");
             }
             Cipher cipher = Cipher.getInstance(TRANSFORMATION);
-            cipher.init(Cipher.DECRYPT_MODE, key,
-                    new GCMParameterSpec(TAG_BITS, payload, 0, IV_BYTES));
+            cipher.init(Cipher.DECRYPT_MODE, key, new GCMParameterSpec(TAG_BITS, payload, 0, IV_BYTES));
             byte[] plaintext = cipher.doFinal(payload, IV_BYTES, payload.length - IV_BYTES);
             return new String(plaintext, StandardCharsets.UTF_8);
         } catch (GeneralSecurityException | IllegalArgumentException e) {

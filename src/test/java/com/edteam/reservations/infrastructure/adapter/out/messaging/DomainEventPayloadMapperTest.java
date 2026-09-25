@@ -1,5 +1,7 @@
 package com.edteam.reservations.infrastructure.adapter.out.messaging;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import com.edteam.reservations.domain.event.DomainEvent;
 import com.edteam.reservations.domain.event.ReservationCancelled;
 import com.edteam.reservations.domain.event.ReservationConfirmed;
@@ -9,15 +11,12 @@ import com.edteam.reservations.domain.model.Reservation;
 import com.edteam.reservations.support.TestFixtures;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.List;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
-
-import java.util.List;
-import java.util.stream.Stream;
-
-import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * El contrato del payload, del lado que este repositorio emite.
@@ -70,7 +69,9 @@ class DomainEventPayloadMapperTest {
     @Test
     @DisplayName("el alta lleva la cantidad de pasajeros")
     void createdCarriesThePassengerCount() throws Exception {
-        assertThat(payloadOf(ReservationCreated.of(reservation())).path("passengerCount").asInt())
+        assertThat(payloadOf(ReservationCreated.of(reservation()))
+                        .path("passengerCount")
+                        .asInt())
                 .isEqualTo(1);
     }
 
@@ -82,8 +83,10 @@ class DomainEventPayloadMapperTest {
         // Sin esto el consumidor sólo puede decir "tu reserva cambió" y no "tu
         // vuelo pasó del 12 al 14"; y no lo puede reconstruir preguntándonos,
         // porque el estado previo ya no existe.
-        assertThat(payload.path("previousItinerary").path("destination").asText()).isEqualTo("MAD");
-        assertThat(payload.path("previousItinerary").path("segmentCount").asInt()).isEqualTo(2);
+        assertThat(payload.path("previousItinerary").path("destination").asText())
+                .isEqualTo("MAD");
+        assertThat(payload.path("previousItinerary").path("segmentCount").asInt())
+                .isEqualTo(2);
         assertThat(payload.path("itinerary").path("destination").asText()).isEqualTo("SCL");
     }
 
@@ -97,7 +100,11 @@ class DomainEventPayloadMapperTest {
         // mismo motivo por el que Money usa BigDecimal.
         assertThat(amount.isTextual()).isTrue();
         assertThat(amount.asText()).isEqualTo("1250.50");
-        assertThat(payloadOf(event).path("itinerary").path("price").path("currency").asText())
+        assertThat(payloadOf(event)
+                        .path("itinerary")
+                        .path("price")
+                        .path("currency")
+                        .asText())
                 .isEqualTo("USD");
     }
 
@@ -149,8 +156,7 @@ class DomainEventPayloadMapperTest {
         // Allowlist y no denylist: un campo nuevo que se agregue sin pensar
         // rompe el test, y ése es exactamente el momento en el que hay que
         // preguntarse si es dato personal.
-        assertThat(keys).isSubsetOf("reservationId", "userId", "passengerCount",
-                "itinerary", "previousItinerary");
+        assertThat(keys).isSubsetOf("reservationId", "userId", "passengerCount", "itinerary", "previousItinerary");
     }
 
     // -----------------------------------------------------------------
@@ -175,11 +181,17 @@ class DomainEventPayloadMapperTest {
     @DisplayName("la jerarquía sellada tiene exactamente los cuatro tipos del contrato")
     void theSealedHierarchyHasExactlyTheFourDocumentedTypes() {
         assertThat(DomainEvent.class.getPermittedSubclasses())
-                .containsExactlyInAnyOrder(ReservationCreated.class, ReservationConfirmed.class,
-                        ReservationModified.class, ReservationCancelled.class);
+                .containsExactlyInAnyOrder(
+                        ReservationCreated.class,
+                        ReservationConfirmed.class,
+                        ReservationModified.class,
+                        ReservationCancelled.class);
         assertThat(allEventTypes().map(DomainEvent::eventType).toList())
-                .containsExactly("reservation.created", "reservation.confirmed",
-                        "reservation.modified", "reservation.cancelled");
+                .containsExactly(
+                        "reservation.created",
+                        "reservation.confirmed",
+                        "reservation.modified",
+                        "reservation.cancelled");
     }
 
     @Test

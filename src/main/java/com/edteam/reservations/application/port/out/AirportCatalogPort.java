@@ -1,7 +1,6 @@
 package com.edteam.reservations.application.port.out;
 
 import com.edteam.reservations.domain.model.AirportCode;
-
 import java.util.Collection;
 import java.util.Set;
 

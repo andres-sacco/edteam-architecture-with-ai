@@ -2,13 +2,14 @@
 # flight-reservations — integración continua y publicación de la imagen
 # =============================================================================
 #
-# Cinco trabajos y un grafo que se lee de una sola forma:
+# Seis trabajos y un grafo que se lee de una sola forma:
 #
 #     unit ─────────┬──▶ image   (construye siempre; publica sólo desde main)
 #                   │
 #     integration ──┴──▶ sonar   (análisis y quality gate)
 #
-#     security-scan            (no espera a nadie y nadie lo espera)
+#     lint                     ┐ no esperan a nadie
+#     security-scan            ┘ y nadie los espera
 #
 # 'image' y 'sonar' declaran los dos 'needs: [unit, integration]'. En GitHub
 # Actions un trabajo con 'needs' NO arranca si alguno de los que espera falló o
@@ -26,9 +27,11 @@
 # request, declarándolos required status checks: ahí una decisión de calidad o
 # de seguridad se puede discutir y arreglar antes de que entre a main.
 #
-# 'security-scan' además no espera a los tests: es el trabajo más lento (la
-# base del NVD) y no necesita que nada compile para resolver el árbol de
-# dependencias, así que arranca en t=0.
+# 'lint' y 'security-scan' además no esperan a los tests, y por razones
+# opuestas: 'lint' es el trabajo más corto del archivo y conviene que su
+# veredicto esté antes que ningún otro; 'security-scan' es el más largo (la
+# base del NVD) y conviene que arranque cuanto antes. Ninguno de los dos
+# necesita que nada compile.
 #
 # No hay un solo 'continue-on-error' en este archivo. Convierte un paso rojo en
 # un trabajo verde: el grafo sigue y la imagen se publica igual. Un pipeline
@@ -202,7 +205,75 @@ jobs:
           if-no-files-found: warn
 
   # ===========================================================================
-  # 2. Tests de integración — PostgreSQL y RabbitMQ reales
+  # 2. Formato — Spotless
+  # ===========================================================================
+  # El trabajo más corto del archivo (~40 s, casi todo arranque de JVM) y el
+  # primero que termina. Sin 'needs': no necesita que nada compile, porque
+  # Spotless parsea los archivos por su cuenta.
+  #
+  # Es un trabajo aparte y no un paso de 'unit' a propósito. Si el formato
+  # colgara del mismo trabajo que los tests, una llave mal puesta dejaría en
+  # rojo el check llamado "Tests unitarios", y un fallo mal atribuido cuesta
+  # más que el minuto que se tarda en arreglarlo: es así como un equipo empieza
+  # a decir que los tests están flaky. Acá lo que dice rojo dice "Formato".
+  #
+  # No bloquea 'image', igual que 'sonar' y 'security-scan': una llave mal
+  # puesta no cambia el bytecode y no es razón para no publicar un artefacto
+  # cuyos 798 tests pasaron. Donde frena es en el pull request, como required
+  # status check.
+  lint:
+    name: Formato
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: JDK ${{ env.JAVA_VERSION }} + caché del repositorio Maven
+        uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+          cache: maven
+
+      - name: Verificar el formato
+        id: spotless
+        # 'spotless:check' no compila: compara cada archivo contra lo que el
+        # formateador produciría. La configuración —palantir, imports sin usar,
+        # los archivos de texto y las exclusiones— está en el pom, así que este
+        # comando da exactamente el mismo resultado corriéndolo a mano.
+        run: ./mvnw ${{ env.MAVEN_ARGS }} spotless:check
+
+      - name: Explicar cómo se arregla
+        # Sólo cuando falló. El mensaje que deja Spotless en el log es una
+        # lista de diffs que puede tener cientos de líneas; lo que hace falta
+        # arriba, en el panel, es el comando.
+        if: ${{ failure() && steps.spotless.outcome == 'failure' }}
+        run: |
+          {
+            echo "## ❌ Formato"
+            echo ""
+            echo "Hay archivos que no están como los dejaría el formateador."
+            echo ""
+            echo '```bash'
+            echo './mvnw spotless:apply'
+            echo '```'
+            echo ""
+            echo "Después commiteá el resultado. No hay nada que discutir sobre el estilo:"
+            echo "palantir-java-format no es configurable, y por eso no hay reglas que negociar"
+            echo "ni un archivo de configuración donde alguien pueda cambiarlas."
+            echo ""
+            echo "El detalle archivo por archivo está en el log del paso anterior."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ===========================================================================
+  # 3. Tests de integración — PostgreSQL y RabbitMQ reales
   # ===========================================================================
   # 148 tests que levantan contenedores con Testcontainers. Necesitan el
   # demonio Docker del runner, que ubuntu-24.04 ya trae: por eso estos tests
@@ -313,7 +384,7 @@ jobs:
           if-no-files-found: error
 
   # ===========================================================================
-  # 3. Análisis estático y cobertura — SonarQube Cloud
+  # 4. Análisis estático y cobertura — SonarQube Cloud
   # ===========================================================================
   # Corre en paralelo con 'image'. No lo bloquea y no lo bloquea nadie: el
   # quality gate es una decisión sobre la calidad del código, y el lugar donde
@@ -427,7 +498,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ===========================================================================
-  # 4. Seguridad — vulnerabilidades conocidas en las dependencias
+  # 5. Seguridad — vulnerabilidades conocidas en las dependencias
   # ===========================================================================
   # SIN 'needs', a propósito, y es el único trabajo del archivo que no espera a
   # nadie. Es el más lento —la base del NVD— así que arranca en t=0 y no queda
@@ -528,7 +599,7 @@ jobs:
           if-no-files-found: warn
 
   # ===========================================================================
-  # 5. La imagen — se construye siempre, se publica sólo desde main
+  # 6. La imagen — se construye siempre, se publica sólo desde main
   # ===========================================================================
   # En un PR se construye y NO se publica. Eso es lo que hace que un Dockerfile
   # roto —una etiqueta base que ya no existe, un COPY a una ruta que se movió—

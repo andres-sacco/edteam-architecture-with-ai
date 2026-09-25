@@ -1,10 +1,19 @@
 package com.edteam.reservations.infrastructure.security;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+
 import com.edteam.reservations.infrastructure.observability.SecurityMetrics;
 import com.edteam.reservations.support.MutableClock;
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import jakarta.servlet.FilterChain;
+import java.time.Duration;
+import java.time.Instant;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -13,16 +22,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.core.context.SecurityContextHolder;
-
-import java.time.Duration;
-import java.time.Instant;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
 
 /**
  * La cuota de pedidos del borde.
@@ -46,7 +45,9 @@ class RateLimitFilterTest {
         chain = mock(FilterChain.class);
         filter = new RateLimitFilter(
                 new SecurityProperties.RateLimit(true, Duration.ofMinutes(1), 3, 1),
-                new ObjectMapper(), clock, new SecurityMetrics(new SimpleMeterRegistry()));
+                new ObjectMapper(),
+                clock,
+                new SecurityMetrics(new SimpleMeterRegistry()));
         SecurityContextHolder.clearContext();
     }
 
@@ -109,8 +110,9 @@ class RateLimitFilterTest {
     @Test
     @DisplayName("con identidad, la cuota la sigue la identidad y no la IP")
     void countsByIdentityWhenAuthenticated() throws Exception {
-        SecurityContextHolder.getContext().setAuthentication(
-                new ActorAuthenticationToken(com.edteam.reservations.support.TestFixtures.owner(), null));
+        SecurityContextHolder.getContext()
+                .setAuthentication(
+                        new ActorAuthenticationToken(com.edteam.reservations.support.TestFixtures.owner(), null));
 
         // Misma identidad desde IPs distintas: una flota de IPs es barata, una
         // flota de identidades emitidas por el IdP no.
@@ -125,8 +127,10 @@ class RateLimitFilterTest {
     @Test
     @DisplayName("informa la cuota restante para que el cliente pueda espaciarse solo")
     void publishesTheRemainingQuota() throws Exception {
-        assertThat(perform("GET", "10.0.0.1").getHeader("X-RateLimit-Remaining")).isEqualTo("2");
-        assertThat(perform("GET", "10.0.0.1").getHeader("X-RateLimit-Remaining")).isEqualTo("1");
+        assertThat(perform("GET", "10.0.0.1").getHeader("X-RateLimit-Remaining"))
+                .isEqualTo("2");
+        assertThat(perform("GET", "10.0.0.1").getHeader("X-RateLimit-Remaining"))
+                .isEqualTo("1");
     }
 
     @Test
@@ -134,7 +138,9 @@ class RateLimitFilterTest {
     void canBeTurnedOff() throws Exception {
         RateLimitFilter disabled = new RateLimitFilter(
                 new SecurityProperties.RateLimit(false, Duration.ofMinutes(1), 1, 1),
-                new ObjectMapper(), clock, new SecurityMetrics(new SimpleMeterRegistry()));
+                new ObjectMapper(),
+                clock,
+                new SecurityMetrics(new SimpleMeterRegistry()));
 
         for (int i = 0; i < 10; i++) {
             MockHttpServletRequest request = new MockHttpServletRequest("GET", "/v1/reservations");

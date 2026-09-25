@@ -1,26 +1,5 @@
 package com.edteam.reservations.application.service;
 
-import com.edteam.reservations.application.exception.EventPublishException;
-import com.edteam.reservations.application.exception.EventPublisherUnavailableException;
-import com.edteam.reservations.application.outbox.OutboxDispatchResult;
-import com.edteam.reservations.application.outbox.OutboxFailure;
-import com.edteam.reservations.application.outbox.OutboxMessage;
-import com.edteam.reservations.application.outbox.OutboxStatus;
-import com.edteam.reservations.application.port.out.EventOutboxPort;
-import com.edteam.reservations.application.port.out.EventPublisherPort;
-import com.edteam.reservations.support.TestFixtures;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.slf4j.MDC;
-
-import java.util.ArrayList;
-import java.util.List;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -34,6 +13,26 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+
+import com.edteam.reservations.application.exception.EventPublishException;
+import com.edteam.reservations.application.exception.EventPublisherUnavailableException;
+import com.edteam.reservations.application.outbox.OutboxDispatchResult;
+import com.edteam.reservations.application.outbox.OutboxFailure;
+import com.edteam.reservations.application.outbox.OutboxMessage;
+import com.edteam.reservations.application.outbox.OutboxStatus;
+import com.edteam.reservations.application.port.out.EventOutboxPort;
+import com.edteam.reservations.application.port.out.EventPublisherPort;
+import com.edteam.reservations.support.TestFixtures;
+import java.util.ArrayList;
+import java.util.List;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.MDC;
 
 @ExtendWith(MockitoExtension.class)
 @DisplayName("OutboxDispatcherService (relay del outbox)")
@@ -53,8 +52,18 @@ class OutboxDispatcherServiceTest {
     }
 
     private static OutboxMessage message(String id, String type, String subject, long sequence) {
-        return new OutboxMessage(id, type, 1, subject, sequence, "{}", "corr-1",
-                TestFixtures.NOW, TestFixtures.NOW, 0, OutboxStatus.IN_FLIGHT);
+        return new OutboxMessage(
+                id,
+                type,
+                1,
+                subject,
+                sequence,
+                "{}",
+                "corr-1",
+                TestFixtures.NOW,
+                TestFixtures.NOW,
+                0,
+                OutboxStatus.IN_FLIGHT);
     }
 
     // =================================================================
@@ -98,9 +107,11 @@ class OutboxDispatcherServiceTest {
             when(eventOutbox.pollPending(anyInt()))
                     .thenReturn(List.of(message("m-1", "reservation.created", "10241", 1)));
             doAnswer(invocation -> {
-                seenWhilePublishing.add(MDC.get("correlationId"));
-                return null;
-            }).when(eventPublisher).publish(any(OutboxMessage.class));
+                        seenWhilePublishing.add(MDC.get("correlationId"));
+                        return null;
+                    })
+                    .when(eventPublisher)
+                    .publish(any(OutboxMessage.class));
 
             service.dispatchPending(10);
 
@@ -116,8 +127,7 @@ class OutboxDispatcherServiceTest {
         // `MDC.setContextMap(null)` tira IllegalArgumentException, y «no había
         // nada» es el caso normal en un test y en un reprocesamiento manual.
         MDC.clear();
-        when(eventOutbox.pollPending(anyInt()))
-                .thenReturn(List.of(message("m-1", "reservation.created", "10241", 1)));
+        when(eventOutbox.pollPending(anyInt())).thenReturn(List.of(message("m-1", "reservation.created", "10241", 1)));
 
         service.dispatchPending(10);
 
@@ -136,11 +146,13 @@ class OutboxDispatcherServiceTest {
         // perfectamente recuperables y los manda a la dead letter, donde
         // alguien tiene que drenarlos a mano: es la diferencia entre "la
         // notificacion llego tarde" y "la notificacion se perdio".
-        when(eventOutbox.pollPending(10)).thenReturn(List.of(
-                message("m1", "reservation.created", "10", 1L),
-                message("m2", "reservation.created", "11", 2L)));
+        when(eventOutbox.pollPending(10))
+                .thenReturn(List.of(
+                        message("m1", "reservation.created", "10", 1L),
+                        message("m2", "reservation.created", "11", 2L)));
         doThrow(new EventPublisherUnavailableException("circuito abierto"))
-                .when(eventPublisher).publish(any(OutboxMessage.class));
+                .when(eventPublisher)
+                .publish(any(OutboxMessage.class));
 
         OutboxDispatchResult result = service.dispatchPending(10);
 
@@ -153,12 +165,14 @@ class OutboxDispatcherServiceTest {
     @Test
     @DisplayName("con el destino caido corta el lote entero en el primer aviso")
     void stopsTheWholeBatchOnTheFirstUnavailableAnswer() {
-        when(eventOutbox.pollPending(10)).thenReturn(List.of(
-                message("m1", "reservation.created", "10", 1L),
-                message("m2", "reservation.created", "11", 2L),
-                message("m3", "reservation.created", "12", 3L)));
+        when(eventOutbox.pollPending(10))
+                .thenReturn(List.of(
+                        message("m1", "reservation.created", "10", 1L),
+                        message("m2", "reservation.created", "11", 2L),
+                        message("m3", "reservation.created", "12", 3L)));
         doThrow(new EventPublisherUnavailableException("circuito abierto"))
-                .when(eventPublisher).publish(any(OutboxMessage.class));
+                .when(eventPublisher)
+                .publish(any(OutboxMessage.class));
 
         service.dispatchPending(10);
 
@@ -178,7 +192,8 @@ class OutboxDispatcherServiceTest {
         // exactamente lo que el circuito venia a evitar.
         when(eventOutbox.pollProbe()).thenReturn(List.of(message("m1", "reservation.created", "10", 1L)));
         doThrow(new EventPublishException("el broker no confirmo"))
-                .when(eventPublisher).publish(any(OutboxMessage.class));
+                .when(eventPublisher)
+                .publish(any(OutboxMessage.class));
 
         OutboxDispatchResult result = service.dispatchProbe();
 
@@ -203,7 +218,8 @@ class OutboxDispatcherServiceTest {
     void anOrdinaryFailureStillSpendsTheAttempt() {
         when(eventOutbox.pollPending(10)).thenReturn(List.of(message("m1", "reservation.created", "10", 1L)));
         doThrow(new EventPublishException("el broker no confirmo"))
-                .when(eventPublisher).publish(any(OutboxMessage.class));
+                .when(eventPublisher)
+                .publish(any(OutboxMessage.class));
 
         OutboxDispatchResult result = service.dispatchPending(10);
 
@@ -224,9 +240,10 @@ class OutboxDispatcherServiceTest {
     @Test
     @DisplayName("publica cada mensaje reclamado y lo marca como despachado")
     void dispatchesClaimedMessages() {
-        when(eventOutbox.pollPending(10)).thenReturn(List.of(
-                message("m1", "reservation.created", "10", 1L),
-                message("m2", "reservation.cancelled", "11", 2L)));
+        when(eventOutbox.pollPending(10))
+                .thenReturn(List.of(
+                        message("m1", "reservation.created", "10", 1L),
+                        message("m2", "reservation.cancelled", "11", 2L)));
 
         OutboxDispatchResult result = service.dispatchPending(10);
 
@@ -248,8 +265,8 @@ class OutboxDispatcherServiceTest {
     @Test
     @DisplayName("H3: el mensaje completo cruza el puerto, con su clave de idempotencia y su orden")
     void passesTheIdempotencyKeyAndOrderToThePublisher() {
-        OutboxMessage claimed = message("0f7a6f2e-6b77-4a3a-9a5f-3c4a6b2f10d1",
-                "reservation.confirmed", "8421", 10_688L);
+        OutboxMessage claimed =
+                message("0f7a6f2e-6b77-4a3a-9a5f-3c4a6b2f10d1", "reservation.confirmed", "8421", 10_688L);
         when(eventOutbox.pollPending(10)).thenReturn(List.of(claimed));
 
         service.dispatchPending(10);
@@ -266,10 +283,11 @@ class OutboxDispatcherServiceTest {
     @DisplayName("un fallo en un mensaje no interrumpe el resto del lote")
     void isolatesFailures() {
         OutboxMessage failing = message("m1", "reservation.created", "10", 1L);
-        when(eventOutbox.pollPending(10)).thenReturn(List.of(
-                failing,
-                message("m2", "reservation.cancelled", "99", 2L)));
-        doThrow(new EventPublishException("el broker no confirmó")).when(eventPublisher).publish(failing);
+        when(eventOutbox.pollPending(10))
+                .thenReturn(List.of(failing, message("m2", "reservation.cancelled", "99", 2L)));
+        doThrow(new EventPublishException("el broker no confirmó"))
+                .when(eventPublisher)
+                .publish(failing);
 
         OutboxDispatchResult result = service.dispatchPending(10);
 
@@ -293,9 +311,13 @@ class OutboxDispatcherServiceTest {
         OutboxMessage transitory = message("m1", "reservation.created", "10", 1L);
         OutboxMessage poison = message("m2", "reservation.created", "20", 2L);
         when(eventOutbox.pollPending(10)).thenReturn(List.of(transitory, poison));
-        doThrow(new EventPublishException("503 del broker")).when(eventPublisher).publish(transitory);
+        doThrow(new EventPublishException("503 del broker"))
+                .when(eventPublisher)
+                .publish(transitory);
         // El payload guardado no es JSON: insistir da el mismo resultado.
-        doThrow(new IllegalStateException("payload inválido")).when(eventPublisher).publish(poison);
+        doThrow(new IllegalStateException("payload inválido"))
+                .when(eventPublisher)
+                .publish(poison);
 
         assertThat(service.dispatchPending(10)).isEqualTo(new OutboxDispatchResult(0, 2, 0));
 
@@ -321,13 +343,15 @@ class OutboxDispatcherServiceTest {
         // única forma de asertar que la cancelación NO llegó a intentarse.
         List<String> publishedOrder = new ArrayList<>();
         doAnswer(invocation -> {
-            OutboxMessage message = invocation.getArgument(0, OutboxMessage.class);
-            if (message.id().equals("m1")) {
-                throw new EventPublishException("el broker no confirmó");
-            }
-            publishedOrder.add(message.id());
-            return null;
-        }).when(eventPublisher).publish(any());
+                    OutboxMessage message = invocation.getArgument(0, OutboxMessage.class);
+                    if (message.id().equals("m1")) {
+                        throw new EventPublishException("el broker no confirmó");
+                    }
+                    publishedOrder.add(message.id());
+                    return null;
+                })
+                .when(eventPublisher)
+                .publish(any());
 
         OutboxDispatchResult result = service.dispatchPending(10);
 
@@ -345,11 +369,14 @@ class OutboxDispatcherServiceTest {
     @DisplayName("el orden dentro de una reserva es el del sequence")
     void publishesInSequenceOrderWithinAReservation() {
         List<Long> sequences = new ArrayList<>();
-        when(eventOutbox.pollPending(10)).thenReturn(List.of(
-                message("m1", "reservation.created", "8421", 10L),
-                message("m2", "reservation.confirmed", "8421", 11L)));
+        when(eventOutbox.pollPending(10))
+                .thenReturn(List.of(
+                        message("m1", "reservation.created", "8421", 10L),
+                        message("m2", "reservation.confirmed", "8421", 11L)));
         doAnswer(invocation -> sequences.add(
-                invocation.getArgument(0, OutboxMessage.class).sequence())).when(eventPublisher).publish(any());
+                        invocation.getArgument(0, OutboxMessage.class).sequence()))
+                .when(eventPublisher)
+                .publish(any());
 
         service.dispatchPending(10);
 

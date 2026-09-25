@@ -1,7 +1,6 @@
 package com.edteam.reservations.infrastructure.adapter.in.rest.dto;
 
 import io.swagger.v3.oas.annotations.media.Schema;
-
 import java.net.URI;
 import java.util.List;
 
@@ -29,8 +28,7 @@ import java.util.List;
  * @param instance URI del pedido que produjo el error
  * @param errors   detalle campo por campo, si el error se puede atribuir a campos
  */
-@Schema(name = "Problem",
-        description = """
+@Schema(name = "Problem", description = """
                 Error en formato RFC 7807 (`application/problem+json`), extendido con un
                 campo `code`.
 
@@ -38,25 +36,28 @@ import java.util.List;
                 `title` o `detail`: esos dos son texto para humanos y pueden cambiar o
                 traducirse sin previo aviso.""")
 public record ApiProblem(
-
-        @Schema(description = "URI que identifica el tipo de problema.",
+        @Schema(
+                description = "URI que identifica el tipo de problema.",
                 example = "https://api.edteam.example/problems/reservation-not-found")
         URI type,
 
         @Schema(description = "Resumen legible del tipo de problema.", example = "Reserva inexistente")
         String title,
 
-        @Schema(description = "Código HTTP, repetido en el cuerpo para facilitar el logueo.",
-                example = "404", minimum = "400", maximum = "599")
+        @Schema(
+                description = "Código HTTP, repetido en el cuerpo para facilitar el logueo.",
+                example = "404",
+                minimum = "400",
+                maximum = "599")
         Integer status,
 
-        @Schema(description = "Código de error estable. Es la parte del contrato de errores "
-                + "contra la que los clientes pueden programar.",
+        @Schema(
+                description = "Código de error estable. Es la parte del contrato de errores "
+                        + "contra la que los clientes pueden programar.",
                 example = "RESERVATION_NOT_FOUND")
         ApiErrorCode code,
 
-        @Schema(description = "Explicación puntual de este error en particular.",
-                example = "No existe la reserva 9999")
+        @Schema(description = "Explicación puntual de este error en particular.", example = "No existe la reserva 9999")
         String detail,
 
         @Schema(description = "URI del pedido que produjo el error.", example = "/v1/reservations/9999")
@@ -65,6 +66,4 @@ public record ApiProblem(
         @Schema(description = """
                 Detalle campo por campo, presente cuando el error se puede atribuir a
                 campos concretos del pedido. Un error que no señala ningún campo —un
-                usuario inexistente, un conflicto de concurrencia— no lo trae.""")
-        List<FieldErrorResponse> errors) {
-}
+                usuario inexistente, un conflicto de concurrencia— no lo trae.""") List<FieldErrorResponse> errors) {}

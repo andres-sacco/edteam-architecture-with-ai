@@ -2,14 +2,13 @@ package com.edteam.reservations.infrastructure.security;
 
 import com.edteam.reservations.domain.access.Actor;
 import com.edteam.reservations.domain.access.ActorRole;
+import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 import org.springframework.security.authentication.AbstractAuthenticationToken;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.jwt.Jwt;
-
-import java.util.Objects;
-import java.util.Set;
-import java.util.stream.Collectors;
 
 /**
  * La autenticación de Spring Security con un {@link Actor} de dominio adentro.

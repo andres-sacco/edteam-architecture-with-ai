@@ -1,22 +1,21 @@
 package com.edteam.reservations.domain.model;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatNullPointerException;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
 import com.edteam.reservations.domain.exception.InvalidReservationException;
 import com.edteam.reservations.domain.exception.ItineraryAlreadyDepartedException;
 import com.edteam.reservations.domain.exception.ReservationAlreadyCancelledException;
 import com.edteam.reservations.domain.exception.ReservationNotModifiableException;
 import com.edteam.reservations.support.TestFixtures;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Nested;
-import org.junit.jupiter.api.Test;
-
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatNullPointerException;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
 
 @DisplayName("Reservation (agregado)")
 class ReservationTest {
@@ -48,8 +47,11 @@ class ReservationTest {
         @DisplayName("acepta varios pasajeros")
         void acceptsSeveralPassengers() {
             Reservation reservation = Reservation.create(
-                    TestFixtures.storedUser(), TestFixtures.IDEMPOTENCY_KEY, TestFixtures.newItinerary(),
-                    List.of(TestFixtures.newPassenger("Ana", "30123456"),
+                    TestFixtures.storedUser(),
+                    TestFixtures.IDEMPOTENCY_KEY,
+                    TestFixtures.newItinerary(),
+                    List.of(
+                            TestFixtures.newPassenger("Ana", "30123456"),
                             TestFixtures.newPassenger("Juan", "30999888")),
                     TestFixtures.NOW);
 
@@ -60,8 +62,11 @@ class ReservationTest {
         @DisplayName("rechaza una reserva sin pasajeros")
         void rejectsReservationWithoutPassengers() {
             assertThatThrownBy(() -> Reservation.create(
-                    TestFixtures.storedUser(), TestFixtures.IDEMPOTENCY_KEY, TestFixtures.newItinerary(),
-                    List.of(), TestFixtures.NOW))
+                            TestFixtures.storedUser(),
+                            TestFixtures.IDEMPOTENCY_KEY,
+                            TestFixtures.newItinerary(),
+                            List.of(),
+                            TestFixtures.NOW))
                     .isInstanceOf(InvalidReservationException.class)
                     .hasMessageContaining("al menos un pasajero");
         }
@@ -70,10 +75,13 @@ class ReservationTest {
         @DisplayName("rechaza el mismo pasajero repetido")
         void rejectsDuplicatePassengers() {
             assertThatThrownBy(() -> Reservation.create(
-                    TestFixtures.storedUser(), TestFixtures.IDEMPOTENCY_KEY, TestFixtures.newItinerary(),
-                    List.of(TestFixtures.newPassenger("Ana", "30123456"),
-                            TestFixtures.newPassenger("Otro Nombre", "30123456")),
-                    TestFixtures.NOW))
+                            TestFixtures.storedUser(),
+                            TestFixtures.IDEMPOTENCY_KEY,
+                            TestFixtures.newItinerary(),
+                            List.of(
+                                    TestFixtures.newPassenger("Ana", "30123456"),
+                                    TestFixtures.newPassenger("Otro Nombre", "30123456")),
+                            TestFixtures.NOW))
                     .isInstanceOf(InvalidReservationException.class)
                     .hasMessageContaining("más de una vez");
         }
@@ -84,8 +92,11 @@ class ReservationTest {
             Passenger futuro = Passenger.newPassenger("Bebé", "Pérez", LocalDate.of(2026, 12, 1), "40000000");
 
             assertThatThrownBy(() -> Reservation.create(
-                    TestFixtures.storedUser(), TestFixtures.IDEMPOTENCY_KEY, TestFixtures.newItinerary(),
-                    List.of(futuro), TestFixtures.NOW))
+                            TestFixtures.storedUser(),
+                            TestFixtures.IDEMPOTENCY_KEY,
+                            TestFixtures.newItinerary(),
+                            List.of(futuro),
+                            TestFixtures.NOW))
                     .isInstanceOf(InvalidReservationException.class)
                     .hasMessageContaining("es futura");
         }
@@ -94,8 +105,11 @@ class ReservationTest {
         @DisplayName("rechaza reservar un itinerario cuyo primer tramo ya salió")
         void rejectsDepartedItinerary() {
             assertThatThrownBy(() -> Reservation.create(
-                    TestFixtures.storedUser(), TestFixtures.IDEMPOTENCY_KEY, TestFixtures.departedItinerary(),
-                    TestFixtures.newPassengers(), TestFixtures.NOW))
+                            TestFixtures.storedUser(),
+                            TestFixtures.IDEMPOTENCY_KEY,
+                            TestFixtures.departedItinerary(),
+                            TestFixtures.newPassengers(),
+                            TestFixtures.NOW))
                     .isInstanceOf(ItineraryAlreadyDepartedException.class)
                     .hasMessageContaining("ya salió");
         }
@@ -103,21 +117,41 @@ class ReservationTest {
         @Test
         @DisplayName("exige usuario, clave de idempotencia, itinerario, pasajeros e instante")
         void rejectsNulls() {
-            assertThatNullPointerException().isThrownBy(() -> Reservation.create(
-                    null, TestFixtures.IDEMPOTENCY_KEY, TestFixtures.newItinerary(),
-                    TestFixtures.newPassengers(), TestFixtures.NOW));
-            assertThatNullPointerException().isThrownBy(() -> Reservation.create(
-                    TestFixtures.storedUser(), null, TestFixtures.newItinerary(),
-                    TestFixtures.newPassengers(), TestFixtures.NOW));
-            assertThatNullPointerException().isThrownBy(() -> Reservation.create(
-                    TestFixtures.storedUser(), TestFixtures.IDEMPOTENCY_KEY, null,
-                    TestFixtures.newPassengers(), TestFixtures.NOW));
-            assertThatNullPointerException().isThrownBy(() -> Reservation.create(
-                    TestFixtures.storedUser(), TestFixtures.IDEMPOTENCY_KEY, TestFixtures.newItinerary(),
-                    null, TestFixtures.NOW));
-            assertThatNullPointerException().isThrownBy(() -> Reservation.create(
-                    TestFixtures.storedUser(), TestFixtures.IDEMPOTENCY_KEY, TestFixtures.newItinerary(),
-                    TestFixtures.newPassengers(), null));
+            assertThatNullPointerException()
+                    .isThrownBy(() -> Reservation.create(
+                            null,
+                            TestFixtures.IDEMPOTENCY_KEY,
+                            TestFixtures.newItinerary(),
+                            TestFixtures.newPassengers(),
+                            TestFixtures.NOW));
+            assertThatNullPointerException()
+                    .isThrownBy(() -> Reservation.create(
+                            TestFixtures.storedUser(),
+                            null,
+                            TestFixtures.newItinerary(),
+                            TestFixtures.newPassengers(),
+                            TestFixtures.NOW));
+            assertThatNullPointerException()
+                    .isThrownBy(() -> Reservation.create(
+                            TestFixtures.storedUser(),
+                            TestFixtures.IDEMPOTENCY_KEY,
+                            null,
+                            TestFixtures.newPassengers(),
+                            TestFixtures.NOW));
+            assertThatNullPointerException()
+                    .isThrownBy(() -> Reservation.create(
+                            TestFixtures.storedUser(),
+                            TestFixtures.IDEMPOTENCY_KEY,
+                            TestFixtures.newItinerary(),
+                            null,
+                            TestFixtures.NOW));
+            assertThatNullPointerException()
+                    .isThrownBy(() -> Reservation.create(
+                            TestFixtures.storedUser(),
+                            TestFixtures.IDEMPOTENCY_KEY,
+                            TestFixtures.newItinerary(),
+                            TestFixtures.newPassengers(),
+                            null));
         }
     }
 
@@ -144,13 +178,13 @@ class ReservationTest {
         @Test
         @DisplayName("rechaza confirmar una reserva que no está pendiente")
         void rejectsNonPendingReservation() {
-            assertThatThrownBy(() ->
-                    TestFixtures.storedReservation(0L, ReservationStatus.CONFIRMED).confirm(TestFixtures.NOW))
+            assertThatThrownBy(() -> TestFixtures.storedReservation(0L, ReservationStatus.CONFIRMED)
+                            .confirm(TestFixtures.NOW))
                     .isInstanceOf(ReservationNotModifiableException.class)
                     .hasMessageContaining("CONFIRMED");
 
-            assertThatThrownBy(() ->
-                    TestFixtures.storedReservation(0L, ReservationStatus.CANCELLED).confirm(TestFixtures.NOW))
+            assertThatThrownBy(() -> TestFixtures.storedReservation(0L, ReservationStatus.CANCELLED)
+                            .confirm(TestFixtures.NOW))
                     .isInstanceOf(ReservationNotModifiableException.class)
                     .hasMessageContaining("CANCELLED");
         }
@@ -189,7 +223,9 @@ class ReservationTest {
         @Test
         @DisplayName("se puede modificar una reserva pendiente")
         void allowsModifyingPendingReservation() {
-            assertThat(TestFixtures.storedReservation(0L).changeItinerary(nuevoItinerario, TestFixtures.NOW).status())
+            assertThat(TestFixtures.storedReservation(0L)
+                            .changeItinerary(nuevoItinerario, TestFixtures.NOW)
+                            .status())
                     .isEqualTo(ReservationStatus.PENDING);
         }
 
@@ -207,7 +243,7 @@ class ReservationTest {
         @DisplayName("rechaza modificar una reserva cancelada")
         void rejectsCancelledReservation() {
             assertThatThrownBy(() -> TestFixtures.storedReservation(0L, ReservationStatus.CANCELLED)
-                    .changeItinerary(nuevoItinerario, TestFixtures.NOW))
+                            .changeItinerary(nuevoItinerario, TestFixtures.NOW))
                     .isInstanceOf(ReservationNotModifiableException.class)
                     .hasMessageContaining("CANCELLED");
         }
@@ -217,8 +253,8 @@ class ReservationTest {
         void rejectsAlreadyDepartedReservation() {
             Instant afterDeparture = TestFixtures.DEPARTURE.plus(Duration.ofHours(1));
 
-            assertThatThrownBy(() ->
-                    TestFixtures.storedReservation(0L).changeItinerary(nuevoItinerario, afterDeparture))
+            assertThatThrownBy(
+                            () -> TestFixtures.storedReservation(0L).changeItinerary(nuevoItinerario, afterDeparture))
                     .isInstanceOf(ItineraryAlreadyDepartedException.class)
                     .hasMessageContaining("modificar");
         }
@@ -227,7 +263,7 @@ class ReservationTest {
         @DisplayName("rechaza cambiar a un itinerario que ya salió")
         void rejectsDepartedNewItinerary() {
             assertThatThrownBy(() -> TestFixtures.storedReservation(0L)
-                    .changeItinerary(TestFixtures.departedItinerary(), TestFixtures.NOW))
+                            .changeItinerary(TestFixtures.departedItinerary(), TestFixtures.NOW))
                     .isInstanceOf(ItineraryAlreadyDepartedException.class)
                     .hasMessageContaining("ya salió");
         }
@@ -257,15 +293,17 @@ class ReservationTest {
         @Test
         @DisplayName("se puede cancelar una reserva pendiente")
         void cancelsPendingReservation() {
-            assertThat(TestFixtures.storedReservation(0L).cancel(TestFixtures.NOW).status())
+            assertThat(TestFixtures.storedReservation(0L)
+                            .cancel(TestFixtures.NOW)
+                            .status())
                     .isEqualTo(ReservationStatus.CANCELLED);
         }
 
         @Test
         @DisplayName("rechaza cancelar dos veces")
         void rejectsDoubleCancellation() {
-            assertThatThrownBy(() ->
-                    TestFixtures.storedReservation(0L, ReservationStatus.CANCELLED).cancel(TestFixtures.NOW))
+            assertThatThrownBy(() -> TestFixtures.storedReservation(0L, ReservationStatus.CANCELLED)
+                            .cancel(TestFixtures.NOW))
                     .isInstanceOf(ReservationAlreadyCancelledException.class)
                     .hasMessageContaining("10");
         }
@@ -305,15 +343,28 @@ class ReservationTest {
         @Test
         @DisplayName("rehydrate exige id y al menos un pasajero")
         void rehydrateRequiresIdAndPassengers() {
-            assertThatNullPointerException().isThrownBy(() -> Reservation.rehydrate(
-                    null, TestFixtures.storedUser(), TestFixtures.IDEMPOTENCY_KEY, TestFixtures.newItinerary(),
-                    TestFixtures.newPassengers(), ReservationStatus.PENDING,
-                    TestFixtures.NOW, TestFixtures.NOW, 0L));
+            assertThatNullPointerException()
+                    .isThrownBy(() -> Reservation.rehydrate(
+                            null,
+                            TestFixtures.storedUser(),
+                            TestFixtures.IDEMPOTENCY_KEY,
+                            TestFixtures.newItinerary(),
+                            TestFixtures.newPassengers(),
+                            ReservationStatus.PENDING,
+                            TestFixtures.NOW,
+                            TestFixtures.NOW,
+                            0L));
 
             assertThatThrownBy(() -> Reservation.rehydrate(
-                    TestFixtures.RESERVATION_ID, TestFixtures.storedUser(), TestFixtures.IDEMPOTENCY_KEY,
-                    TestFixtures.newItinerary(), List.of(), ReservationStatus.PENDING,
-                    TestFixtures.NOW, TestFixtures.NOW, 0L))
+                            TestFixtures.RESERVATION_ID,
+                            TestFixtures.storedUser(),
+                            TestFixtures.IDEMPOTENCY_KEY,
+                            TestFixtures.newItinerary(),
+                            List.of(),
+                            ReservationStatus.PENDING,
+                            TestFixtures.NOW,
+                            TestFixtures.NOW,
+                            0L))
                     .isInstanceOf(InvalidReservationException.class)
                     .hasMessageContaining("no tiene pasajeros");
         }
@@ -322,9 +373,15 @@ class ReservationTest {
         @DisplayName("rehydrate no aplica las reglas de creación, para poder leer reservas históricas")
         void rehydrateSkipsCreationRules() {
             Reservation historica = Reservation.rehydrate(
-                    TestFixtures.RESERVATION_ID, TestFixtures.storedUser(), TestFixtures.IDEMPOTENCY_KEY,
-                    TestFixtures.departedItinerary(), TestFixtures.newPassengers(),
-                    ReservationStatus.CONFIRMED, TestFixtures.NOW, TestFixtures.NOW, 3L);
+                    TestFixtures.RESERVATION_ID,
+                    TestFixtures.storedUser(),
+                    TestFixtures.IDEMPOTENCY_KEY,
+                    TestFixtures.departedItinerary(),
+                    TestFixtures.newPassengers(),
+                    ReservationStatus.CONFIRMED,
+                    TestFixtures.NOW,
+                    TestFixtures.NOW,
+                    3L);
 
             assertThat(historica.itinerary().hasDeparted(TestFixtures.NOW)).isTrue();
             assertThat(historica.version()).isEqualTo(3L);
@@ -353,7 +410,8 @@ class ReservationTest {
 
             Reservation resuelta = nueva.withPassengers(List.of(TestFixtures.existingPassenger(7L)));
 
-            assertThat(resuelta.passengers()).singleElement()
+            assertThat(resuelta.passengers())
+                    .singleElement()
                     .satisfies(passenger -> assertThat(passenger.id()).contains(PassengerId.of(7L)));
         }
 
@@ -383,9 +441,13 @@ class ReservationTest {
             Reservation cancelada = guardada.cancel(TestFixtures.NOW);
 
             assertThat(nueva).isEqualTo(guardada).isEqualTo(cancelada).hasSameHashCodeAs(guardada);
-            assertThat(nueva).isNotEqualTo(Reservation.create(
-                    TestFixtures.storedUser(), IdempotencyKey.newKey(), TestFixtures.newItinerary(),
-                    TestFixtures.newPassengers(), TestFixtures.NOW));
+            assertThat(nueva)
+                    .isNotEqualTo(Reservation.create(
+                            TestFixtures.storedUser(),
+                            IdempotencyKey.newKey(),
+                            TestFixtures.newItinerary(),
+                            TestFixtures.newPassengers(),
+                            TestFixtures.NOW));
         }
 
         @Test

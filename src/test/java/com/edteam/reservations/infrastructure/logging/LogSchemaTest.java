@@ -1,5 +1,7 @@
 package com.edteam.reservations.infrastructure.logging;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.LoggerContext;
 import ch.qos.logback.classic.joran.JoranConfigurator;
@@ -10,6 +12,10 @@ import ch.qos.logback.core.ConsoleAppender;
 import ch.qos.logback.core.encoder.Encoder;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.ByteArrayInputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -17,13 +23,6 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.slf4j.event.KeyValuePair;
 import org.springframework.core.io.ClassPathResource;
-
-import java.io.ByteArrayInputStream;
-import java.nio.charset.StandardCharsets;
-import java.util.List;
-import java.util.Map;
-
-import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * El esquema del log es un contrato, y esto es lo que lo sostiene.
@@ -54,21 +53,21 @@ class LogSchemaTest {
     private static final ObjectMapper JSON = new ObjectMapper();
 
     /** Los campos que el §1.2 del diseño declara obligatorios en TODO registro. */
-    private static final List<String> ALWAYS_PRESENT = List.of(
-            "@timestamp", "level", "logger", "message", "thread",
-            "service", "env", "version", "instance");
+    private static final List<String> ALWAYS_PRESENT =
+            List.of("@timestamp", "level", "logger", "message", "thread", "service", "env", "version", "instance");
 
     private static Encoder<ILoggingEvent> encoder;
     private static String xml;
 
     @BeforeAll
     static void loadTheRealConfiguration() throws Exception {
-        xml = new String(new ClassPathResource("logback-spring.xml").getInputStream().readAllBytes(),
-                StandardCharsets.UTF_8);
+        xml = new String(
+                new ClassPathResource("logback-spring.xml").getInputStream().readAllBytes(), StandardCharsets.UTF_8);
 
         String standalone = xml
                 // <springProperty name="x" source="..." defaultValue="d"/> → <property name="x" value="d"/>
-                .replaceAll("<springProperty[^>]*name=\"(\\w+)\"[^>]*defaultValue=\"([^\"]*)\"[^>]*/>",
+                .replaceAll(
+                        "<springProperty[^>]*name=\"(\\w+)\"[^>]*defaultValue=\"([^\"]*)\"[^>]*/>",
                         "<property scope=\"context\" name=\"$1\" value=\"$2\"/>")
                 // El perfil de desarrollo no aplica: la suite corre con el
                 // perfil por defecto, que es JSON.
@@ -81,8 +80,7 @@ class LogSchemaTest {
         configurator.setContext(context);
         configurator.doConfigure(new ByteArrayInputStream(standalone.getBytes(StandardCharsets.UTF_8)));
 
-        ch.qos.logback.classic.Logger root =
-                context.getLogger(ch.qos.logback.classic.Logger.ROOT_LOGGER_NAME);
+        ch.qos.logback.classic.Logger root = context.getLogger(ch.qos.logback.classic.Logger.ROOT_LOGGER_NAME);
         @SuppressWarnings("unchecked")
         ConsoleAppender<ILoggingEvent> json = (ConsoleAppender<ILoggingEvent>) root.getAppender("json");
         assertThat(json)
@@ -95,7 +93,9 @@ class LogSchemaTest {
     @Test
     @DisplayName("un registro emitido es un objeto JSON con los nueve campos comunes del esquema")
     void emitsTheCommonSchema() throws Exception {
-        JsonNode record = encode(event(Level.INFO, "Reserva creada",
+        JsonNode record = encode(event(
+                Level.INFO,
+                "Reserva creada",
                 Map.of("event", "reservation.created", "reservationId", 10241L),
                 Map.of("correlationId", "audit-0000-0001")));
 
@@ -111,7 +111,9 @@ class LogSchemaTest {
     @Test
     @DisplayName("el correlationId del MDC sale como campo propio: es el hallazgo que desbloquea a los otros ocho")
     void writesTheCorrelationIdFromTheMdc() throws Exception {
-        JsonNode record = encode(event(Level.INFO, "Reserva creada",
+        JsonNode record = encode(event(
+                Level.INFO,
+                "Reserva creada",
                 Map.of("event", "reservation.created"),
                 Map.of("correlationId", "audit-0000-0001", "actorRef", "3c6c5c25f4b6")));
 
@@ -130,13 +132,14 @@ class LogSchemaTest {
         // volumen del log, con la retención del log y no la de la auditoría.
         // Donde sí se escribe es en `event=http.request`, y la escribe
         // `RequestLogFilter` como campo explícito.
-        JsonNode record = encode(event(Level.DEBUG, "Catálogo consultado",
+        JsonNode record = encode(event(
+                Level.DEBUG,
+                "Catálogo consultado",
                 Map.of("event", "catalog.call"),
                 Map.of("correlationId", "audit-0000-0001", "clientIp", "172.18.0.1")));
 
         assertThat(record.has("clientIp"))
-                .withFailMessage("La IP del cliente volvió a salir en una línea que no es la de acceso: %s",
-                        record)
+                .withFailMessage("La IP del cliente volvió a salir en una línea que no es la de acceso: %s", record)
                 .isFalse();
     }
 
@@ -146,24 +149,32 @@ class LogSchemaTest {
         // La muestra de la auditoría tenía el @timestamp con offset -03:00. Dos
         // instancias en zonas distintas producen líneas que no se pueden
         // ordenar entre sí, que es lo primero que se hace en una investigación.
-        JsonNode record = encode(event(Level.INFO, "Reserva creada",
-                Map.of("event", "reservation.created"), Map.of()));
+        JsonNode record = encode(event(Level.INFO, "Reserva creada", Map.of("event", "reservation.created"), Map.of()));
 
-        assertThat(record.get("@timestamp").asText())
-                .matches("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z");
+        assertThat(record.get("@timestamp").asText()).matches("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z");
     }
 
     @Test
     @DisplayName("cada dato es un campo, y el mensaje queda como texto fijo")
     void oneFieldPerDatum() throws Exception {
-        JsonNode record = encode(event(Level.INFO, "Reserva creada",
-                Map.of("event", "reservation.created",
-                        "reservationId", 10241L,
-                        "userId", 4471L,
-                        "reservationVersion", 0,
-                        "itinerary.origin", "EZE",
-                        "itinerary.destination", "MAD",
-                        "passengers", 2),
+        JsonNode record = encode(event(
+                Level.INFO,
+                "Reserva creada",
+                Map.of(
+                        "event",
+                        "reservation.created",
+                        "reservationId",
+                        10241L,
+                        "userId",
+                        4471L,
+                        "reservationVersion",
+                        0,
+                        "itinerary.origin",
+                        "EZE",
+                        "itinerary.destination",
+                        "MAD",
+                        "passengers",
+                        2),
                 Map.of("correlationId", "audit-0000-0001")));
 
         assertThat(record.get("reservationId").asLong()).isEqualTo(10241L);
@@ -174,9 +185,7 @@ class LogSchemaTest {
         // Lo que el §1.2 quiere decir con «message fijo, sin interpolar»: ni un
         // dígito ni un marcador adentro del texto. Es lo que permite que la
         // redacción cambie sin romper una consulta.
-        assertThat(record.get("message").asText())
-                .doesNotContain("{}")
-                .doesNotMatch(".*\\d.*");
+        assertThat(record.get("message").asText()).doesNotContain("{}").doesNotMatch(".*\\d.*");
     }
 
     @Test
@@ -186,7 +195,9 @@ class LogSchemaTest {
         // construcción: en JSON el salto de línea es un carácter escapado
         // dentro de un campo y no un separador de registros.
         String hostile = "boom\n{\"level\":\"INFO\",\"message\":\"todo bien\"}";
-        String encoded = encodeRaw(event(Level.WARN, "El catálogo respondió con error",
+        String encoded = encodeRaw(event(
+                Level.WARN,
+                "El catálogo respondió con error",
                 Map.of("event", "catalog.call", "reason", hostile),
                 Map.of("correlationId", "audit-0000-0001")));
 
@@ -197,7 +208,9 @@ class LogSchemaTest {
     @Test
     @DisplayName("el stack trace sale en su propio campo y no parte el registro")
     void stackTraceIsItsOwnField() throws Exception {
-        LoggingEvent event = event(Level.ERROR, "Error no controlado procesando el pedido",
+        LoggingEvent event = event(
+                Level.ERROR,
+                "Error no controlado procesando el pedido",
                 Map.of("event", "unhandled.error", "exception.class", "IllegalStateException"),
                 Map.of("correlationId", "audit-0000-0001"));
         event.setThrowableProxy(new ThrowableProxy(new IllegalStateException("algo se rompió")));
@@ -206,13 +219,21 @@ class LogSchemaTest {
         assertThat(encoded.strip().lines())
                 .withFailMessage("Un stack trace multilínea tiene que ser UN registro, no N")
                 .hasSize(1);
-        assertThat(JSON.readTree(encoded).get("stack_trace").asText())
-                .contains("IllegalStateException");
+        assertThat(JSON.readTree(encoded).get("stack_trace").asText()).contains("IllegalStateException");
     }
 
     @ParameterizedTest(name = "declara el provider <{0}>")
-    @ValueSource(strings = {"timestamp", "logLevel", "loggerName", "message", "threadName",
-            "mdc", "keyValuePairs", "stackTrace"})
+    @ValueSource(
+            strings = {
+                "timestamp",
+                "logLevel",
+                "loggerName",
+                "message",
+                "threadName",
+                "mdc",
+                "keyValuePairs",
+                "stackTrace"
+            })
     @DisplayName("declara los providers uno por uno en lugar de heredar los defaults del encoder")
     void declaresEveryProviderExplicitly(String provider) {
         // Los defaults del encoder cambian entre versiones mayores de la
@@ -241,8 +262,7 @@ class LogSchemaTest {
         // loggers de terceros, y `o.s.web.servlet.PageNotFound` escribe un WARN
         // por cada 405 —o sea, por el sistema funcionando— que entra al panel
         // de «WARN por minuto» y lo contamina.
-        assertThat(xml)
-                .contains("<logger name=\"org.springframework.web.servlet.PageNotFound\" level=\"ERROR\"/>");
+        assertThat(xml).contains("<logger name=\"org.springframework.web.servlet.PageNotFound\" level=\"ERROR\"/>");
     }
 
     // ------------------------------------------------------------------
@@ -257,8 +277,8 @@ class LogSchemaTest {
         return new String(encoder.encode(event), StandardCharsets.UTF_8);
     }
 
-    private static LoggingEvent event(Level level, String message,
-                                      Map<String, Object> fields, Map<String, String> mdc) {
+    private static LoggingEvent event(
+            Level level, String message, Map<String, Object> fields, Map<String, String> mdc) {
         LoggingEvent event = new LoggingEvent();
         event.setLoggerName("com.edteam.reservations.application.service.CreateReservationTransaction");
         event.setLevel(level);

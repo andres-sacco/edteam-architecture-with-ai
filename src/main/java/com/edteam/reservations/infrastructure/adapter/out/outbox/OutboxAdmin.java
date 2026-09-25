@@ -56,13 +56,13 @@ public interface OutboxAdmin {
      * @param failedAt   cuándo se dio por muerto
      * @param lastError  último error, recortado
      */
-    record DeadOutboxMessage(String id,
-                             String type,
-                             String subject,
-                             long sequence,
-                             int attempts,
-                             Instant enqueuedAt,
-                             Instant failedAt,
-                             String lastError) {
-    }
+    record DeadOutboxMessage(
+            String id,
+            String type,
+            String subject,
+            long sequence,
+            int attempts,
+            Instant enqueuedAt,
+            Instant failedAt,
+            String lastError) {}
 }

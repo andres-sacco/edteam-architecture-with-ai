@@ -1,7 +1,6 @@
 package com.edteam.reservations.domain.model;
 
 import com.edteam.reservations.domain.exception.InvalidItineraryException;
-
 import java.time.Instant;
 import java.util.Collections;
 import java.util.HashSet;
@@ -124,7 +123,8 @@ public record Itinerary(Optional<ItineraryId> id, Money price, List<Segment> seg
             if (!next.isAfter(current)) {
                 throw new InvalidItineraryException(
                         ("Los segmentos no están en orden cronológico: el tramo %d sale el %s "
-                                + "y el siguiente el %s").formatted(i + 1, current, next));
+                                        + "y el siguiente el %s")
+                                .formatted(i + 1, current, next));
             }
         }
     }

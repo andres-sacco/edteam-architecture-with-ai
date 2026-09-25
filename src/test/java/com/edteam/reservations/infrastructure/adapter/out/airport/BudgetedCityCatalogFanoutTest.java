@@ -1,11 +1,11 @@
 package com.edteam.reservations.infrastructure.adapter.out.airport;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
 import com.edteam.reservations.application.exception.AirportCatalogIntegrationException;
 import com.edteam.reservations.infrastructure.adapter.out.airport.catalog.CatalogDeadline;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-
 import java.time.Clock;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -14,9 +14,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 
 /**
  * El techo de latencia del pedido.
@@ -32,8 +31,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class BudgetedCityCatalogFanoutTest {
 
     /** Once ciudades: diez tramos encadenados, que es lo que admite el contrato. */
-    private static final List<String> ELEVEN_CITIES = List.of(
-            "BUE", "SCL", "LIM", "BOG", "MEX", "MIA", "NYC", "MAD", "BCN", "PAR", "LON");
+    private static final List<String> ELEVEN_CITIES =
+            List.of("BUE", "SCL", "LIM", "BOG", "MEX", "MIA", "NYC", "MAD", "BCN", "PAR", "LON");
 
     private static final Duration BUDGET = Duration.ofMillis(1_600);
 
@@ -42,8 +41,7 @@ class BudgetedCityCatalogFanoutTest {
     void anItineraryAgainstAHungCatalogRespectsTheBudget() {
         // Cada ciudad tarda cinco segundos: en serie serían 55 s.
         CityResolver hung = sleeping(Duration.ofSeconds(5));
-        CityResolver fanout = new BudgetedCityCatalogFanout(
-                hung, BUDGET, Clock.systemUTC(), new SimpleMeterRegistry());
+        CityResolver fanout = new BudgetedCityCatalogFanout(hung, BUDGET, Clock.systemUTC(), new SimpleMeterRegistry());
 
         long startedAt = System.nanoTime();
         Map<String, CityResolution> resolutions = fanout.resolve(ELEVEN_CITIES);
@@ -63,8 +61,8 @@ class BudgetedCityCatalogFanoutTest {
     @DisplayName("once ciudades sanas cuestan la más lenta, no la suma")
     void healthyCitiesCostTheSlowestAndNotTheSum() {
         CityResolver slowButHealthy = sleeping(Duration.ofMillis(300), CityResolution.present());
-        CityResolver fanout = new BudgetedCityCatalogFanout(
-                slowButHealthy, BUDGET, Clock.systemUTC(), new SimpleMeterRegistry());
+        CityResolver fanout =
+                new BudgetedCityCatalogFanout(slowButHealthy, BUDGET, Clock.systemUTC(), new SimpleMeterRegistry());
 
         long startedAt = System.nanoTime();
         Map<String, CityResolution> resolutions = fanout.resolve(ELEVEN_CITIES);
@@ -84,8 +82,8 @@ class BudgetedCityCatalogFanoutTest {
             remaining.add(CatalogDeadline.remaining(Clock.systemUTC()));
             return answers(codes, CityResolution.present());
         };
-        CityResolver fanout = new BudgetedCityCatalogFanout(
-                probe, BUDGET, Clock.systemUTC(), new SimpleMeterRegistry());
+        CityResolver fanout =
+                new BudgetedCityCatalogFanout(probe, BUDGET, Clock.systemUTC(), new SimpleMeterRegistry());
 
         fanout.resolve(List.of("BUE", "SCL"));
 
@@ -101,11 +99,10 @@ class BudgetedCityCatalogFanoutTest {
         CityResolver broken = codes -> {
             throw new AirportCatalogIntegrationException("401 del catálogo");
         };
-        CityResolver fanout = new BudgetedCityCatalogFanout(
-                broken, BUDGET, Clock.systemUTC(), new SimpleMeterRegistry());
+        CityResolver fanout =
+                new BudgetedCityCatalogFanout(broken, BUDGET, Clock.systemUTC(), new SimpleMeterRegistry());
 
-        assertThatThrownBy(() -> fanout.resolve(List.of("BUE")))
-                .isInstanceOf(AirportCatalogIntegrationException.class);
+        assertThatThrownBy(() -> fanout.resolve(List.of("BUE"))).isInstanceOf(AirportCatalogIntegrationException.class);
     }
 
     @Test
@@ -118,7 +115,8 @@ class BudgetedCityCatalogFanoutTest {
         };
 
         assertThat(new BudgetedCityCatalogFanout(spy, BUDGET, Clock.systemUTC(), new SimpleMeterRegistry())
-                .resolve(List.of())).isEmpty();
+                        .resolve(List.of()))
+                .isEmpty();
         assertThat(seen).isEmpty();
     }
 

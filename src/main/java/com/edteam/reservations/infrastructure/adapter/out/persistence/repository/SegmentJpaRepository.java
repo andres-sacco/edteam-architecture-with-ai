@@ -1,13 +1,12 @@
 package com.edteam.reservations.infrastructure.adapter.out.persistence.repository;
 
 import com.edteam.reservations.infrastructure.adapter.out.persistence.entity.SegmentJpaEntity;
+import java.time.Instant;
+import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
-
-import java.time.Instant;
-import java.util.Optional;
 
 /**
  * Acceso a la tabla {@code segmento}.
@@ -50,8 +49,9 @@ public interface SegmentJpaRepository extends JpaRepository<SegmentJpaEntity, Lo
             VALUES (:origin, :destination, :airline, :departureAt)
             ON CONFLICT ON CONSTRAINT uq_segmento DO NOTHING
             """, nativeQuery = true)
-    int insertIfAbsent(@Param("origin") String origin,
-                       @Param("destination") String destination,
-                       @Param("airline") String airline,
-                       @Param("departureAt") Instant departureAt);
+    int insertIfAbsent(
+            @Param("origin") String origin,
+            @Param("destination") String destination,
+            @Param("airline") String airline,
+            @Param("departureAt") Instant departureAt);
 }

@@ -1,16 +1,24 @@
 package com.edteam.reservations.infrastructure.adapter.out.airport.catalog;
 
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
+
 import com.edteam.reservations.application.exception.AirportCatalogIntegrationException;
 import com.edteam.reservations.application.exception.AirportCatalogUnavailableException;
 import com.edteam.reservations.application.exception.UnknownAirportException;
 import com.edteam.reservations.application.port.out.AirportCatalogPort;
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import com.edteam.reservations.application.service.AirportExistenceValidator;
 import com.edteam.reservations.domain.model.AirportCode;
 import com.edteam.reservations.domain.model.Itinerary;
 import com.edteam.reservations.infrastructure.adapter.out.airport.CachingAirportCatalog;
 import com.edteam.reservations.infrastructure.cache.InMemoryCacheStore;
 import com.edteam.reservations.support.TestFixtures;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.Duration;
+import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -19,15 +27,6 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.client.ExpectedCount;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
-
-import java.time.Duration;
-import java.util.List;
-
-import static org.assertj.core.api.Assertions.assertThatCode;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
-import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
-import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 /**
  * La validación que corre en cada POST y PUT, con la cadena real armada:
@@ -64,14 +63,13 @@ class CityCatalogValidationTest {
 
         // El sleeper no duerme: lo que se prueba acá es la cadena, no el reloj.
         // La política de backoff tiene sus propios tests.
-        CityCatalogClient client = new RetryingCityCatalogClient(
-                new RestCityCatalogClient(builder.build()), RETRY, duration -> true);
+        CityCatalogClient client =
+                new RetryingCityCatalogClient(new RestCityCatalogClient(builder.build()), RETRY, duration -> true);
 
         AirportCatalogPort catalog = new CachingAirportCatalog(
                 new CatalogCityResolver(client, new SimpleMeterRegistry()),
                 new InMemoryCacheStore(TestFixtures.fixedClock(), 100),
-                new CachingAirportCatalog.Ttl(
-                        Duration.ofMinutes(30), Duration.ofMinutes(5), Duration.ofHours(2)),
+                new CachingAirportCatalog.Ttl(Duration.ofMinutes(30), Duration.ofMinutes(5), Duration.ofHours(2)),
                 TestFixtures.fixedClock());
         validator = new AirportExistenceValidator(catalog);
     }
@@ -178,8 +176,7 @@ class CityCatalogValidationTest {
         // Primer intento 503, segundo 200. Es el caso que justifica los
         // reintentos: sin ellos, un hipo del proveedor rechaza una reserva
         // perfectamente válida.
-        server.expect(requestTo(BASE_URL + "/city/BUE"))
-                .andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE));
+        server.expect(requestTo(BASE_URL + "/city/BUE")).andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE));
         expectCity("BUE", "Buenos Aires");
         expectCity("SCL", "Santiago");
 
@@ -230,18 +227,20 @@ class CityCatalogValidationTest {
 
     private void expectCity(String code, String name) {
         server.expect(requestTo(BASE_URL + "/city/" + code))
-                .andRespond(withSuccess("{\"name\":\"%s\",\"code\":\"%s\"}".formatted(name, code),
-                        MediaType.APPLICATION_JSON));
+                .andRespond(withSuccess(
+                        "{\"name\":\"%s\",\"code\":\"%s\"}".formatted(name, code), MediaType.APPLICATION_JSON));
     }
 
     private static Itinerary directItinerary() {
-        return Itinerary.newItinerary(TestFixtures.price(),
-                List.of(TestFixtures.newSegment(BUE, SCL, TestFixtures.DEPARTURE)));
+        return Itinerary.newItinerary(
+                TestFixtures.price(), List.of(TestFixtures.newSegment(BUE, SCL, TestFixtures.DEPARTURE)));
     }
 
     private static Itinerary connectingItinerary() {
-        return Itinerary.newItinerary(TestFixtures.price(), List.of(
-                TestFixtures.newSegment(BUE, SCL, TestFixtures.DEPARTURE),
-                TestFixtures.newSegment(SCL, MIA, TestFixtures.CONNECTION_DEPARTURE)));
+        return Itinerary.newItinerary(
+                TestFixtures.price(),
+                List.of(
+                        TestFixtures.newSegment(BUE, SCL, TestFixtures.DEPARTURE),
+                        TestFixtures.newSegment(SCL, MIA, TestFixtures.CONNECTION_DEPARTURE)));
     }
 }

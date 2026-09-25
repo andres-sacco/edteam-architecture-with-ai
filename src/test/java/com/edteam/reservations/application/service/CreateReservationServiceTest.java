@@ -1,5 +1,15 @@
 package com.edteam.reservations.application.service;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
+
 import com.edteam.reservations.application.exception.DuplicateReservationException;
 import com.edteam.reservations.application.exception.UnknownAirportException;
 import com.edteam.reservations.application.port.in.CreateReservationCommand;
@@ -24,14 +34,6 @@ import com.edteam.reservations.domain.model.ReservationStatus;
 import com.edteam.reservations.domain.model.User;
 import com.edteam.reservations.domain.model.UserId;
 import com.edteam.reservations.support.TestFixtures;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.LocalDate;
@@ -39,17 +41,13 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyCollection;
-import static org.mockito.ArgumentMatchers.anyCollection;
-import static org.mockito.Mockito.lenient;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
-import static org.mockito.Mockito.when;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
 
 @ExtendWith(MockitoExtension.class)
 @DisplayName("CreateReservationService")
@@ -92,15 +90,14 @@ class CreateReservationServiceTest {
         // Se declara lenient porque varios tests fallan antes de llegar a usarlo,
         // que es justamente lo que verifican.
         lenient().when(airportCatalog.unknown(anyCollection())).thenReturn(Set.of());
-        lenient().when(userRepository.findByEmail(any()))
-                .thenReturn(Optional.of(TestFixtures.storedUser()));
-        lenient().when(reservationRepository.findByIdempotencyKey(
-                        TestFixtures.USER_ID, TestFixtures.IDEMPOTENCY_KEY))
+        lenient().when(userRepository.findByEmail(any())).thenReturn(Optional.of(TestFixtures.storedUser()));
+        lenient()
+                .when(reservationRepository.findByIdempotencyKey(TestFixtures.USER_ID, TestFixtures.IDEMPOTENCY_KEY))
                 .thenReturn(Optional.empty());
         lenient().when(userRepository.findOrRegister(any(User.class))).thenReturn(TestFixtures.storedUser());
-        lenient().when(reservationRepository.save(any(Reservation.class)))
-                .thenAnswer(invocation -> invocation.<Reservation>getArgument(0)
-                        .withId(TestFixtures.RESERVATION_ID));
+        lenient()
+                .when(reservationRepository.save(any(Reservation.class)))
+                .thenAnswer(invocation -> invocation.<Reservation>getArgument(0).withId(TestFixtures.RESERVATION_ID));
     }
 
     @Test
@@ -133,16 +130,14 @@ class CreateReservationServiceTest {
 
         ArgumentCaptor<Collection<DomainEvent>> events = ArgumentCaptor.captor();
         verify(eventOutbox).enqueue(events.capture());
-        assertThat(events.getValue())
-                .singleElement()
-                .isInstanceOfSatisfying(ReservationCreated.class, event -> {
-                    assertThat(event.eventType()).isEqualTo(ReservationCreated.TYPE);
-                    assertThat(event.reservationId()).isEqualTo(TestFixtures.RESERVATION_ID);
-                    assertThat(event.userId()).isEqualTo(TestFixtures.USER_ID);
-                    assertThat(event.passengerCount()).isEqualTo(1);
-                    assertThat(event.itinerary().origin()).isEqualTo(TestFixtures.EZE);
-                    assertThat(event.occurredAt()).isEqualTo(TestFixtures.NOW);
-                });
+        assertThat(events.getValue()).singleElement().isInstanceOfSatisfying(ReservationCreated.class, event -> {
+            assertThat(event.eventType()).isEqualTo(ReservationCreated.TYPE);
+            assertThat(event.reservationId()).isEqualTo(TestFixtures.RESERVATION_ID);
+            assertThat(event.userId()).isEqualTo(TestFixtures.USER_ID);
+            assertThat(event.passengerCount()).isEqualTo(1);
+            assertThat(event.itinerary().origin()).isEqualTo(TestFixtures.EZE);
+            assertThat(event.occurredAt()).isEqualTo(TestFixtures.NOW);
+        });
     }
 
     @Test
@@ -186,11 +181,9 @@ class CreateReservationServiceTest {
         service.create(conEscala);
 
         @SuppressWarnings("unchecked")
-        ArgumentCaptor<java.util.Collection<AirportCode>> captor =
-                ArgumentCaptor.forClass(java.util.Collection.class);
+        ArgumentCaptor<java.util.Collection<AirportCode>> captor = ArgumentCaptor.forClass(java.util.Collection.class);
         verify(airportCatalog).unknown(captor.capture());
-        assertThat(captor.getValue())
-                .containsExactlyInAnyOrder(TestFixtures.EZE, TestFixtures.SCL, TestFixtures.MAD);
+        assertThat(captor.getValue()).containsExactlyInAnyOrder(TestFixtures.EZE, TestFixtures.SCL, TestFixtures.MAD);
     }
 
     @Test
@@ -209,15 +202,18 @@ class CreateReservationServiceTest {
     @Test
     @DisplayName("rechaza un itinerario que ya salió, sin escribir")
     void rejectsDepartedItinerary() {
-        ItineraryData pasado = new ItineraryData(new BigDecimal("100.00"), "USD",
-                List.of(TestFixtures.segmentData(TestFixtures.EZE, TestFixtures.SCL,
-                        TestFixtures.NOW.minus(Duration.ofDays(1)))));
+        ItineraryData pasado = new ItineraryData(
+                new BigDecimal("100.00"),
+                "USD",
+                List.of(TestFixtures.segmentData(
+                        TestFixtures.EZE, TestFixtures.SCL, TestFixtures.NOW.minus(Duration.ofDays(1)))));
         CreateReservationCommand command = new CreateReservationCommand(
-                TestFixtures.owner(), TestFixtures.IDEMPOTENCY_KEY.value().toString(),
-                pasado, TestFixtures.passengerData());
+                TestFixtures.owner(),
+                TestFixtures.IDEMPOTENCY_KEY.value().toString(),
+                pasado,
+                TestFixtures.passengerData());
 
-        assertThatThrownBy(() -> service.create(command))
-                .isInstanceOf(ItineraryAlreadyDepartedException.class);
+        assertThatThrownBy(() -> service.create(command)).isInstanceOf(ItineraryAlreadyDepartedException.class);
 
         verify(reservationRepository, never()).save(any());
         verify(eventOutbox, never()).enqueue(anyCollection());
@@ -241,9 +237,11 @@ class CreateReservationServiceTest {
     @DisplayName("rechaza el mismo pasajero dos veces en la reserva")
     void rejectsDuplicatePassengers() {
         CreateReservationCommand command = new CreateReservationCommand(
-                TestFixtures.owner(), TestFixtures.IDEMPOTENCY_KEY.value().toString(),
+                TestFixtures.owner(),
+                TestFixtures.IDEMPOTENCY_KEY.value().toString(),
                 TestFixtures.itineraryData(),
-                List.of(new PassengerData("Ana", "Pérez", LocalDate.of(1990, 5, 20), "30123456"),
+                List.of(
+                        new PassengerData("Ana", "Pérez", LocalDate.of(1990, 5, 20), "30123456"),
                         new PassengerData("Ana", "Pérez", LocalDate.of(1990, 5, 20), "30123456")));
 
         assertThatThrownBy(() -> service.create(command))
@@ -255,8 +253,7 @@ class CreateReservationServiceTest {
     @DisplayName("rechaza una clave de idempotencia que no es un UUID")
     void rejectsMalformedIdempotencyKey() {
         CreateReservationCommand command = new CreateReservationCommand(
-                TestFixtures.owner(), "no-es-un-uuid",
-                TestFixtures.itineraryData(), TestFixtures.passengerData());
+                TestFixtures.owner(), "no-es-un-uuid", TestFixtures.itineraryData(), TestFixtures.passengerData());
 
         assertThatThrownBy(() -> service.create(command))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -279,31 +276,30 @@ class CreateReservationServiceTest {
         CreateReservationTransaction transaction = new CreateReservationTransaction(
                 reservationRepository, userRepository, assembler, eventOutbox, auditTrail);
 
-        ReservationIdempotencyLookup lookup =
-                new ReservationIdempotencyLookup(userRepository, reservationRepository);
+        ReservationIdempotencyLookup lookup = new ReservationIdempotencyLookup(userRepository, reservationRepository);
 
-        assertThatThrownBy(() -> new CreateReservationService(null, validator, lookup, transaction,
-                TestFixtures.fixedClock()))
+        assertThatThrownBy(() ->
+                        new CreateReservationService(null, validator, lookup, transaction, TestFixtures.fixedClock()))
                 .isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() -> new CreateReservationService(assembler, null, lookup, transaction,
-                TestFixtures.fixedClock()))
+        assertThatThrownBy(() ->
+                        new CreateReservationService(assembler, null, lookup, transaction, TestFixtures.fixedClock()))
                 .isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() -> new CreateReservationService(assembler, validator, null, transaction,
-                TestFixtures.fixedClock()))
+        assertThatThrownBy(() -> new CreateReservationService(
+                        assembler, validator, null, transaction, TestFixtures.fixedClock()))
                 .isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() -> new CreateReservationService(assembler, validator, lookup, null,
-                TestFixtures.fixedClock()))
+        assertThatThrownBy(() ->
+                        new CreateReservationService(assembler, validator, lookup, null, TestFixtures.fixedClock()))
                 .isInstanceOf(NullPointerException.class);
         assertThatThrownBy(() -> new CreateReservationService(assembler, validator, lookup, transaction, null))
                 .isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() -> new CreateReservationTransaction(
-                null, userRepository, assembler, eventOutbox, auditTrail))
+        assertThatThrownBy(() ->
+                        new CreateReservationTransaction(null, userRepository, assembler, eventOutbox, auditTrail))
                 .isInstanceOf(NullPointerException.class);
         assertThatThrownBy(() -> new CreateReservationTransaction(
-                reservationRepository, null, assembler, eventOutbox, auditTrail))
+                        reservationRepository, null, assembler, eventOutbox, auditTrail))
                 .isInstanceOf(NullPointerException.class);
         assertThatThrownBy(() -> new CreateReservationTransaction(
-                reservationRepository, userRepository, assembler, null, auditTrail))
+                        reservationRepository, userRepository, assembler, null, auditTrail))
                 .isInstanceOf(NullPointerException.class);
     }
 
@@ -352,8 +348,7 @@ class CreateReservationServiceTest {
         when(userRepository.findOrRegister(any(User.class)))
                 .thenAnswer(invocation -> invocation.<User>getArgument(0).id().isPresent()
                         ? invocation.<User>getArgument(0)
-                        : User.of(UserId.of(77L), otro.email(), otro.firstName(), otro.lastName(),
-                                TestFixtures.NOW));
+                        : User.of(UserId.of(77L), otro.email(), otro.firstName(), otro.lastName(), TestFixtures.NOW));
 
         service.create(TestFixtures.createCommand(otro));
 
@@ -369,6 +364,10 @@ class CreateReservationServiceTest {
         when(reservationRepository.save(any(Reservation.class)))
                 .thenAnswer(invocation -> invocation.<Reservation>getArgument(0).withId(ReservationId.of(99L)));
 
-        assertThat(service.create(TestFixtures.createCommand()).reservation().requireId().value()).isEqualTo(99L);
+        assertThat(service.create(TestFixtures.createCommand())
+                        .reservation()
+                        .requireId()
+                        .value())
+                .isEqualTo(99L);
     }
 }

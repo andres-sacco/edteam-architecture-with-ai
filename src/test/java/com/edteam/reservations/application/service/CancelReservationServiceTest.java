@@ -1,5 +1,15 @@
 package com.edteam.reservations.application.service;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
+
 import com.edteam.reservations.application.exception.ConcurrentUpdateException;
 import com.edteam.reservations.application.exception.ReservationNotFoundException;
 import com.edteam.reservations.application.port.in.CancelReservationCommand;
@@ -12,6 +22,8 @@ import com.edteam.reservations.domain.exception.ReservationAlreadyCancelledExcep
 import com.edteam.reservations.domain.model.Reservation;
 import com.edteam.reservations.domain.model.ReservationStatus;
 import com.edteam.reservations.support.TestFixtures;
+import java.util.Collection;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -19,19 +31,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-
-import java.util.Collection;
-import java.util.Optional;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyCollection;
-import static org.mockito.Mockito.lenient;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
-import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 @DisplayName("CancelReservationService")
@@ -50,15 +49,15 @@ class CancelReservationServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new CancelReservationService(reservationRepository, eventOutbox, auditTrail,
-                TestFixtures.fixedClock());
-        lenient().when(reservationRepository.save(any(Reservation.class)))
+        service =
+                new CancelReservationService(reservationRepository, eventOutbox, auditTrail, TestFixtures.fixedClock());
+        lenient()
+                .when(reservationRepository.save(any(Reservation.class)))
                 .thenAnswer(invocation -> invocation.<Reservation>getArgument(0).withVersion(1L));
     }
 
     private CancelReservationCommand command(long expectedVersion) {
-        return new CancelReservationCommand(TestFixtures.RESERVATION_ID.value(), expectedVersion,
-                TestFixtures.owner());
+        return new CancelReservationCommand(TestFixtures.RESERVATION_ID.value(), expectedVersion, TestFixtures.owner());
     }
 
     @Test
@@ -89,13 +88,11 @@ class CancelReservationServiceTest {
 
         ArgumentCaptor<Collection<DomainEvent>> events = ArgumentCaptor.captor();
         verify(eventOutbox).enqueue(events.capture());
-        assertThat(events.getValue())
-                .singleElement()
-                .isInstanceOfSatisfying(ReservationCancelled.class, event -> {
-                    assertThat(event.reservationId()).isEqualTo(TestFixtures.RESERVATION_ID);
-                    assertThat(event.userId()).isEqualTo(TestFixtures.USER_ID);
-                    assertThat(event.eventType()).isEqualTo(ReservationCancelled.TYPE);
-                });
+        assertThat(events.getValue()).singleElement().isInstanceOfSatisfying(ReservationCancelled.class, event -> {
+            assertThat(event.reservationId()).isEqualTo(TestFixtures.RESERVATION_ID);
+            assertThat(event.userId()).isEqualTo(TestFixtures.USER_ID);
+            assertThat(event.eventType()).isEqualTo(ReservationCancelled.TYPE);
+        });
     }
 
     @Test
@@ -103,8 +100,7 @@ class CancelReservationServiceTest {
     void failsWhenNotFound() {
         when(reservationRepository.findById(TestFixtures.RESERVATION_ID)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.cancel(command(0L)))
-                .isInstanceOf(ReservationNotFoundException.class);
+        assertThatThrownBy(() -> service.cancel(command(0L))).isInstanceOf(ReservationNotFoundException.class);
 
         verify(reservationRepository, never()).save(any());
         verifyNoInteractions(eventOutbox);
@@ -116,8 +112,7 @@ class CancelReservationServiceTest {
         when(reservationRepository.findById(TestFixtures.RESERVATION_ID))
                 .thenReturn(Optional.of(TestFixtures.storedReservation(2L)));
 
-        assertThatThrownBy(() -> service.cancel(command(1L)))
-                .isInstanceOf(ConcurrentUpdateException.class);
+        assertThatThrownBy(() -> service.cancel(command(1L))).isInstanceOf(ConcurrentUpdateException.class);
 
         verify(reservationRepository, never()).save(any());
         verify(eventOutbox, never()).enqueue(anyCollection());
@@ -129,8 +124,7 @@ class CancelReservationServiceTest {
         when(reservationRepository.findById(TestFixtures.RESERVATION_ID))
                 .thenReturn(Optional.of(TestFixtures.storedReservation(0L, ReservationStatus.CANCELLED)));
 
-        assertThatThrownBy(() -> service.cancel(command(0L)))
-                .isInstanceOf(ReservationAlreadyCancelledException.class);
+        assertThatThrownBy(() -> service.cancel(command(0L))).isInstanceOf(ReservationAlreadyCancelledException.class);
 
         verify(reservationRepository, never()).save(any());
         verify(eventOutbox, never()).enqueue(anyCollection());

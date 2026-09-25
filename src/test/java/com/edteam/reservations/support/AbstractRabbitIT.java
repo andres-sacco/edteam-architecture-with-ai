@@ -1,9 +1,9 @@
 package com.edteam.reservations.support;
 
 import org.springframework.test.annotation.DirtiesContext;
-import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.TestPropertySource;
 import org.testcontainers.containers.RabbitMQContainer;
 import org.testcontainers.utility.DockerImageName;
 
@@ -43,23 +43,24 @@ import org.testcontainers.utility.DockerImageName;
  * memoria, los tokens de desarrollo).
  */
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
-@TestPropertySource(properties = {
-        "reservations.messaging.enabled=true",
-        // Declara las colas del consumidor: sin esto no hay circuito completo
-        // que probar. Es la misma bandera que enciende el perfil local.
-        "reservations.messaging.declare-consumer-topology=true",
-        "reservations.messaging.consumer-enabled=true",
-        // Reintento corto: el test no puede esperar los 30 s de producción, y
-        // lo que se está probando es el mecanismo, no el valor.
-        "reservations.messaging.retry-delay=1s",
-        // Techo igual al primer escalón: el backoff del consumidor es
-        // exponencial con jitter, y acá lo que se prueba es el mecanismo de
-        // reintento y dead-letter, no la progresión —que tiene su propio test
-        // unitario—. Sin esto, dos vueltas tardarían tres segundos en lugar
-        // de uno y los tests se volverían lentos sin verificar nada nuevo.
-        "reservations.messaging.max-retry-delay=1s",
-        "reservations.messaging.max-retry-rounds=2"
-})
+@TestPropertySource(
+        properties = {
+            "reservations.messaging.enabled=true",
+            // Declara las colas del consumidor: sin esto no hay circuito completo
+            // que probar. Es la misma bandera que enciende el perfil local.
+            "reservations.messaging.declare-consumer-topology=true",
+            "reservations.messaging.consumer-enabled=true",
+            // Reintento corto: el test no puede esperar los 30 s de producción, y
+            // lo que se está probando es el mecanismo, no el valor.
+            "reservations.messaging.retry-delay=1s",
+            // Techo igual al primer escalón: el backoff del consumidor es
+            // exponencial con jitter, y acá lo que se prueba es el mecanismo de
+            // reintento y dead-letter, no la progresión —que tiene su propio test
+            // unitario—. Sin esto, dos vueltas tardarían tres segundos en lugar
+            // de uno y los tests se volverían lentos sin verificar nada nuevo.
+            "reservations.messaging.max-retry-delay=1s",
+            "reservations.messaging.max-retry-rounds=2"
+        })
 public abstract class AbstractRabbitIT extends AbstractPostgresIT {
 
     private static final RabbitMQContainer RABBIT =

@@ -6,6 +6,9 @@ import com.edteam.reservations.infrastructure.adapter.out.outbox.OutboxAdmin;
 import com.edteam.reservations.infrastructure.adapter.out.outbox.OutboxStats;
 import com.edteam.reservations.infrastructure.logging.LogFields;
 import com.edteam.reservations.infrastructure.security.OpsActor;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.actuate.endpoint.annotation.DeleteOperation;
@@ -14,10 +17,6 @@ import org.springframework.boot.actuate.endpoint.annotation.ReadOperation;
 import org.springframework.boot.actuate.endpoint.annotation.Selector;
 import org.springframework.boot.actuate.endpoint.annotation.WriteOperation;
 import org.springframework.lang.Nullable;
-
-import java.util.LinkedHashMap;
-import java.util.Map;
-import java.util.Objects;
 
 /**
  * Endpoint {@code outbox} del puerto de gestión: la dead letter del productor
@@ -90,9 +89,8 @@ public class OutboxEndpoint {
      * tener que esperar el próximo tick y ver el resultado del arreglo de una.
      */
     @WriteOperation
-    public Map<String, Object> replay(@Nullable String messageId,
-                                     @Nullable Boolean dispatch,
-                                     @Nullable Integer batchSize) {
+    public Map<String, Object> replay(
+            @Nullable String messageId, @Nullable Boolean dispatch, @Nullable Integer batchSize) {
         Map<String, Object> body = new LinkedHashMap<>();
         if (messageId != null && !messageId.isBlank()) {
             body.put("replayed", outbox.replay(messageId) ? 1 : 0);
@@ -101,8 +99,8 @@ public class OutboxEndpoint {
             body.put("replayed", outbox.replayAll());
         }
         if (Boolean.TRUE.equals(dispatch)) {
-            OutboxDispatchResult result = dispatchNotifications.dispatchPending(
-                    batchSize == null || batchSize <= 0 ? 50 : batchSize);
+            OutboxDispatchResult result =
+                    dispatchNotifications.dispatchPending(batchSize == null || batchSize <= 0 ? 50 : batchSize);
             body.put("dispatched", result.dispatched());
             body.put("failed", result.failed());
             body.put("deferred", result.deferred());
@@ -119,8 +117,7 @@ public class OutboxEndpoint {
     @DeleteOperation
     public Map<String, Object> purge(@Nullable Integer olderThanDays) {
         int days = olderThanDays == null || olderThanDays < 0 ? 7 : olderThanDays;
-        int purged = outbox.purgeDispatchedBefore(
-                java.time.Instant.now().minus(java.time.Duration.ofDays(days)));
+        int purged = outbox.purgeDispatchedBefore(java.time.Instant.now().minus(java.time.Duration.ofDays(days)));
         // Esta operación BORRA filas de producción y no dejaba ninguna huella
         // (hallazgo 25). Ahora deja la suya, con el actor y con el
         // correlationId que el filtro del contexto de gestión pone.

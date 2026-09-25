@@ -1,5 +1,9 @@
 package com.edteam.reservations.infrastructure.logging;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
+import java.io.IOException;
+import java.net.URI;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -8,11 +12,6 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.mock.http.client.MockClientHttpRequest;
 import org.springframework.mock.http.client.MockClientHttpResponse;
-
-import java.io.IOException;
-import java.net.URI;
-
-import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * El hallazgo 14: el correlation id no salía del proceso.
@@ -31,8 +30,8 @@ class CorrelationIdPropagationTest {
         MDC.put(LogFields.CORRELATION_ID, "audit-0000-0001");
         MockClientHttpRequest request = new MockClientHttpRequest(HttpMethod.GET, URI.create("/city/EZE"));
 
-        CorrelationIdPropagation.interceptor().intercept(request, new byte[0],
-                (req, body) -> new MockClientHttpResponse(new byte[0], HttpStatus.OK));
+        CorrelationIdPropagation.interceptor()
+                .intercept(request, new byte[0], (req, body) -> new MockClientHttpResponse(new byte[0], HttpStatus.OK));
 
         assertThat(request.getHeaders().getFirst(CorrelationIdPropagation.HEADER))
                 .isEqualTo("audit-0000-0001");
@@ -46,10 +45,11 @@ class CorrelationIdPropagationTest {
         MDC.clear();
         MockClientHttpRequest request = new MockClientHttpRequest(HttpMethod.GET, URI.create("/city/EZE"));
 
-        CorrelationIdPropagation.interceptor().intercept(request, new byte[0],
-                (req, body) -> new MockClientHttpResponse(new byte[0], HttpStatus.OK));
+        CorrelationIdPropagation.interceptor()
+                .intercept(request, new byte[0], (req, body) -> new MockClientHttpResponse(new byte[0], HttpStatus.OK));
 
-        assertThat(request.getHeaders().getFirst(CorrelationIdPropagation.HEADER)).isNull();
+        assertThat(request.getHeaders().getFirst(CorrelationIdPropagation.HEADER))
+                .isNull();
     }
 
     @Test

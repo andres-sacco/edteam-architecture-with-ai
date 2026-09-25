@@ -1,18 +1,17 @@
 package com.edteam.reservations.infrastructure.resilience;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
 import com.edteam.reservations.application.exception.AirportCatalogUnavailableException;
 import com.edteam.reservations.infrastructure.config.CircuitBreakerProperties;
 import com.edteam.reservations.support.MutableClock;
 import com.edteam.reservations.support.TestFixtures;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
+import java.time.Duration;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-
-import java.time.Duration;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Las dos cosas que el envoltorio agrega sobre la librería.
@@ -77,8 +76,8 @@ class CircuitTest {
     void aDisabledCircuitLetsEverythingThrough() {
         // Aislar un problema en producción sacando un circuito de juego no
         // debería necesitar un redeploy ni un cableado distinto.
-        Circuit circuit = Circuit.disabled("apagado", CircuitBreakerRegistry.ofDefaults(),
-                MutableClock.at(TestFixtures.NOW));
+        Circuit circuit =
+                Circuit.disabled("apagado", CircuitBreakerRegistry.ofDefaults(), MutableClock.at(TestFixtures.NOW));
 
         for (int i = 0; i < 50; i++) {
             assertThatThrownBy(() -> circuit.execute(CircuitTest::boom)).isInstanceOf(RuntimeException.class);
@@ -89,8 +88,7 @@ class CircuitTest {
 
     private static Circuit circuit(String name, MutableClock clock, Duration windowMaxAge) {
         CircuitBreakerProperties properties = new CircuitBreakerProperties(
-                true, 10, 5, 50, Duration.ofSeconds(10), 100,
-                Duration.ofMinutes(5), 2, false, windowMaxAge);
+                true, 10, 5, 50, Duration.ofSeconds(10), 100, Duration.ofMinutes(5), 2, false, windowMaxAge);
         return Circuit.of(name, properties, Failures::catalog, CircuitBreakerRegistry.ofDefaults(), clock);
     }
 

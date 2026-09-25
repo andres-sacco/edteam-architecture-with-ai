@@ -1,18 +1,17 @@
 package com.edteam.reservations.infrastructure.security;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
 import com.edteam.reservations.domain.access.Actor;
 import com.edteam.reservations.domain.access.ActorRole;
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.InvalidBearerTokenException;
-
-import java.time.Instant;
-import java.util.List;
-import java.util.Map;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * La frontera entre el token y el dominio.
@@ -56,8 +55,7 @@ class JwtActorConverterTest {
     @Test
     @DisplayName("sin claim de roles, el actor es un titular: el privilegio nunca se deduce")
     void defaultsToTheSmallestRole() {
-        Actor actor = actorOf(Map.of(
-                "email", "ana.perez@example.com", "given_name", "Ana", "family_name", "Pérez"));
+        Actor actor = actorOf(Map.of("email", "ana.perez@example.com", "given_name", "Ana", "family_name", "Pérez"));
 
         assertThat(actor.roles()).containsExactly(ActorRole.CUSTOMER);
         assertThat(actor.actsOnBehalfOfOthers()).isFalse();
@@ -66,19 +64,53 @@ class JwtActorConverterTest {
     @Test
     @DisplayName("reconoce backoffice y partner, en la lista de roles o en el scope de OAuth2")
     void recognisesPrivilegedRoles() {
-        assertThat(actorOf(Map.of("email", "s@example.com", "given_name", "S", "family_name", "R",
-                "roles", List.of("backoffice"))).actsOnBehalfOfOthers()).isTrue();
-        assertThat(actorOf(Map.of("email", "s@example.com", "given_name", "S", "family_name", "R",
-                "roles", List.of("PARTNER"))).actsOnBehalfOfOthers()).isTrue();
-        assertThat(actorOf(Map.of("email", "s@example.com", "given_name", "S", "family_name", "R",
-                "scope", "openid backoffice")).actsOnBehalfOfOthers()).isTrue();
+        assertThat(actorOf(Map.of(
+                                "email",
+                                "s@example.com",
+                                "given_name",
+                                "S",
+                                "family_name",
+                                "R",
+                                "roles",
+                                List.of("backoffice")))
+                        .actsOnBehalfOfOthers())
+                .isTrue();
+        assertThat(actorOf(Map.of(
+                                "email",
+                                "s@example.com",
+                                "given_name",
+                                "S",
+                                "family_name",
+                                "R",
+                                "roles",
+                                List.of("PARTNER")))
+                        .actsOnBehalfOfOthers())
+                .isTrue();
+        assertThat(actorOf(Map.of(
+                                "email",
+                                "s@example.com",
+                                "given_name",
+                                "S",
+                                "family_name",
+                                "R",
+                                "scope",
+                                "openid backoffice"))
+                        .actsOnBehalfOfOthers())
+                .isTrue();
     }
 
     @Test
     @DisplayName("un rol que no conocemos no otorga nada")
     void ignoresUnknownRoles() {
-        Actor actor = actorOf(Map.of("email", "s@example.com", "given_name", "S", "family_name", "R",
-                "roles", List.of("superadmin", "root", "admin")));
+        Actor actor = actorOf(Map.of(
+                "email",
+                "s@example.com",
+                "given_name",
+                "S",
+                "family_name",
+                "R",
+                "roles",
+                List.of("superadmin", "root", "admin")));
 
         assertThat(actor.roles()).containsExactly(ActorRole.CUSTOMER);
     }
@@ -95,7 +127,7 @@ class JwtActorConverterTest {
     @DisplayName("un 'sub' opaco sin claim de email es un token inválido, no un actor anónimo")
     void rejectsAnOpaqueSubjectWithoutEmail() {
         assertThatThrownBy(() -> actorOf(Map.of(
-                "sub", "a1b2c3d4-0000-0000-0000-000000000000", "given_name", "Ana", "family_name", "Pérez")))
+                        "sub", "a1b2c3d4-0000-0000-0000-000000000000", "given_name", "Ana", "family_name", "Pérez")))
                 .isInstanceOf(InvalidBearerTokenException.class);
     }
 
@@ -117,8 +149,8 @@ class JwtActorConverterTest {
         // adopta el mensaje del cause como propio, y el del dominio nombra el
         // email que no validó. Un detalle de error termina en consolas, en
         // capturas de pantalla y en tickets de soporte.
-        assertThatThrownBy(() -> actorOf(Map.of(
-                "email", "no-es-un-email", "given_name", "Ana", "family_name", "Pérez")))
+        assertThatThrownBy(
+                        () -> actorOf(Map.of("email", "no-es-un-email", "given_name", "Ana", "family_name", "Pérez")))
                 .isInstanceOf(InvalidBearerTokenException.class)
                 .hasMessageContaining("email")
                 .hasMessageNotContaining("no-es-un-email")
@@ -129,12 +161,9 @@ class JwtActorConverterTest {
     @DisplayName("las authorities salen de los roles, para que el borde pueda seguir usándolas")
     void exposesAuthorities() {
         var authentication = converter.convert(jwt(Map.of(
-                "email", "s@example.com", "given_name", "S", "family_name", "R",
-                "roles", List.of("backoffice"))));
+                "email", "s@example.com", "given_name", "S", "family_name", "R", "roles", List.of("backoffice"))));
 
-        assertThat(authentication.getAuthorities())
-                .extracting(Object::toString)
-                .containsExactly("ROLE_BACKOFFICE");
+        assertThat(authentication.getAuthorities()).extracting(Object::toString).containsExactly("ROLE_BACKOFFICE");
         assertThat(authentication.getName()).isEqualTo("s@example.com");
     }
 }

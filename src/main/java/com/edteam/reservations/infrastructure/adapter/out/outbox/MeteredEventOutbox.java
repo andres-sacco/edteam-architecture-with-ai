@@ -7,7 +7,6 @@ import com.edteam.reservations.domain.event.DomainEvent;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tags;
-
 import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
@@ -73,10 +72,12 @@ public final class MeteredEventOutbox implements EventOutboxPort {
         this.dispatched = Counter.builder(DISPATCHED)
                 .description("Mensajes publicados con confirmación del destino")
                 .register(registry);
-        this.transientFailures = Counter.builder(FAILED).tags(Tags.of("failure", "transient"))
+        this.transientFailures = Counter.builder(FAILED)
+                .tags(Tags.of("failure", "transient"))
                 .description("Fallos de publicación reintentables")
                 .register(registry);
-        this.permanentFailures = Counter.builder(FAILED).tags(Tags.of("failure", "permanent"))
+        this.permanentFailures = Counter.builder(FAILED)
+                .tags(Tags.of("failure", "permanent"))
                 .description("Fallos de publicación que van a la dead letter sin reintentos")
                 .register(registry);
         this.deferred = Counter.builder(DEFERRED)

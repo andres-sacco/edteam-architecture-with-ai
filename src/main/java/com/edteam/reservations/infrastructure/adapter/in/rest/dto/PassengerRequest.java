@@ -5,7 +5,6 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Past;
 import jakarta.validation.constraints.Size;
-
 import java.time.LocalDate;
 
 /** Pasajero de la reserva, tal como llega en el cuerpo del pedido. */
@@ -26,9 +25,9 @@ public record PassengerRequest(
         @Past(message = "La fecha de nacimiento debe ser pasada")
         LocalDate birthDate,
 
-        @Schema(description = "Número de documento. Opcional; si se envía, identifica "
-                + "unívocamente al pasajero y permite reconocerlo en reservas posteriores.",
+        @Schema(
+                description = "Número de documento. Opcional; si se envía, identifica "
+                        + "unívocamente al pasajero y permite reconocerlo en reservas posteriores.",
                 example = "30123456")
         @Size(max = 50, message = "El documento no puede superar los 50 caracteres")
-        String documentNumber) {
-}
+        String documentNumber) {}

@@ -28,8 +28,7 @@ public final class Degradation {
     private static final ThreadLocal<Set<String>> SOURCES = new ThreadLocal<>();
     private static final ThreadLocal<Consumer<Set<String>>> SINK = new ThreadLocal<>();
 
-    private Degradation() {
-    }
+    private Degradation() {}
 
     /**
      * Conecta un consumidor que se entera <strong>en el momento</strong> de

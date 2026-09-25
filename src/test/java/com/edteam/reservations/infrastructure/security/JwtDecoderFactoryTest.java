@@ -1,10 +1,10 @@
 package com.edteam.reservations.infrastructure.security;
 
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 
 /**
  * La invariante del arranque: <b>ninguna combinación de propiedades puede
@@ -27,8 +27,8 @@ class JwtDecoderFactoryTest {
     void buildsARemoteDecoder() {
         // No se conecta al construirlo: las claves se piden en la primera
         // validación, así que esto no depende de la red.
-        assertThat(JwtDecoderFactory.create(
-                jwt("https://idp.example/.well-known/jwks.json", false, null))).isNotNull();
+        assertThat(JwtDecoderFactory.create(jwt("https://idp.example/.well-known/jwks.json", false, null)))
+                .isNotNull();
     }
 
     @Test
@@ -58,8 +58,8 @@ class JwtDecoderFactoryTest {
     @Test
     @DisplayName("un JWKS por http:// no se acepta: quien esté en el camino serviría otras claves")
     void requiresHttpsForTheJwks() {
-        assertThatThrownBy(() -> JwtDecoderFactory.requireSecureJwkSetUri(
-                jwt("http://idp.example/jwks.json", false, null)))
+        assertThatThrownBy(() ->
+                        JwtDecoderFactory.requireSecureJwkSetUri(jwt("http://idp.example/jwks.json", false, null)))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("HTTPS");
     }

@@ -1,15 +1,14 @@
 package com.edteam.reservations;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import com.edteam.reservations.support.AbstractPostgresIT;
+import com.zaxxer.hikari.HikariDataSource;
+import javax.sql.DataSource;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.DataSourceUnwrapper;
-import com.zaxxer.hikari.HikariDataSource;
-
-import javax.sql.DataSource;
-
-import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Los techos del lado de la base están puestos de verdad, no sólo escritos.
@@ -46,7 +45,8 @@ class DatabaseCeilingsIT extends AbstractPostgresIT {
     @Test
     @DisplayName("la espera por una conexión es de un segundo: rechazar es mejor que agrandar la cola")
     void theConnectionTimeoutIsOneSecond() {
-        HikariDataSource hikari = DataSourceUnwrapper.unwrap(dataSource, HikariDataSource.class, HikariDataSource.class);
+        HikariDataSource hikari =
+                DataSourceUnwrapper.unwrap(dataSource, HikariDataSource.class, HikariDataSource.class);
 
         assertThat(hikari).isNotNull();
         assertThat(hikari.getConnectionTimeout())

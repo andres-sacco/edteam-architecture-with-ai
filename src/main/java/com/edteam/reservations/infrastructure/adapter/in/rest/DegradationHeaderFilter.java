@@ -7,12 +7,11 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import org.springframework.web.filter.OncePerRequestFilter;
-import org.springframework.web.servlet.HandlerMapping;
-
 import java.io.IOException;
 import java.util.Objects;
 import java.util.Set;
+import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.web.servlet.HandlerMapping;
 
 /**
  * Emite {@code X-Degraded} cuando la respuesta se armó con algún dato que no
@@ -56,9 +55,8 @@ public class DegradationHeaderFilter extends OncePerRequestFilter {
     }
 
     @Override
-    protected void doFilterInternal(HttpServletRequest request,
-                                    HttpServletResponse response,
-                                    FilterChain chain) throws ServletException, IOException {
+    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
+            throws ServletException, IOException {
         Degradation.clear();
         // El header se escribe en el instante en que la degradación ocurre y
         // no al final del pedido: para cuando este filtro recupera el

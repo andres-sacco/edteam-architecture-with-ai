@@ -1,16 +1,15 @@
 package com.edteam.reservations.domain.access;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
 import com.edteam.reservations.domain.model.Email;
 import com.edteam.reservations.domain.model.Reservation;
 import com.edteam.reservations.support.TestFixtures;
+import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
-
-import java.util.Optional;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * La regla de negocio «una reserva pertenece a un único usuario», probada sin
@@ -32,24 +31,32 @@ class ReservationAccessPolicyTest {
         @Test
         @DisplayName("el titular alcanza su reserva")
         void ownerCanReachTheirOwnReservation() {
-            assertThat(ReservationAccessPolicy.canRead(TestFixtures.owner(), reservation)).isTrue();
-            assertThat(ReservationAccessPolicy.canWrite(TestFixtures.owner(), reservation)).isTrue();
-            assertThat(ReservationAccessPolicy.isOwner(TestFixtures.owner(), reservation)).isTrue();
+            assertThat(ReservationAccessPolicy.canRead(TestFixtures.owner(), reservation))
+                    .isTrue();
+            assertThat(ReservationAccessPolicy.canWrite(TestFixtures.owner(), reservation))
+                    .isTrue();
+            assertThat(ReservationAccessPolicy.isOwner(TestFixtures.owner(), reservation))
+                    .isTrue();
         }
 
         @Test
         @DisplayName("otro titular no la alcanza, ni para leer ni para escribir")
         void strangersCannot() {
-            assertThat(ReservationAccessPolicy.canRead(TestFixtures.stranger(), reservation)).isFalse();
-            assertThat(ReservationAccessPolicy.canWrite(TestFixtures.stranger(), reservation)).isFalse();
-            assertThat(ReservationAccessPolicy.isOwner(TestFixtures.stranger(), reservation)).isFalse();
+            assertThat(ReservationAccessPolicy.canRead(TestFixtures.stranger(), reservation))
+                    .isFalse();
+            assertThat(ReservationAccessPolicy.canWrite(TestFixtures.stranger(), reservation))
+                    .isFalse();
+            assertThat(ReservationAccessPolicy.isOwner(TestFixtures.stranger(), reservation))
+                    .isFalse();
         }
 
         @Test
         @DisplayName("backoffice alcanza reservas ajenas, y no por eso es su dueño")
         void backofficeReachesButDoesNotOwn() {
-            assertThat(ReservationAccessPolicy.canRead(TestFixtures.backoffice(), reservation)).isTrue();
-            assertThat(ReservationAccessPolicy.canWrite(TestFixtures.backoffice(), reservation)).isTrue();
+            assertThat(ReservationAccessPolicy.canRead(TestFixtures.backoffice(), reservation))
+                    .isTrue();
+            assertThat(ReservationAccessPolicy.canWrite(TestFixtures.backoffice(), reservation))
+                    .isTrue();
             assertThat(ReservationAccessPolicy.isOwner(TestFixtures.backoffice(), reservation))
                     .as("el privilegio no lo convierte en titular: la auditoría tiene que poder distinguirlos")
                     .isFalse();
@@ -80,7 +87,7 @@ class ReservationAccessPolicyTest {
         @DisplayName("pedir el propio email es válido, aunque redundante")
         void customerMayAskForTheirOwnScope() {
             assertThat(ReservationAccessPolicy.ownerFilterFor(
-                    TestFixtures.owner(), Optional.of(Email.of(TestFixtures.USER_EMAIL))))
+                            TestFixtures.owner(), Optional.of(Email.of(TestFixtures.USER_EMAIL))))
                     .contains(Email.of(TestFixtures.USER_EMAIL));
         }
 
@@ -88,7 +95,7 @@ class ReservationAccessPolicyTest {
         @DisplayName("pedir el de otro se rechaza: acá el 403 no revela nada que el cliente no sepa")
         void customerMayNotAskForSomeoneElse() {
             assertThatThrownBy(() -> ReservationAccessPolicy.ownerFilterFor(
-                    TestFixtures.owner(), Optional.of(Email.of(TestFixtures.OTHER_USER_EMAIL))))
+                            TestFixtures.owner(), Optional.of(Email.of(TestFixtures.OTHER_USER_EMAIL))))
                     .isInstanceOf(ReservationAccessDeniedException.class);
         }
 
@@ -96,7 +103,7 @@ class ReservationAccessPolicyTest {
         @DisplayName("backoffice puede filtrar por cualquiera, o por nadie")
         void backofficeChooses() {
             assertThat(ReservationAccessPolicy.ownerFilterFor(
-                    TestFixtures.backoffice(), Optional.of(Email.of(TestFixtures.USER_EMAIL))))
+                            TestFixtures.backoffice(), Optional.of(Email.of(TestFixtures.USER_EMAIL))))
                     .contains(Email.of(TestFixtures.USER_EMAIL));
             assertThat(ReservationAccessPolicy.ownerFilterFor(TestFixtures.backoffice(), Optional.empty()))
                     .as("ver todo es un privilegio explícito, no el default de nadie")

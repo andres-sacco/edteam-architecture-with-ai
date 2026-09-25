@@ -7,6 +7,9 @@ import com.edteam.reservations.infrastructure.observability.SecurityMetrics;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
+import java.net.URI;
+import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
@@ -15,10 +18,6 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ProblemDetail;
 import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.access.AccessDeniedHandler;
-
-import java.io.IOException;
-import java.net.URI;
-import java.util.Objects;
 
 /**
  * Respuestas de 401 y 403 con el mismo cuerpo que el resto de la API.
@@ -56,8 +55,7 @@ public final class ProblemDetailAuthenticationHandlers {
 
     private static final String BEARER_CHALLENGE = "Bearer realm=\"reservations\"";
 
-    private ProblemDetailAuthenticationHandlers() {
-    }
+    private ProblemDetailAuthenticationHandlers() {}
 
     /** 401: no hay credencial, o la que hay no vale. */
     public static AuthenticationEntryPoint entryPoint(ObjectMapper objectMapper, SecurityMetrics metrics) {
@@ -78,7 +76,12 @@ public final class ProblemDetailAuthenticationHandlers {
                     .log("Pedido rechazado por credencial ausente o inválida");
 
             response.setHeader(HttpHeaders.WWW_AUTHENTICATE, BEARER_CHALLENGE);
-            write(objectMapper, request, response, HttpStatus.UNAUTHORIZED, ApiErrorCode.UNAUTHENTICATED,
+            write(
+                    objectMapper,
+                    request,
+                    response,
+                    HttpStatus.UNAUTHORIZED,
+                    ApiErrorCode.UNAUTHENTICATED,
                     "El pedido requiere un token Bearer válido.");
         };
     }
@@ -102,17 +105,24 @@ public final class ProblemDetailAuthenticationHandlers {
                     .addKeyValue(LogFields.HTTP_STATUS, HttpStatus.FORBIDDEN.value())
                     .log("Pedido rechazado por permisos");
 
-            write(objectMapper, request, response, HttpStatus.FORBIDDEN, ApiErrorCode.FORBIDDEN,
+            write(
+                    objectMapper,
+                    request,
+                    response,
+                    HttpStatus.FORBIDDEN,
+                    ApiErrorCode.FORBIDDEN,
                     "El solicitante no tiene permiso para esta operación.");
         };
     }
 
-    private static void write(ObjectMapper objectMapper,
-                              HttpServletRequest request,
-                              HttpServletResponse response,
-                              HttpStatus status,
-                              ApiErrorCode code,
-                              String detail) throws IOException {
+    private static void write(
+            ObjectMapper objectMapper,
+            HttpServletRequest request,
+            HttpServletResponse response,
+            HttpStatus status,
+            ApiErrorCode code,
+            String detail)
+            throws IOException {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(status, detail);
         problem.setType(code.type());
         problem.setTitle(code.title());

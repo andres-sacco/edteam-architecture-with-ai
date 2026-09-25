@@ -5,13 +5,12 @@ import com.edteam.reservations.infrastructure.cache.CacheKeys;
 import com.edteam.reservations.infrastructure.cache.CacheStore;
 import com.edteam.reservations.infrastructure.logging.LogFields;
 import com.edteam.reservations.infrastructure.logging.LogSanitizer;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.time.Duration;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Cache de la versión de una reserva, para responder {@code 304}.

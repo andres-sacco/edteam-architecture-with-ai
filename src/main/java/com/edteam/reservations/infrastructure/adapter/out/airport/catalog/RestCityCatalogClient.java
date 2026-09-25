@@ -12,6 +12,10 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tags;
 import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.io.IOException;
+import java.time.Duration;
+import java.util.Objects;
+import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.spi.LoggingEventBuilder;
@@ -21,11 +25,6 @@ import org.springframework.http.MediaType;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
-
-import java.io.IOException;
-import java.time.Duration;
-import java.util.Objects;
-import java.util.Optional;
 
 /**
  * Cliente HTTP de la API de catálogo, sobre {@link RestClient}.
@@ -167,7 +166,8 @@ public class RestCityCatalogClient implements CityCatalogClient {
 
         long startedAt = System.nanoTime();
         try {
-            Optional<CatalogCity> city = restClient.get()
+            Optional<CatalogCity> city = restClient
+                    .get()
                     .uri("/city/{code}", code)
                     .accept(MediaType.APPLICATION_JSON)
                     .exchange((request, response) -> classify(code, response));
@@ -208,8 +208,7 @@ public class RestCityCatalogClient implements CityCatalogClient {
                     .addKeyValue(LogFields.EXCEPTION_CLASS, Throwables.rootClassOf(e))
                     .addKeyValue(LogFields.REASON, Throwables.reasonOf(e))
                     .log("Fallo del cliente HTTP consultando el catálogo");
-            throw new AirportCatalogIntegrationException(
-                    "Fallo consultando el catálogo para '%s'".formatted(code), e);
+            throw new AirportCatalogIntegrationException("Fallo consultando el catálogo para '%s'".formatted(code), e);
         }
     }
 
@@ -251,8 +250,8 @@ public class RestCityCatalogClient implements CityCatalogClient {
      * {@code RestClient} la envuelve en {@code ResourceAccessException}, que es
      * donde {@link #findByCode(String)} la clasifica como falla transitoria.
      */
-    private Optional<CatalogCity> classify(String code, RestClient.RequestHeadersSpec.ConvertibleClientHttpResponse response)
-            throws IOException {
+    private Optional<CatalogCity> classify(
+            String code, RestClient.RequestHeadersSpec.ConvertibleClientHttpResponse response) throws IOException {
         HttpStatusCode status = response.getStatusCode();
 
         if (status.is2xxSuccessful()) {
@@ -305,15 +304,16 @@ public class RestCityCatalogClient implements CityCatalogClient {
             // de contrato en ERROR eran 40.000 ERROR por día en el escenario
             // de volumen del propio diseño, y un ERROR que aparece cien veces
             // por hora deja de significar algo.
-            boolean credential = status.value() == HttpStatus.UNAUTHORIZED.value()
-                    || status.value() == HttpStatus.FORBIDDEN.value();
+            boolean credential =
+                    status.value() == HttpStatus.UNAUTHORIZED.value() || status.value() == HttpStatus.FORBIDDEN.value();
             call(credential ? log.atError() : log.atWarn(), code, "integration")
                     .addKeyValue(LogFields.HTTP_STATUS, status.value())
                     .addKeyValue(LogFields.REASON, body)
                     .addKeyValue("integration.kind", credential ? "credential" : "contract")
-                    .log(credential
-                            ? "El catálogo rechazó la credencial"
-                            : "El catálogo rechazó la consulta por contrato");
+                    .log(
+                            credential
+                                    ? "El catálogo rechazó la credencial"
+                                    : "El catálogo rechazó la consulta por contrato");
             throw new AirportCatalogIntegrationException(
                     "El catálogo rechazó la consulta de '%s' con estado %d".formatted(code, status.value()));
         }
@@ -336,7 +336,8 @@ public class RestCityCatalogClient implements CityCatalogClient {
      * —ilegible o sin {@code code}— es otra cosa y ahí sí se falla: es la
      * diferencia entre un dato que no está y una integración rota.
      */
-    private Optional<CatalogCity> readCity(String code, RestClient.RequestHeadersSpec.ConvertibleClientHttpResponse response) {
+    private Optional<CatalogCity> readCity(
+            String code, RestClient.RequestHeadersSpec.ConvertibleClientHttpResponse response) {
         CatalogCity city;
         try {
             city = response.bodyTo(CatalogCity.class);
@@ -403,8 +404,7 @@ public class RestCityCatalogClient implements CityCatalogClient {
             // le mandamos, y el saneado sólo neutraliza los caracteres de
             // control. El truncado sigue estando, y sigue siendo una defensa
             // de costo tanto como de legibilidad.
-            return Throwables.redact(
-                    LogSanitizer.sanitize(response.bodyTo(String.class), MAX_ERROR_BODY));
+            return Throwables.redact(LogSanitizer.sanitize(response.bodyTo(String.class), MAX_ERROR_BODY));
         } catch (RestClientException e) {
             return "<cuerpo ilegible>";
         }

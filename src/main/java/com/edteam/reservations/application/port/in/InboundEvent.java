@@ -26,15 +26,16 @@ import java.util.Objects;
  * @param occurredAt    cuándo ocurrió el hecho
  * @param correlationId traza del pedido que lo originó; puede ser nulo
  */
-public record InboundEvent(String messageId,
-                           String type,
-                           int schemaVersion,
-                           String source,
-                           String subject,
-                           long sequence,
-                           String userId,
-                           Instant occurredAt,
-                           String correlationId) {
+public record InboundEvent(
+        String messageId,
+        String type,
+        int schemaVersion,
+        String source,
+        String subject,
+        long sequence,
+        String userId,
+        Instant occurredAt,
+        String correlationId) {
 
     public InboundEvent {
         Objects.requireNonNull(messageId, "messageId es obligatorio");

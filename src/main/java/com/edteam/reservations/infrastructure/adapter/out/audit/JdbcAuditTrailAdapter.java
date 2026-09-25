@@ -5,15 +5,14 @@ import com.edteam.reservations.application.audit.AuditOutcome;
 import com.edteam.reservations.application.port.out.AuditTrailPort;
 import com.edteam.reservations.infrastructure.logging.LogSanitizer;
 import com.edteam.reservations.infrastructure.security.CorrelationIdFilter;
+import java.sql.Timestamp;
+import java.util.Objects;
 import org.slf4j.MDC;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
-
-import java.sql.Timestamp;
-import java.util.Objects;
 
 /**
  * Escribe el registro de auditoría en la tabla {@code auditoria}.
@@ -82,7 +81,8 @@ public class JdbcAuditTrailAdapter implements AuditTrailPort {
     }
 
     private void insert(AuditEntry entry) {
-        jdbcTemplate.update(INSERT,
+        jdbcTemplate.update(
+                INSERT,
                 Timestamp.from(entry.occurredAt()),
                 entry.action().name(),
                 entry.outcome().name(),

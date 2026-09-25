@@ -1,5 +1,16 @@
 package com.edteam.reservations.infrastructure.cache;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import java.time.Duration;
+import java.util.Arrays;
+import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -10,18 +21,6 @@ import org.springframework.dao.QueryTimeoutException;
 import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
-
-import java.time.Duration;
-import java.util.Arrays;
-import java.util.List;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
 
 /**
  * El almacén de Redis después de sacarle la política de degradación.
@@ -86,8 +85,7 @@ class RedisCacheStoreTest {
         List<String> keys = List.of("a", "b", "c");
         when(values.multiGet(keys)).thenReturn(Arrays.asList("1", null, "3"));
 
-        assertThat(store.getAll(keys))
-                .containsExactly(java.util.Map.entry("a", "1"), java.util.Map.entry("c", "3"));
+        assertThat(store.getAll(keys)).containsExactly(java.util.Map.entry("a", "1"), java.util.Map.entry("c", "3"));
         verify(values).multiGet(keys);
     }
 
@@ -96,8 +94,7 @@ class RedisCacheStoreTest {
     void rethrowsOnReadFailure() {
         when(redis.opsForValue()).thenThrow(new RedisConnectionFailureException("Redis caído"));
 
-        assertThatThrownBy(() -> store.get("k"))
-                .isInstanceOf(RedisConnectionFailureException.class);
+        assertThatThrownBy(() -> store.get("k")).isInstanceOf(RedisConnectionFailureException.class);
     }
 
     @Test
@@ -106,8 +103,7 @@ class RedisCacheStoreTest {
         when(redis.opsForValue()).thenReturn(values);
         doThrow(new QueryTimeoutException("timeout")).when(values).set(anyString(), anyString(), any(Duration.class));
 
-        assertThatThrownBy(() -> store.put("k", "v", TTL))
-                .isInstanceOf(QueryTimeoutException.class);
+        assertThatThrownBy(() -> store.put("k", "v", TTL)).isInstanceOf(QueryTimeoutException.class);
     }
 
     @Test
@@ -115,8 +111,7 @@ class RedisCacheStoreTest {
     void rethrowsOnEvictFailure() {
         when(redis.delete(anyString())).thenThrow(new RedisConnectionFailureException("Redis caído"));
 
-        assertThatThrownBy(() -> store.evict("k"))
-                .isInstanceOf(RedisConnectionFailureException.class);
+        assertThatThrownBy(() -> store.evict("k")).isInstanceOf(RedisConnectionFailureException.class);
     }
 
     @Test

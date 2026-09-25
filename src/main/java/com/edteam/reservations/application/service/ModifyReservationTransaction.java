@@ -12,14 +12,13 @@ import com.edteam.reservations.domain.event.ReservationModified;
 import com.edteam.reservations.domain.model.Itinerary;
 import com.edteam.reservations.domain.model.Reservation;
 import com.edteam.reservations.domain.model.ReservationId;
+import java.time.Instant;
+import java.util.List;
+import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
-import java.time.Instant;
-import java.util.List;
-import java.util.Objects;
 
 /**
  * La parte transaccional de la modificación: sólo base de datos.
@@ -44,9 +43,8 @@ class ModifyReservationTransaction {
     private final EventOutboxPort eventOutbox;
     private final AuditTrailPort auditTrail;
 
-    ModifyReservationTransaction(ReservationRepositoryPort reservationRepository,
-                                 EventOutboxPort eventOutbox,
-                                 AuditTrailPort auditTrail) {
+    ModifyReservationTransaction(
+            ReservationRepositoryPort reservationRepository, EventOutboxPort eventOutbox, AuditTrailPort auditTrail) {
         this.reservationRepository = Objects.requireNonNull(reservationRepository);
         this.eventOutbox = Objects.requireNonNull(eventOutbox);
         this.auditTrail = Objects.requireNonNull(auditTrail);
@@ -59,7 +57,8 @@ class ModifyReservationTransaction {
     Reservation apply(ModifyReservationCommand command, Itinerary newItinerary, Instant now) {
         ReservationId reservationId = ReservationId.of(command.reservationId());
 
-        Reservation current = reservationRepository.findById(reservationId)
+        Reservation current = reservationRepository
+                .findById(reservationId)
                 .orElseThrow(() -> new ReservationNotFoundException(reservationId));
 
         if (current.version() != command.expectedVersion()) {
@@ -71,8 +70,12 @@ class ModifyReservationTransaction {
         Reservation saved = reservationRepository.save(modified);
 
         eventOutbox.enqueue(List.of(ReservationModified.of(saved, previousItinerary)));
-        auditTrail.record(AuditEntry.allowed(AuditAction.RESERVATION_MODIFIED,
-                command.actor().email(), saved.requireId().toString(), saved.version(), now));
+        auditTrail.record(AuditEntry.allowed(
+                AuditAction.RESERVATION_MODIFIED,
+                command.actor().email(),
+                saved.requireId().toString(),
+                saved.version(),
+                now));
 
         log.atInfo()
                 .addKeyValue("event", "reservation.modified")
@@ -80,9 +83,13 @@ class ModifyReservationTransaction {
                 .addKeyValue("userId", saved.userId().value())
                 .addKeyValue("reservationVersion", saved.version())
                 .addKeyValue("itinerary.origin", saved.itinerary().origin().value())
-                .addKeyValue("itinerary.destination", saved.itinerary().destination().value())
-                .addKeyValue("itinerary.previousOrigin", previousItinerary.origin().value())
-                .addKeyValue("itinerary.previousDestination", previousItinerary.destination().value())
+                .addKeyValue(
+                        "itinerary.destination", saved.itinerary().destination().value())
+                .addKeyValue(
+                        "itinerary.previousOrigin", previousItinerary.origin().value())
+                .addKeyValue(
+                        "itinerary.previousDestination",
+                        previousItinerary.destination().value())
                 .log("Reserva modificada");
         return saved;
     }

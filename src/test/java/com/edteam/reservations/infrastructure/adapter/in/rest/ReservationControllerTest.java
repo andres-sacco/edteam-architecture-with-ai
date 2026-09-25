@@ -1,5 +1,22 @@
 package com.edteam.reservations.infrastructure.adapter.in.rest;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.containsString;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
 import com.edteam.reservations.application.exception.ConcurrentUpdateException;
 import com.edteam.reservations.application.exception.DuplicateReservationException;
 import com.edteam.reservations.application.exception.ReservationNotFoundException;
@@ -32,6 +49,7 @@ import com.edteam.reservations.infrastructure.security.SecurityConfiguration;
 import com.edteam.reservations.support.TestFixtures;
 import com.edteam.reservations.support.WebSliceConfiguration;
 import com.edteam.reservations.support.WithMockActor;
+import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -45,27 +63,6 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
-import java.util.List;
-import java.util.Optional;
-import java.util.Set;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
-import static org.mockito.Mockito.when;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-import static org.hamcrest.Matchers.containsString;
-
 /**
  * Slice del adaptador REST: sólo la capa web, con los puertos de entrada
  * mockeados.
@@ -75,14 +72,19 @@ import static org.hamcrest.Matchers.containsString;
  * uso. Que el caso de uso haga lo correcto ya lo prueban sus propios tests, y
  * que todo encaje contra una base real lo prueba {@code ReservationApiIT}.
  */
-@WebMvcTest(value = ReservationController.class,
+@WebMvcTest(
+        value = ReservationController.class,
         // La cuota de pedidos se apaga en este slice: acá se prueba el
         // contrato HTTP, y un contador compartido entre ~40 tests haría que el
         // resultado dependa del orden de ejecución. Tiene su propio test
         // (RateLimitFilterTest) y su propio test de borde (ReservationSecurityTest).
         properties = "reservations.security.rate-limit.enabled=false")
-@Import({ReservationRestMapper.class, TestVersionCacheConfiguration.class,
-        SecurityConfiguration.class, WebSliceConfiguration.class})
+@Import({
+    ReservationRestMapper.class,
+    TestVersionCacheConfiguration.class,
+    SecurityConfiguration.class,
+    WebSliceConfiguration.class
+})
 // La cadena de seguridad real entra al slice: sin ella estos tests probarían
 // un controller que en producción no existe: ninguno de estos pedidos llegaría.
 // El actor es el titular de las reservas de TestFixtures; los tests que
@@ -320,8 +322,7 @@ class ReservationControllerTest {
         @Test
         @DisplayName("un usuario inexistente es 400 y no 404: lo que está mal es un dato del cuerpo")
         void mapsUnknownUserToBadRequest() throws Exception {
-            when(createReservation.create(any()))
-                    .thenThrow(new UnknownUserException(TestFixtures.USER_ID, null));
+            when(createReservation.create(any())).thenThrow(new UnknownUserException(TestFixtures.USER_ID, null));
 
             mockMvc.perform(post("/v1/reservations")
                             .header(ReservationController.IDEMPOTENCY_KEY_HEADER, IDEMPOTENCY_KEY)
@@ -334,8 +335,7 @@ class ReservationControllerTest {
         @Test
         @DisplayName("un aeropuerto fuera del catálogo responde 400")
         void mapsUnknownAirportToBadRequest() throws Exception {
-            when(createReservation.create(any()))
-                    .thenThrow(new UnknownAirportException(List.of(TestFixtures.EZE)));
+            when(createReservation.create(any())).thenThrow(new UnknownAirportException(List.of(TestFixtures.EZE)));
 
             mockMvc.perform(post("/v1/reservations")
                             .header(ReservationController.IDEMPOTENCY_KEY_HEADER, IDEMPOTENCY_KEY)
@@ -380,8 +380,7 @@ class ReservationControllerTest {
         @Test
         @DisplayName("una reserva cancelada informa la fecha de cancelación")
         void exposesCancellationInstant() throws Exception {
-            when(getReservation.get(any()))
-                    .thenReturn(TestFixtures.storedReservation(4L, ReservationStatus.CANCELLED));
+            when(getReservation.get(any())).thenReturn(TestFixtures.storedReservation(4L, ReservationStatus.CANCELLED));
 
             mockMvc.perform(get("/v1/reservations/10"))
                     .andExpect(status().isOk())
@@ -392,8 +391,7 @@ class ReservationControllerTest {
         @Test
         @DisplayName("si no existe responde 404")
         void returnsNotFound() throws Exception {
-            when(getReservation.get(any()))
-                    .thenThrow(new ReservationNotFoundException(ReservationId.of(999L)));
+            when(getReservation.get(any())).thenThrow(new ReservationNotFoundException(ReservationId.of(999L)));
 
             mockMvc.perform(get("/v1/reservations/999"))
                     .andExpect(status().isNotFound())
@@ -405,8 +403,7 @@ class ReservationControllerTest {
         @Test
         @DisplayName("un id que no es numérico responde 400")
         void rejectsNonNumericId() throws Exception {
-            mockMvc.perform(get("/v1/reservations/abc"))
-                    .andExpect(status().isBadRequest());
+            mockMvc.perform(get("/v1/reservations/abc")).andExpect(status().isBadRequest());
 
             verifyNoInteractions(getReservation);
         }
@@ -556,7 +553,8 @@ class ReservationControllerTest {
             ArgumentCaptor<ListReservationsQuery> query = ArgumentCaptor.captor();
             verify(listReservations).list(query.capture());
             ReservationSearchCriteria value = query.getValue().criteria();
-            assertThat(value.userEmail()).map(com.edteam.reservations.domain.model.Email::value)
+            assertThat(value.userEmail())
+                    .map(com.edteam.reservations.domain.model.Email::value)
                     .contains("ana.perez@example.com");
             assertThat(value.statuses())
                     .containsExactlyInAnyOrder(ReservationStatus.PENDING, ReservationStatus.CONFIRMED);
@@ -795,8 +793,7 @@ class ReservationControllerTest {
         @Test
         @DisplayName("si ya estaba cancelada responde 409")
         void mapsAlreadyCancelledToConflict() throws Exception {
-            when(cancelReservation.cancel(any()))
-                    .thenThrow(new ReservationAlreadyCancelledException("10"));
+            when(cancelReservation.cancel(any())).thenThrow(new ReservationAlreadyCancelledException("10"));
 
             mockMvc.perform(delete("/v1/reservations/10").header("If-Match", "\"3\""))
                     .andExpect(status().isConflict())
@@ -806,8 +803,7 @@ class ReservationControllerTest {
         @Test
         @DisplayName("si no existe responde 404")
         void mapsNotFound() throws Exception {
-            when(cancelReservation.cancel(any()))
-                    .thenThrow(new ReservationNotFoundException(ReservationId.of(999L)));
+            when(cancelReservation.cancel(any())).thenThrow(new ReservationNotFoundException(ReservationId.of(999L)));
 
             mockMvc.perform(delete("/v1/reservations/999").header("If-Match", "\"0\""))
                     .andExpect(status().isNotFound())
@@ -817,8 +813,7 @@ class ReservationControllerTest {
         @Test
         @DisplayName("sin If-Match responde 400")
         void rejectsMissingIfMatch() throws Exception {
-            mockMvc.perform(delete("/v1/reservations/10"))
-                    .andExpect(status().isBadRequest());
+            mockMvc.perform(delete("/v1/reservations/10")).andExpect(status().isBadRequest());
 
             verifyNoInteractions(cancelReservation);
         }

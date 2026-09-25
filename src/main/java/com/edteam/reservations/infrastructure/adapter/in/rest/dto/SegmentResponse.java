@@ -12,7 +12,6 @@ import java.time.Instant;
  */
 @Schema(name = "Segment", description = "Tramo del itinerario reservado.")
 public record SegmentResponse(
-
         @Schema(description = "Identificador opaco del tramo.", example = "310")
         String id,
 
@@ -29,5 +28,4 @@ public record SegmentResponse(
         String airline,
 
         @Schema(description = "Fecha y hora de salida, en UTC.", example = "2027-03-15T22:40:00Z")
-        Instant departureAt) {
-}
+        Instant departureAt) {}

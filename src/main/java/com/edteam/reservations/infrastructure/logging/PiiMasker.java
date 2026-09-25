@@ -18,8 +18,7 @@ public final class PiiMasker {
 
     private static final String REDACTED = "***";
 
-    private PiiMasker() {
-    }
+    private PiiMasker() {}
 
     /**
      * {@code ana.perez@example.com} → {@code an***@example.com}.

@@ -24,16 +24,17 @@ import java.time.Duration;
  * @param automaticTransitionFromOpenToHalfOpen  la recuperación no depende de que llegue tráfico
  * @param windowMaxAge                           edad a partir de la cual la ventana se descarta entera
  */
-public record CircuitBreakerProperties(Boolean enabled,
-                                       Integer slidingWindowSize,
-                                       Integer minimumNumberOfCalls,
-                                       Integer failureRateThreshold,
-                                       Duration slowCallDurationThreshold,
-                                       Integer slowCallRateThreshold,
-                                       Duration waitDurationInOpenState,
-                                       Integer permittedCallsInHalfOpenState,
-                                       Boolean automaticTransitionFromOpenToHalfOpen,
-                                       Duration windowMaxAge) {
+public record CircuitBreakerProperties(
+        Boolean enabled,
+        Integer slidingWindowSize,
+        Integer minimumNumberOfCalls,
+        Integer failureRateThreshold,
+        Duration slowCallDurationThreshold,
+        Integer slowCallRateThreshold,
+        Duration waitDurationInOpenState,
+        Integer permittedCallsInHalfOpenState,
+        Boolean automaticTransitionFromOpenToHalfOpen,
+        Duration windowMaxAge) {
 
     /**
      * Completa lo que no vino con los valores por defecto de la dependencia.
@@ -41,8 +42,8 @@ public record CircuitBreakerProperties(Boolean enabled,
      * @param configured lo que se leyó de la configuración, o {@code null}
      * @param defaults   los valores documentados para esta dependencia
      */
-    public static CircuitBreakerProperties merge(CircuitBreakerProperties configured,
-                                                 CircuitBreakerProperties defaults) {
+    public static CircuitBreakerProperties merge(
+            CircuitBreakerProperties configured, CircuitBreakerProperties defaults) {
         if (configured == null) {
             return defaults;
         }
@@ -52,10 +53,12 @@ public record CircuitBreakerProperties(Boolean enabled,
                 positive(configured.minimumNumberOfCalls, defaults.minimumNumberOfCalls),
                 percentage(configured.failureRateThreshold, defaults.failureRateThreshold),
                 configured.slowCallDurationThreshold != null
-                        ? configured.slowCallDurationThreshold : defaults.slowCallDurationThreshold,
+                        ? configured.slowCallDurationThreshold
+                        : defaults.slowCallDurationThreshold,
                 percentage(configured.slowCallRateThreshold, defaults.slowCallRateThreshold),
                 configured.waitDurationInOpenState != null
-                        ? configured.waitDurationInOpenState : defaults.waitDurationInOpenState,
+                        ? configured.waitDurationInOpenState
+                        : defaults.waitDurationInOpenState,
                 positive(configured.permittedCallsInHalfOpenState, defaults.permittedCallsInHalfOpenState),
                 configured.automaticTransitionFromOpenToHalfOpen != null
                         ? configured.automaticTransitionFromOpenToHalfOpen

@@ -1,13 +1,8 @@
 package com.edteam.reservations.observability;
 
-import com.edteam.reservations.support.PublishedMetrics;
-import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.MethodSource;
-import org.yaml.snakeyaml.Yaml;
+import static org.assertj.core.api.Assertions.assertThat;
 
+import com.edteam.reservations.support.PublishedMetrics;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -16,8 +11,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Stream;
-
-import static org.assertj.core.api.Assertions.assertThat;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
+import org.yaml.snakeyaml.Yaml;
 
 /**
  * Las alertas están en el repositorio, y esto verifica que sean alertas.
@@ -81,13 +80,21 @@ class AlertRulesTest {
     @DisplayName("hay al menos las seis alertas del diseño")
     void theDesignedAlertsAreThere() {
         assertThat(alerts).hasSizeGreaterThanOrEqualTo(6);
-        assertThat(alerts).extracting(rule -> rule.get("alert"))
-                .contains("CatalogIntegrationBroken", "WritesFailing", "CreateReservationSlow",
-                        "OutboxLagging", "DeadNotifications", "CredentialPressure",
+        assertThat(alerts)
+                .extracting(rule -> rule.get("alert"))
+                .contains(
+                        "CatalogIntegrationBroken",
+                        "WritesFailing",
+                        "CreateReservationSlow",
+                        "OutboxLagging",
+                        "DeadNotifications",
+                        "CredentialPressure",
                         // Las tres que el diseño no tenía y la auditoría pidió:
                         // las dos formas de perder notificaciones en silencio
                         // (hallazgo 19) y la métrica ciega (hallazgo 15).
-                        "DevelopmentSecretsInUse", "MessagingPublisherDisabled", "OutboxMetricsBlind");
+                        "DevelopmentSecretsInUse",
+                        "MessagingPublisherDisabled",
+                        "OutboxMetricsBlind");
     }
 
     @ParameterizedTest(name = "{0}")
@@ -104,16 +111,19 @@ class AlertRulesTest {
                 .withFailMessage("La alerta '%s' no compara contra ningún umbral", name)
                 .containsPattern("[<>=]");
         assertThat(rule.get("for"))
-                .withFailMessage("La alerta '%s' no declara ventana: una alerta sin 'for' "
-                        + "dispara con un pico de un scrape", name)
+                .withFailMessage(
+                        "La alerta '%s' no declara ventana: una alerta sin 'for' " + "dispara con un pico de un scrape",
+                        name)
                 .isNotNull();
 
         @SuppressWarnings("unchecked")
         Map<String, Object> labels = (Map<String, Object>) rule.get("labels");
-        assertThat(labels).withFailMessage("La alerta '%s' no tiene etiquetas", name).isNotNull();
+        assertThat(labels)
+                .withFailMessage("La alerta '%s' no tiene etiquetas", name)
+                .isNotNull();
         assertThat(String.valueOf(labels.get("severity")))
-                .withFailMessage("La alerta '%s' tiene una severidad fuera de {P1, P2}: %s",
-                        name, labels.get("severity"))
+                .withFailMessage(
+                        "La alerta '%s' tiene una severidad fuera de {P1, P2}: %s", name, labels.get("severity"))
                 .isIn(SEVERITIES);
 
         @SuppressWarnings("unchecked")
@@ -142,7 +152,9 @@ class AlertRulesTest {
                 .orElseThrow();
 
         assertThat(expression).contains("offset 1d");
-        List<String> recorded = recordings.stream().map(rule -> String.valueOf(rule.get("record"))).toList();
+        List<String> recorded = recordings.stream()
+                .map(rule -> String.valueOf(rule.get("record")))
+                .toList();
         assertThat(recorded)
                 .withFailMessage("La alerta usa %s y ninguna recording rule la define", expression)
                 .contains("reservations:auth_failures:rate10m");
@@ -180,8 +192,7 @@ class AlertRulesTest {
         // nombres, y tenerla dos veces es tenerla desalineada.
         List<String> unknown = new ArrayList<>();
         for (Map<String, Object> rule : alerts) {
-            java.util.regex.Matcher matcher =
-                    PublishedMetrics.REFERENCE.matcher(String.valueOf(rule.get("expr")));
+            java.util.regex.Matcher matcher = PublishedMetrics.REFERENCE.matcher(String.valueOf(rule.get("expr")));
             while (matcher.find()) {
                 if (!PublishedMetrics.NAMES.contains(matcher.group())) {
                     unknown.add(rule.get("alert") + " → " + matcher.group());

@@ -38,15 +38,13 @@ public final class ForbiddenPatterns {
      */
     public static final Map<String, Pattern> PATTERNS = patterns();
 
-    private ForbiddenPatterns() {
-    }
+    private ForbiddenPatterns() {}
 
     private static Map<String, Pattern> patterns() {
         Map<String, Pattern> patterns = new LinkedHashMap<>();
         // Email en claro. Se excluye el dominio del seudónimo y los ejemplos
         // del contrato OpenAPI, que no son datos de nadie.
-        patterns.put("email", Pattern.compile(
-                "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}"));
+        patterns.put("email", Pattern.compile("[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}"));
         // Un JWT, o cualquier cosa con su forma.
         patterns.put("jwt", Pattern.compile("eyJ[A-Za-z0-9_-]{10,}"));
         // El header de autorización con su valor.

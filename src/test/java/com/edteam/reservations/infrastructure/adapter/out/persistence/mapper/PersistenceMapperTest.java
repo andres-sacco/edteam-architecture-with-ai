@@ -1,5 +1,7 @@
 package com.edteam.reservations.infrastructure.adapter.out.persistence.mapper;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import com.edteam.reservations.domain.model.Itinerary;
 import com.edteam.reservations.domain.model.ItineraryId;
 import com.edteam.reservations.domain.model.Passenger;
@@ -15,15 +17,12 @@ import com.edteam.reservations.infrastructure.adapter.out.persistence.entity.Res
 import com.edteam.reservations.infrastructure.adapter.out.persistence.entity.SegmentJpaEntity;
 import com.edteam.reservations.support.JpaEntityFixtures;
 import com.edteam.reservations.support.TestFixtures;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Nested;
-import org.junit.jupiter.api.Test;
-
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
-
-import static org.assertj.core.api.Assertions.assertThat;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
 
 @DisplayName("Mappers de persistencia")
 class PersistenceMapperTest {
@@ -42,8 +41,8 @@ class PersistenceMapperTest {
         @Test
         @DisplayName("lleva la fila a dominio con su id")
         void mapsToDomain() {
-            Segment segment = segmentMapper.toDomain(
-                    JpaEntityFixtures.segment(7L, "EZE", "SCL", TestFixtures.DEPARTURE));
+            Segment segment =
+                    segmentMapper.toDomain(JpaEntityFixtures.segment(7L, "EZE", "SCL", TestFixtures.DEPARTURE));
 
             assertThat(segment.id()).contains(SegmentId.of(7L));
             assertThat(segment.origin()).isEqualTo(TestFixtures.EZE);
@@ -67,12 +66,13 @@ class PersistenceMapperTest {
         @DisplayName("ida y vuelta: dominio -> entidad -> dominio conserva los datos")
         void roundTripsThroughTheEntity() {
             SegmentJpaEntity entity = segmentMapper.toNewEntity(TestFixtures.directSegment());
-            SegmentJpaEntity persisted = JpaEntityFixtures.segment(
-                    1L, entity.getOrigin(), entity.getDestination(), entity.getDepartureAt());
+            SegmentJpaEntity persisted =
+                    JpaEntityFixtures.segment(1L, entity.getOrigin(), entity.getDestination(), entity.getDepartureAt());
 
             Segment result = segmentMapper.toDomain(persisted);
 
-            assertThat(result.naturalKey()).isEqualTo(TestFixtures.directSegment().naturalKey());
+            assertThat(result.naturalKey())
+                    .isEqualTo(TestFixtures.directSegment().naturalKey());
         }
     }
 
@@ -116,9 +116,13 @@ class PersistenceMapperTest {
         @Test
         @DisplayName("lleva la fila a dominio con precio, moneda y segmentos en orden")
         void mapsToDomain() {
-            ItineraryJpaEntity entity = JpaEntityFixtures.itinerary(9L, "1980.00", "USD", List.of(
-                    JpaEntityFixtures.segment(1L, "EZE", "SCL", TestFixtures.DEPARTURE),
-                    JpaEntityFixtures.segment(2L, "SCL", "MAD", TestFixtures.CONNECTION_DEPARTURE)));
+            ItineraryJpaEntity entity = JpaEntityFixtures.itinerary(
+                    9L,
+                    "1980.00",
+                    "USD",
+                    List.of(
+                            JpaEntityFixtures.segment(1L, "EZE", "SCL", TestFixtures.DEPARTURE),
+                            JpaEntityFixtures.segment(2L, "SCL", "MAD", TestFixtures.CONNECTION_DEPARTURE)));
 
             Itinerary itinerary = itineraryMapper.toDomain(entity);
 
@@ -161,7 +165,8 @@ class PersistenceMapperTest {
             assertThat(reservation.version()).isEqualTo(4L);
             assertThat(reservation.createdAt()).isEqualTo(TestFixtures.NOW);
             assertThat(reservation.itinerary().id()).contains(ItineraryId.of(50L));
-            assertThat(reservation.passengers()).singleElement()
+            assertThat(reservation.passengers())
+                    .singleElement()
                     .satisfies(passenger -> assertThat(passenger.id()).contains(PassengerId.of(200L)));
         }
 
@@ -172,12 +177,18 @@ class PersistenceMapperTest {
                     JpaEntityFixtures.passenger(300L, "Zoe", "30999888"),
                     JpaEntityFixtures.passenger(100L, "Ana", "30123456")));
             ReservationJpaEntity entity = JpaEntityFixtures.reservation(
-                    10L, 0, ReservationStatusJpa.PENDIENTE, JpaEntityFixtures.directItinerary(50L),
-                    desordenados, TestFixtures.IDEMPOTENCY_KEY.value());
+                    10L,
+                    0,
+                    ReservationStatusJpa.PENDIENTE,
+                    JpaEntityFixtures.directItinerary(50L),
+                    desordenados,
+                    TestFixtures.IDEMPOTENCY_KEY.value());
 
             Reservation reservation = reservationMapper.toDomain(entity);
 
-            assertThat(reservation.passengers()).extracting(Passenger::firstName).containsExactly("Ana", "Zoe");
+            assertThat(reservation.passengers())
+                    .extracting(Passenger::firstName)
+                    .containsExactly("Ana", "Zoe");
         }
 
         @Test

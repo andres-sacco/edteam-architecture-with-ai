@@ -17,8 +17,7 @@ import java.util.Objects;
  */
 public final class EntityVersion {
 
-    private EntityVersion() {
-    }
+    private EntityVersion() {}
 
     /** {@code ETag} para la versión indicada, en su forma fuerte. */
     public static String toETag(long version) {

@@ -5,11 +5,10 @@ import com.edteam.reservations.application.port.out.UserRepositoryPort;
 import com.edteam.reservations.domain.model.Email;
 import com.edteam.reservations.domain.model.IdempotencyKey;
 import com.edteam.reservations.domain.model.Reservation;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
 import java.util.Objects;
 import java.util.Optional;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Resuelve la clave de idempotencia <strong>antes</strong> de validar el
@@ -40,8 +39,7 @@ public class ReservationIdempotencyLookup {
     private final UserRepositoryPort userRepository;
     private final ReservationRepositoryPort reservationRepository;
 
-    ReservationIdempotencyLookup(UserRepositoryPort userRepository,
-                                 ReservationRepositoryPort reservationRepository) {
+    ReservationIdempotencyLookup(UserRepositoryPort userRepository, ReservationRepositoryPort reservationRepository) {
         this.userRepository = Objects.requireNonNull(userRepository);
         this.reservationRepository = Objects.requireNonNull(reservationRepository);
     }
@@ -56,7 +54,8 @@ public class ReservationIdempotencyLookup {
         if (email == null || key == null) {
             return Optional.empty();
         }
-        return userRepository.findByEmail(email)
+        return userRepository
+                .findByEmail(email)
                 .flatMap(user -> reservationRepository.findByIdempotencyKey(user.requireId(), key));
     }
 }

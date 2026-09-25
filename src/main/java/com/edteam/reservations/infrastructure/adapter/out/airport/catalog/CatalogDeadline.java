@@ -30,8 +30,7 @@ public final class CatalogDeadline {
 
     private static final ThreadLocal<Instant> DEADLINE = new ThreadLocal<>();
 
-    private CatalogDeadline() {
-    }
+    private CatalogDeadline() {}
 
     /** Ejecuta {@code body} con el vencimiento instalado, y lo quita al salir. */
     public static <T> T within(Instant deadline, Supplier<T> body) {

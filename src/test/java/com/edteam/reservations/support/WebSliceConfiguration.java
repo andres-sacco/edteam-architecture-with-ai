@@ -4,10 +4,9 @@ import com.edteam.reservations.infrastructure.observability.BusinessMetrics;
 import com.edteam.reservations.infrastructure.observability.SecurityMetrics;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.Clock;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
-
-import java.time.Clock;
 
 /**
  * Lo que el slice web necesita y no trae por sí solo.

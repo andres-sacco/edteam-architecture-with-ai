@@ -63,6 +63,33 @@
         <sonar.plugin.version>5.8.0.7211</sonar.plugin.version>
 
         <!--
+          Spotless: el formateador. 'spotless:check' falla si un archivo no
+          está como el formateador lo dejaría; 'spotless:apply' lo arregla.
+          Que la misma herramienta verifique y corrija es el punto: un linter
+          que sólo señala genera discusión sobre el estilo, y uno que además
+          formatea la termina.
+        -->
+        <spotless.version>3.10.2</spotless.version>
+
+        <!--
+          palantir-java-format y NO google-java-format, que es el default de
+          casi todos los ejemplos.
+
+          El motivo es medible: este código está escrito con sangría de 4
+          espacios y el percentil 99 de largo de línea es 107 caracteres.
+          google-java-format impone 2 espacios y 100 columnas, o sea que
+          reformatearía absolutamente todas las líneas de los 328 archivos.
+          palantir usa 4 espacios y 120 columnas —la convención con la que el
+          código ya está escrito— y el reformateo se limita a lo que de verdad
+          estaba inconsistente.
+
+          Ninguno de los dos es configurable, y eso también es a propósito: un
+          formateador con opciones es una discusión de estilo esperando a
+          ocurrir.
+        -->
+        <palantir.format.version>2.99.0</palantir.format.version>
+
+        <!--
           OWASP Dependency-Check: cruza el árbol de dependencias resuelto
           contra la base de vulnerabilidades del NVD.
 
@@ -603,6 +630,78 @@
                         </configuration>
                     </execution>
                 </executions>
+            </plugin>
+            <!--
+              Formato del código.
+
+              NO está atado a ninguna fase. Podría estarlo —es rápido y no
+              habla con ningún servicio— pero entonces 'mvn test' fallaría por
+              una llave mal puesta, y en el pipeline el trabajo "Tests
+              unitarios" aparecería en rojo por un problema que no es de
+              tests. Un fallo mal atribuido cuesta más que el que se tarda en
+              encontrarlo: se convierte en "los tests están flaky".
+
+              Corre entonces como su propio paso ('./mvnw spotless:check'), en
+              su propio trabajo del pipeline, y lo que dice rojo ahí es
+              exactamente "el formato".
+
+              Para arreglarlo: ./mvnw spotless:apply
+            -->
+            <plugin>
+                <groupId>com.diffplug.spotless</groupId>
+                <artifactId>spotless-maven-plugin</artifactId>
+                <version>${spotless.version}</version>
+                <configuration>
+                    <java>
+                        <palantirJavaFormat>
+                            <version>${palantir.format.version}</version>
+                        </palantirJavaFormat>
+                        <!--
+                          palantir no borra imports sin usar: sólo ordena y
+                          acomoda. Un import muerto es código muerto y el
+                          compilador no lo señala, así que esto es lo único
+                          del bloque que además de formato arregla contenido.
+                        -->
+                        <removeUnusedImports/>
+                    </java>
+
+                    <!--
+                      El resto de los archivos de texto. Hoy están todos
+                      limpios, así que esto no cambia nada: está para que siga
+                      siendo cierto. Un espacio al final de una línea no se ve
+                      en ningún editor y ensucia todos los diffs que la tocan
+                      después.
+                    -->
+                    <formats>
+                        <format>
+                            <includes>
+                                <include>*.md</include>
+                                <include>docs/**/*.md</include>
+                                <include>scripts/**/*.sh</include>
+                                <include>scripts/**/*.py</include>
+                                <include>.github/**/*.yml</include>
+                                <include>src/main/resources/**/*.sql</include>
+                            </includes>
+                            <excludes>
+                                <!--
+                                  docs/api/openapi.yaml NO entra, y no es un
+                                  descuido: lo REGENERA OpenApiDocumentDumpTest
+                                  desde springdoc, y el pipeline compara el
+                                  archivo commiteado contra el regenerado byte
+                                  a byte. Si Spotless le normalizara algo,
+                                  springdoc volvería a emitirlo sin normalizar
+                                  y esa comparación fallaría para siempre, sin
+                                  que nadie haya tocado la API. Lo mismo vale
+                                  para cualquier otro archivo generado que se
+                                  agregue después.
+                                -->
+                                <exclude>docs/api/openapi.yaml</exclude>
+                            </excludes>
+                            <trimTrailingWhitespace/>
+                            <endWithNewline/>
+                        </format>
+                    </formats>
+                </configuration>
             </plugin>
             <!--
               Vulnerabilidades conocidas en las dependencias.

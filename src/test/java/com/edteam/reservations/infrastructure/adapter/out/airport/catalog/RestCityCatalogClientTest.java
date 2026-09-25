@@ -1,18 +1,5 @@
 package com.edteam.reservations.infrastructure.adapter.out.airport.catalog;
 
-import com.edteam.reservations.application.exception.AirportCatalogIntegrationException;
-import com.edteam.reservations.application.exception.AirportCatalogUnavailableException;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
-import org.springframework.test.web.client.MockRestServiceServer;
-import org.springframework.web.client.RestClient;
-
-import java.net.ConnectException;
-import java.net.SocketTimeoutException;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
@@ -21,6 +8,18 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withException;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
+
+import com.edteam.reservations.application.exception.AirportCatalogIntegrationException;
+import com.edteam.reservations.application.exception.AirportCatalogUnavailableException;
+import java.net.ConnectException;
+import java.net.SocketTimeoutException;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.client.MockRestServiceServer;
+import org.springframework.web.client.RestClient;
 
 /**
  * El valor de estos tests está en la tabla de clasificación: cada caso fija
@@ -39,9 +38,7 @@ class RestCityCatalogClientTest {
 
     @BeforeEach
     void setUp() {
-        RestClient.Builder builder = RestClient.builder()
-                .baseUrl(BASE_URL)
-                .defaultHeader("X-API-Key", "secreta");
+        RestClient.Builder builder = RestClient.builder().baseUrl(BASE_URL).defaultHeader("X-API-Key", "secreta");
         server = MockRestServiceServer.bindTo(builder).build();
         client = new RestCityCatalogClient(builder.build());
     }
@@ -107,8 +104,7 @@ class RestCityCatalogClientTest {
     void failsAsUnavailableOn429() {
         server.expect(requestTo(CITY_URL)).andRespond(withStatus(HttpStatus.TOO_MANY_REQUESTS));
 
-        assertThatThrownBy(() -> client.findByCode("BUE"))
-                .isInstanceOf(AirportCatalogUnavailableException.class);
+        assertThatThrownBy(() -> client.findByCode("BUE")).isInstanceOf(AirportCatalogUnavailableException.class);
     }
 
     @Test
@@ -126,8 +122,7 @@ class RestCityCatalogClientTest {
     void failsAsIntegrationOn400() {
         server.expect(requestTo(CITY_URL)).andRespond(withStatus(HttpStatus.BAD_REQUEST));
 
-        assertThatThrownBy(() -> client.findByCode("BUE"))
-                .isInstanceOf(AirportCatalogIntegrationException.class);
+        assertThatThrownBy(() -> client.findByCode("BUE")).isInstanceOf(AirportCatalogIntegrationException.class);
     }
 
     @Test
@@ -135,8 +130,7 @@ class RestCityCatalogClientTest {
     void failsAsIntegrationOnUnreadableBody() {
         server.expect(requestTo(CITY_URL)).andRespond(withSuccess("no-json", MediaType.APPLICATION_JSON));
 
-        assertThatThrownBy(() -> client.findByCode("BUE"))
-                .isInstanceOf(AirportCatalogIntegrationException.class);
+        assertThatThrownBy(() -> client.findByCode("BUE")).isInstanceOf(AirportCatalogIntegrationException.class);
     }
 
     @Test
@@ -170,15 +164,13 @@ class RestCityCatalogClientTest {
     void failsAsUnavailableOnSocketTimeout() {
         server.expect(requestTo(CITY_URL)).andRespond(withException(new SocketTimeoutException("read timed out")));
 
-        assertThatThrownBy(() -> client.findByCode("BUE"))
-                .isInstanceOf(AirportCatalogUnavailableException.class);
+        assertThatThrownBy(() -> client.findByCode("BUE")).isInstanceOf(AirportCatalogUnavailableException.class);
     }
 
     @Test
     @DisplayName("código vacío: ni siquiera sale a la red")
     void rejectsBlankCode() {
-        assertThatThrownBy(() -> client.findByCode("  "))
-                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> client.findByCode("  ")).isInstanceOf(IllegalArgumentException.class);
 
         server.verify();
     }

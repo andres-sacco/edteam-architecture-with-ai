@@ -1,10 +1,12 @@
 package com.edteam.reservations.infrastructure.security;
 
 import com.edteam.reservations.infrastructure.observability.SecurityMetrics;
-import org.springframework.beans.factory.annotation.Value;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.Clock;
+import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
@@ -22,9 +24,6 @@ import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWrite
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
-
-import java.time.Clock;
-import java.util.List;
 
 /**
  * La capa de seguridad del borde HTTP.
@@ -127,20 +126,22 @@ public class SecurityConfiguration {
      * out» pega contra {@code /v1/**}, que exige token como cualquier otro
      * cliente.
      */
-    private static final String[] API_DOCS = {"/v3/api-docs", "/v3/api-docs/**", "/v3/api-docs.yaml",
-            "/swagger-ui.html", "/swagger-ui/**"};
+    private static final String[] API_DOCS = {
+        "/v3/api-docs", "/v3/api-docs/**", "/v3/api-docs.yaml", "/swagger-ui.html", "/swagger-ui/**"
+    };
 
     private static final long HSTS_SECONDS = 31_536_000L;
 
     @Bean
-    public SecurityFilterChain reservationsSecurityFilterChain(HttpSecurity http,
-                                                               JwtDecoder jwtDecoder,
-                                                               SecurityProperties properties,
-                                                               ObjectMapper objectMapper,
-                                                               Clock clock,
-                                                               SecurityMetrics securityMetrics,
-                                                               @Value("${reservations.security.metrics-scrape-open:false}")
-                                                               boolean metricsScrapeOpen) throws Exception {
+    public SecurityFilterChain reservationsSecurityFilterChain(
+            HttpSecurity http,
+            JwtDecoder jwtDecoder,
+            SecurityProperties properties,
+            ObjectMapper objectMapper,
+            Clock clock,
+            SecurityMetrics securityMetrics,
+            @Value("${reservations.security.metrics-scrape-open:false}") boolean metricsScrapeOpen)
+            throws Exception {
         if (metricsScrapeOpen) {
             log.atWarn()
                     .addKeyValue("event", "startup.wiring")
@@ -149,57 +150,59 @@ public class SecurityConfiguration {
                     .log("El endpoint de métricas se sirve SIN token: sólo es aceptable "
                             + "mientras el puerto de gestión no se publique hacia afuera");
         }
-        http
-                .csrf(csrf -> csrf.disable())
+        http.csrf(csrf -> csrf.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .cors(cors -> cors.configurationSource(corsConfigurationSource(properties.cors())))
                 .headers(headers -> headers
                         // El transporte lo termina el borde; el header se
                         // emite igual para que el navegador no vuelva a
                         // intentar por HTTP aunque alguien reescriba un link.
-                        .httpStrictTransportSecurity(hsts -> hsts
-                                .includeSubDomains(true)
-                                .maxAgeInSeconds(HSTS_SECONDS))
+                        .httpStrictTransportSecurity(
+                                hsts -> hsts.includeSubDomains(true).maxAgeInSeconds(HSTS_SECONDS))
                         .frameOptions(frame -> frame.deny())
-                        .referrerPolicy(referrer -> referrer
-                                .policy(ReferrerPolicyHeaderWriter.ReferrerPolicy.NO_REFERRER))
+                        .referrerPolicy(
+                                referrer -> referrer.policy(ReferrerPolicyHeaderWriter.ReferrerPolicy.NO_REFERRER))
                         .contentTypeOptions(Customizer.withDefaults()))
-                .authorizeHttpRequests(requests -> requests
-                        .requestMatchers(PROBES).permitAll()
+                .authorizeHttpRequests(requests -> requests.requestMatchers(PROBES)
+                        .permitAll()
                         .requestMatchers(METRICS_SCRAPE)
-                        .access((authentication, context) -> new org.springframework.security.authorization
-                                .AuthorizationDecision(metricsScrapeOpen
-                                || (authentication.get() != null && authentication.get().isAuthenticated())))
+                        .access((authentication, context) ->
+                                new org.springframework.security.authorization.AuthorizationDecision(metricsScrapeOpen
+                                        || (authentication.get() != null
+                                                && authentication.get().isAuthenticated())))
                         // El preflight no lleva credencial por definición.
-                        .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                        .requestMatchers(API_DOCS).permitAll()
+                        .requestMatchers(HttpMethod.OPTIONS, "/**")
+                        .permitAll()
+                        .requestMatchers(API_DOCS)
+                        .permitAll()
                         // Actuator: en producción vive en el puerto de
                         // gestión, que no se publica. Que en el puerto de la
                         // aplicación exija token igual es cinturón y
                         // tirantes: el día que alguien lo exponga por error,
                         // 'metrics' —que revela volumetría de negocio— no
                         // queda abierto. Las sondas se permiten arriba.
-                        .requestMatchers("/actuator/**").authenticated()
-                        .requestMatchers("/v1/**").authenticated()
+                        .requestMatchers("/actuator/**")
+                        .authenticated()
+                        .requestMatchers("/v1/**")
+                        .authenticated()
                         // Todo lo que no esté nombrado arriba, incluido lo que
                         // se agregue mañana, está cerrado.
-                        .anyRequest().denyAll())
-                .oauth2ResourceServer(oauth2 -> oauth2
-                        .jwt(jwt -> jwt
-                                .decoder(jwtDecoder)
-                                .jwtAuthenticationConverter(new JwtActorConverter()))
+                        .anyRequest()
+                        .denyAll())
+                .oauth2ResourceServer(oauth2 -> oauth2.jwt(
+                                jwt -> jwt.decoder(jwtDecoder).jwtAuthenticationConverter(new JwtActorConverter()))
                         .authenticationEntryPoint(
                                 ProblemDetailAuthenticationHandlers.entryPoint(objectMapper, securityMetrics))
-                        .accessDeniedHandler(ProblemDetailAuthenticationHandlers
-                                .accessDeniedHandler(objectMapper, securityMetrics)))
-                .exceptionHandling(handling -> handling
-                        .authenticationEntryPoint(
+                        .accessDeniedHandler(
+                                ProblemDetailAuthenticationHandlers.accessDeniedHandler(objectMapper, securityMetrics)))
+                .exceptionHandling(handling -> handling.authenticationEntryPoint(
                                 ProblemDetailAuthenticationHandlers.entryPoint(objectMapper, securityMetrics))
-                        .accessDeniedHandler(ProblemDetailAuthenticationHandlers
-                                .accessDeniedHandler(objectMapper, securityMetrics)))
+                        .accessDeniedHandler(
+                                ProblemDetailAuthenticationHandlers.accessDeniedHandler(objectMapper, securityMetrics)))
                 // Después de la autenticación: así la cuota se cuenta por
                 // identidad cuando la hay, y recién cae a la IP cuando no.
-                .addFilterAfter(new RateLimitFilter(properties.rateLimit(), objectMapper, clock, securityMetrics),
+                .addFilterAfter(
+                        new RateLimitFilter(properties.rateLimit(), objectMapper, clock, securityMetrics),
                         BasicAuthenticationFilter.class);
 
         return http.build();
@@ -226,8 +229,10 @@ public class SecurityConfiguration {
         FilterRegistrationBean<CorrelationIdFilter> registration =
                 new FilterRegistrationBean<>(new CorrelationIdFilter());
         registration.setOrder(Integer.MIN_VALUE);
-        registration.setDispatcherTypes(java.util.EnumSet.of(jakarta.servlet.DispatcherType.REQUEST,
-                jakarta.servlet.DispatcherType.ASYNC, jakarta.servlet.DispatcherType.ERROR));
+        registration.setDispatcherTypes(java.util.EnumSet.of(
+                jakarta.servlet.DispatcherType.REQUEST,
+                jakarta.servlet.DispatcherType.ASYNC,
+                jakarta.servlet.DispatcherType.ERROR));
         return registration;
     }
 
@@ -249,15 +254,22 @@ public class SecurityConfiguration {
         CorsConfiguration configuration = new CorsConfiguration();
         configuration.setAllowedOrigins(properties.allowedOrigins());
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-        configuration.setAllowedHeaders(List.of(HttpHeaders.AUTHORIZATION, HttpHeaders.CONTENT_TYPE,
-                HttpHeaders.IF_MATCH, HttpHeaders.IF_NONE_MATCH, "Idempotency-Key",
+        configuration.setAllowedHeaders(List.of(
+                HttpHeaders.AUTHORIZATION,
+                HttpHeaders.CONTENT_TYPE,
+                HttpHeaders.IF_MATCH,
+                HttpHeaders.IF_NONE_MATCH,
+                "Idempotency-Key",
                 CorrelationIdFilter.HEADER));
         // Sin esto el frontend no ve el ETag y no puede mandar If-Match: el
         // navegador sólo expone seis headers de respuesta por defecto.
         // X-Degraded incluido: si el frontend no lo ve, no puede avisar que los
         // datos de catálogo están desactualizados, y el header no sirve de nada.
-        configuration.setExposedHeaders(List.of(HttpHeaders.ETAG, HttpHeaders.LOCATION,
-                HttpHeaders.RETRY_AFTER, CorrelationIdFilter.HEADER,
+        configuration.setExposedHeaders(List.of(
+                HttpHeaders.ETAG,
+                HttpHeaders.LOCATION,
+                HttpHeaders.RETRY_AFTER,
+                CorrelationIdFilter.HEADER,
                 com.edteam.reservations.infrastructure.adapter.in.rest.DegradationHeaderFilter.HEADER));
         configuration.setAllowCredentials(true);
         configuration.setMaxAge(properties.maxAge());

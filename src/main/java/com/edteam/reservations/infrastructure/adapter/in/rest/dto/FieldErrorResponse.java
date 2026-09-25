@@ -15,16 +15,16 @@ import io.swagger.v3.oas.annotations.media.Schema;
  */
 @Schema(name = "FieldError", description = "Un campo rechazado por la validación del pedido.")
 public record FieldErrorResponse(
-
-        @Schema(description = "Ruta del campo inválido dentro del cuerpo del pedido, "
-                + "en notación de punto y corchetes.",
+        @Schema(
+                description =
+                        "Ruta del campo inválido dentro del cuerpo del pedido, " + "en notación de punto y corchetes.",
                 example = "itinerary.segments[0].originAirportCode")
         String field,
 
         @Schema(description = "Motivo del rechazo, legible por máquina.", example = "PATTERN")
         String code,
 
-        @Schema(description = "Explicación legible por humanos.",
+        @Schema(
+                description = "Explicación legible por humanos.",
                 example = "Debe ser un código IATA de 3 letras mayúsculas")
-        String message) {
-}
+        String message) {}

@@ -2,7 +2,6 @@ package com.edteam.reservations.infrastructure.adapter.out.airport.catalog;
 
 import com.edteam.reservations.application.exception.AirportCatalogIntegrationException;
 import com.edteam.reservations.application.exception.AirportCatalogUnavailableException;
-
 import java.util.Optional;
 
 /**

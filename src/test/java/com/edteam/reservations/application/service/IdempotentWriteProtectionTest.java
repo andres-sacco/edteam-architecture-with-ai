@@ -1,22 +1,5 @@
 package com.edteam.reservations.application.service;
 
-import com.edteam.reservations.application.port.in.CreateReservationResult;
-import com.edteam.reservations.application.port.out.AirportCatalogPort;
-import com.edteam.reservations.application.port.out.AuditTrailPort;
-import com.edteam.reservations.application.port.out.EventOutboxPort;
-import com.edteam.reservations.application.port.out.ReservationRepositoryPort;
-import com.edteam.reservations.application.port.out.UserRepositoryPort;
-import com.edteam.reservations.support.TestFixtures;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-
-import java.util.Optional;
-import java.util.Set;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
@@ -25,6 +8,22 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+
+import com.edteam.reservations.application.port.in.CreateReservationResult;
+import com.edteam.reservations.application.port.out.AirportCatalogPort;
+import com.edteam.reservations.application.port.out.AuditTrailPort;
+import com.edteam.reservations.application.port.out.EventOutboxPort;
+import com.edteam.reservations.application.port.out.ReservationRepositoryPort;
+import com.edteam.reservations.application.port.out.UserRepositoryPort;
+import com.edteam.reservations.support.TestFixtures;
+import java.util.Optional;
+import java.util.Set;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
  * Ninguna escritura se repite sin una clave que la proteja, y la clave protege
@@ -109,7 +108,8 @@ class IdempotentWriteProtectionTest {
                 .thenReturn(Optional.empty());
         when(userRepository.findOrRegister(any())).thenReturn(TestFixtures.storedUser());
         when(reservationRepository.save(any()))
-                .thenAnswer(invocation -> invocation.<com.edteam.reservations.domain.model.Reservation>getArgument(0)
+                .thenAnswer(invocation -> invocation
+                        .<com.edteam.reservations.domain.model.Reservation>getArgument(0)
                         .withId(TestFixtures.RESERVATION_ID));
 
         assertThat(service.create(TestFixtures.createCommand()).created()).isTrue();

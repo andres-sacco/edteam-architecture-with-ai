@@ -4,11 +4,10 @@ import com.edteam.reservations.application.exception.UnknownAirportException;
 import com.edteam.reservations.application.port.out.AirportCatalogPort;
 import com.edteam.reservations.domain.model.AirportCode;
 import com.edteam.reservations.domain.model.Itinerary;
-import org.springframework.stereotype.Component;
-
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import org.springframework.stereotype.Component;
 
 /**
  * Verifica que todos los aeropuertos del itinerario existan en el maestro.

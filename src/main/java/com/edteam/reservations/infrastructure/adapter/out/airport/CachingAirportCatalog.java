@@ -5,13 +5,10 @@ import com.edteam.reservations.application.port.out.AirportCatalogPort;
 import com.edteam.reservations.domain.model.AirportCode;
 import com.edteam.reservations.infrastructure.cache.CacheKeys;
 import com.edteam.reservations.infrastructure.cache.CacheStore;
-import com.edteam.reservations.infrastructure.resilience.DegradationRecorder;
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import com.edteam.reservations.infrastructure.logging.LogFields;
 import com.edteam.reservations.infrastructure.logging.LogSanitizer;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
+import com.edteam.reservations.infrastructure.resilience.DegradationRecorder;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -23,6 +20,8 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.BooleanSupplier;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Cache y <em>stale-while-error</em> sobre el maestro de aeropuertos. Es la
@@ -86,12 +85,13 @@ public class CachingAirportCatalog implements AirportCatalogPort {
     private final DegradationRecorder degradation;
     private final BooleanSupplier originAvailable;
 
-    public CachingAirportCatalog(CityResolver delegate,
-                                 CacheStore cache,
-                                 Ttl ttl,
-                                 Clock clock,
-                                 DegradationRecorder degradation,
-                                 BooleanSupplier originAvailable) {
+    public CachingAirportCatalog(
+            CityResolver delegate,
+            CacheStore cache,
+            Ttl ttl,
+            Clock clock,
+            DegradationRecorder degradation,
+            BooleanSupplier originAvailable) {
         this.delegate = Objects.requireNonNull(delegate, "El delegado es obligatorio");
         this.cache = Objects.requireNonNull(cache, "El almacén de cache es obligatorio");
         this.ttl = Objects.requireNonNull(ttl, "El TTL es obligatorio");
@@ -102,8 +102,7 @@ public class CachingAirportCatalog implements AirportCatalogPort {
 
     /** Sin circuito ni métricas reales: el que usan los tests del decorador. */
     public CachingAirportCatalog(CityResolver delegate, CacheStore cache, Ttl ttl, Clock clock) {
-        this(delegate, cache, ttl, clock,
-                new DegradationRecorder(new SimpleMeterRegistry()), () -> true);
+        this(delegate, cache, ttl, clock, new DegradationRecorder(new SimpleMeterRegistry()), () -> true);
     }
 
     @Override
@@ -120,7 +119,8 @@ public class CachingAirportCatalog implements AirportCatalogPort {
         // Una sola lectura agrupada y no una por ciudad: con Redis caído, once
         // lecturas en serie eran 2,2 s del presupuesto gastados en un
         // componente cuyo aporte es ahorrar tiempo.
-        Map<String, String> raw = cache.getAll(wanted.stream().map(CachingAirportCatalog::keyOf).toList());
+        Map<String, String> raw =
+                cache.getAll(wanted.stream().map(CachingAirportCatalog::keyOf).toList());
 
         Set<AirportCode> unknown = new LinkedHashSet<>();
         Map<AirportCode, Entry> stale = new LinkedHashMap<>();
@@ -146,8 +146,8 @@ public class CachingAirportCatalog implements AirportCatalogPort {
 
         Set<AirportCode> unresolved = new LinkedHashSet<>();
         for (AirportCode code : toResolve) {
-            CityResolution resolution = resolutions.getOrDefault(code.value(),
-                    CityResolution.unavailable("sin respuesta"));
+            CityResolution resolution =
+                    resolutions.getOrDefault(code.value(), CityResolution.unavailable("sin respuesta"));
             if (resolution.isKnown()) {
                 remember(code, resolution.exists(), now);
                 if (!resolution.exists()) {
@@ -165,8 +165,7 @@ public class CachingAirportCatalog implements AirportCatalogPort {
             // Sin fallback posible: se falla de frente. Devolver 'existe' sería
             // inventar un dato y devolver 'no existe' rechazaría una reserva
             // válida con un error que el cliente no puede corregir.
-            degradation.exhausted(DEPENDENCY, "no_fallback",
-                    "sin dato guardado para " + codesOf(unresolved));
+            degradation.exhausted(DEPENDENCY, "no_fallback", "sin dato guardado para " + codesOf(unresolved));
             throw new AirportCatalogUnavailableException(
                     "No se pudo verificar %s contra el maestro de aeropuertos".formatted(codesOf(unresolved)));
         }
@@ -188,8 +187,7 @@ public class CachingAirportCatalog implements AirportCatalogPort {
     private Map<String, CityResolution> resolve(Set<AirportCode> toResolve) {
         if (!originAvailable.getAsBoolean()) {
             Map<String, CityResolution> shortCircuited = new LinkedHashMap<>();
-            toResolve.forEach(code ->
-                    shortCircuited.put(code.value(), CityResolution.unavailable("circuit_open")));
+            toResolve.forEach(code -> shortCircuited.put(code.value(), CityResolution.unavailable("circuit_open")));
             return shortCircuited;
         }
         return delegate.resolve(toResolve.stream().map(AirportCode::value).toList());
@@ -209,7 +207,9 @@ public class CachingAirportCatalog implements AirportCatalogPort {
         if (!now.isBefore(graceUntil)) {
             return false;
         }
-        degradation.served(DEPENDENCY, reason,
+        degradation.served(
+                DEPENDENCY,
+                reason,
                 "se sirve el último valor conocido de " + code.value(),
                 Duration.between(entry.freshUntil(), now));
         return true;
@@ -240,7 +240,10 @@ public class CachingAirportCatalog implements AirportCatalogPort {
     }
 
     private static String codesOf(Collection<AirportCode> codes) {
-        return codes.stream().map(AirportCode::value).reduce((a, b) -> a + ", " + b).orElse("");
+        return codes.stream()
+                .map(AirportCode::value)
+                .reduce((a, b) -> a + ", " + b)
+                .orElse("");
     }
 
     /**

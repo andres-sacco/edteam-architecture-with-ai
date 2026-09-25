@@ -16,13 +16,15 @@ import com.edteam.reservations.infrastructure.adapter.out.messaging.DomainEventP
 import com.edteam.reservations.infrastructure.adapter.out.outbox.JdbcEventOutbox;
 import com.edteam.reservations.infrastructure.adapter.out.outbox.MeteredEventOutbox;
 import com.edteam.reservations.infrastructure.cache.CacheStore;
+import com.edteam.reservations.infrastructure.logging.CorrelationIdPropagation;
+import com.edteam.reservations.infrastructure.logging.LogFields;
+import com.edteam.reservations.infrastructure.logging.LogSanitizer;
 import com.edteam.reservations.infrastructure.resilience.Circuit;
 import com.edteam.reservations.infrastructure.resilience.DegradationRecorder;
 import io.github.resilience4j.bulkhead.Bulkhead;
 import io.micrometer.core.instrument.MeterRegistry;
-import com.edteam.reservations.infrastructure.logging.CorrelationIdPropagation;
-import com.edteam.reservations.infrastructure.logging.LogFields;
-import com.edteam.reservations.infrastructure.logging.LogSanitizer;
+import java.time.Clock;
+import java.time.Duration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -35,9 +37,6 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.client.RestClient;
-
-import java.time.Clock;
-import java.time.Duration;
 
 /**
  * Cableado de los adaptadores de salida.
@@ -102,32 +101,41 @@ public class AdapterConfiguration {
      * {@code Set} sería ceremonia.
      */
     @Bean
-    public AirportCatalogPort airportCatalogPort(AirportCatalogProperties properties,
-                                                 @Qualifier("cityCatalogCacheStore") CacheStore cityCatalogCacheStore,
-                                                 RestClient.Builder restClientBuilder,
-                                                 Circuit catalogCircuit,
-                                                 Bulkhead catalogBulkhead,
-                                                 DegradationRecorder degradation,
-                                                 MeterRegistry registry,
-                                                 Clock clock) {
+    public AirportCatalogPort airportCatalogPort(
+            AirportCatalogProperties properties,
+            @Qualifier("cityCatalogCacheStore") CacheStore cityCatalogCacheStore,
+            RestClient.Builder restClientBuilder,
+            Circuit catalogCircuit,
+            Bulkhead catalogBulkhead,
+            DegradationRecorder degradation,
+            MeterRegistry registry,
+            Clock clock) {
         if (!properties.hasRemoteCatalog()) {
             log.info("Maestro de aeropuertos: stub en memoria (no hay 'reservations.airport-catalog.base-url')");
-            return new CachingAirportCatalog(StaticAirportCatalog.withDefaults(), cityCatalogCacheStore,
-                    properties.cacheTtlPolicy(), clock, degradation, () -> true);
+            return new CachingAirportCatalog(
+                    StaticAirportCatalog.withDefaults(),
+                    cityCatalogCacheStore,
+                    properties.cacheTtlPolicy(),
+                    clock,
+                    degradation,
+                    () -> true);
         }
 
         requireSecureTransport(properties);
 
-        CityCatalogClient http = new RestCityCatalogClient(
-                catalogRestClient(restClientBuilder, properties), registry);
-        CityCatalogClient retrying = new RetryingCityCatalogClient(http, properties.retryPolicy(),
-                RetryingCityCatalogClient.Sleeper.real(), properties.attemptCost(), clock, registry);
+        CityCatalogClient http = new RestCityCatalogClient(catalogRestClient(restClientBuilder, properties), registry);
+        CityCatalogClient retrying = new RetryingCityCatalogClient(
+                http,
+                properties.retryPolicy(),
+                RetryingCityCatalogClient.Sleeper.real(),
+                properties.attemptCost(),
+                clock,
+                registry);
         CityCatalogClient bulkheaded = new BulkheadCityCatalogClient(retrying, catalogBulkhead);
         CityCatalogClient guarded = new CircuitBreakingCityCatalogClient(bulkheaded, catalogCircuit);
 
         CityResolver resolver = new CatalogCityResolver(guarded, registry);
-        CityResolver fanout = new BudgetedCityCatalogFanout(
-                resolver, properties.itineraryBudget(), clock, registry);
+        CityResolver fanout = new BudgetedCityCatalogFanout(resolver, properties.itineraryBudget(), clock, registry);
 
         // La base-url va SANEADA y acotada: es configuración de despliegue y
         // puede traer credenciales en el userinfo (`https://user:clave@host`),
@@ -136,26 +144,36 @@ public class AdapterConfiguration {
                 .addKeyValue(LogFields.EVENT, LogFields.STARTUP_WIRING)
                 .addKeyValue("component", "airport-catalog")
                 .addKeyValue("catalog.baseUrl", safeBaseUrl(properties.baseUrl()))
-                .addKeyValue("catalog.connectTimeoutMs", properties.connectTimeout().toMillis())
+                .addKeyValue(
+                        "catalog.connectTimeoutMs", properties.connectTimeout().toMillis())
                 .addKeyValue("catalog.readTimeoutMs", properties.readTimeout().toMillis())
                 .addKeyValue("catalog.maxAttempts", properties.retry().maxAttempts())
-                .addKeyValue("catalog.itineraryBudgetMs", properties.itineraryBudget().toMillis())
-                .addKeyValue("catalog.worstCasePerCityMs", properties.worstCasePerCity().toMillis())
+                .addKeyValue(
+                        "catalog.itineraryBudgetMs",
+                        properties.itineraryBudget().toMillis())
+                .addKeyValue(
+                        "catalog.worstCasePerCityMs",
+                        properties.worstCasePerCity().toMillis())
                 .log("Maestro de aeropuertos cableado contra la API de catálogo");
 
         // La sonda del origen: con el circuito abierto, el cache ni baja por
         // la cadena. Es la memoria de «el origen está caído» que el fallback
         // no tenía, y la que evita que cada ciudad vuelva a pagar el viaje.
-        return new CachingAirportCatalog(fanout, cityCatalogCacheStore, properties.cacheTtlPolicy(),
-                clock, degradation, () -> !catalogCircuit.isOpen());
+        return new CachingAirportCatalog(
+                fanout,
+                cityCatalogCacheStore,
+                properties.cacheTtlPolicy(),
+                clock,
+                degradation,
+                () -> !catalogCircuit.isOpen());
     }
 
     private static void requireSecureTransport(AirportCatalogProperties properties) {
         if (!properties.usesSecureTransport()) {
-            throw new IllegalStateException(
-                    ("El catálogo de ciudades está configurado en '%s': la API key viaja en un "
+            throw new IllegalStateException(("El catálogo de ciudades está configurado en '%s': la API key viaja en un "
                             + "header y sin TLS se lee en el camino. Usar https:// (o vaciar "
-                            + "'base-url' para volver al stub en memoria).").formatted(properties.baseUrl()));
+                            + "'base-url' para volver al stub en memoria).")
+                    .formatted(properties.baseUrl()));
         }
     }
 
@@ -204,9 +222,7 @@ public class AdapterConfiguration {
         }
         try {
             java.net.URI uri = java.net.URI.create(baseUrl);
-            String rendered = uri.getUserInfo() == null
-                    ? baseUrl
-                    : baseUrl.replace(uri.getUserInfo() + "@", "***@");
+            String rendered = uri.getUserInfo() == null ? baseUrl : baseUrl.replace(uri.getUserInfo() + "@", "***@");
             return LogSanitizer.sanitize(rendered, 200);
         } catch (IllegalArgumentException e) {
             return "<url inválida>";
@@ -227,25 +243,30 @@ public class AdapterConfiguration {
      * dejaba que otra instancia re-reclamara mensajes todavía en vuelo.
      */
     @Bean
-    public JdbcEventOutbox jdbcEventOutbox(JdbcTemplate jdbcTemplate,
-                                           DomainEventPayloadMapper payloadMapper,
-                                           OutboxProperties properties,
-                                           MessagingProperties messaging,
-                                           Clock clock) {
-        Duration worstCaseTick = messaging.confirmTimeout()
-                .multipliedBy(properties.batchSize())
-                .plusSeconds(30);
+    public JdbcEventOutbox jdbcEventOutbox(
+            JdbcTemplate jdbcTemplate,
+            DomainEventPayloadMapper payloadMapper,
+            OutboxProperties properties,
+            MessagingProperties messaging,
+            Clock clock) {
+        Duration worstCaseTick =
+                messaging.confirmTimeout().multipliedBy(properties.batchSize()).plusSeconds(30);
         OutboxProperties effective = properties.withClaimLeaseAtLeast(worstCaseTick);
         if (!effective.claimLease().equals(properties.claimLease())) {
-            log.info("Lease del reclamo del outbox elevado de {} s a {} s: es el peor caso de un tick "
+            log.info(
+                    "Lease del reclamo del outbox elevado de {} s a {} s: es el peor caso de un tick "
                             + "({} mensajes × {} s de confirm)",
-                    properties.claimLease().toSeconds(), effective.claimLease().toSeconds(),
-                    properties.batchSize(), messaging.confirmTimeout().toSeconds());
+                    properties.claimLease().toSeconds(),
+                    effective.claimLease().toSeconds(),
+                    properties.batchSize(),
+                    messaging.confirmTimeout().toSeconds());
         }
         if (properties.worstCaseRetryWindow().compareTo(properties.retryCeiling()) < 0) {
-            log.warn("Los dos cortes del outbox dicen cosas distintas: {} intentos cubren {} min de reloj, "
+            log.warn(
+                    "Los dos cortes del outbox dicen cosas distintas: {} intentos cubren {} min de reloj, "
                             + "menos que el techo de {} min. El techo no va a actuar nunca.",
-                    properties.maxAttempts(), properties.worstCaseRetryWindow().toMinutes(),
+                    properties.maxAttempts(),
+                    properties.worstCaseRetryWindow().toMinutes(),
                     properties.retryCeiling().toMinutes());
         }
         return new JdbcEventOutbox(jdbcTemplate, payloadMapper, effective, clock);

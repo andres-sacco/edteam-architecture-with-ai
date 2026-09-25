@@ -12,11 +12,10 @@ import com.edteam.reservations.domain.access.ReservationAccessPolicy;
 import com.edteam.reservations.domain.model.Itinerary;
 import com.edteam.reservations.domain.model.Reservation;
 import com.edteam.reservations.domain.model.ReservationId;
-import org.springframework.stereotype.Service;
-
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Objects;
+import org.springframework.stereotype.Service;
 
 /**
  * Reemplazo del itinerario de una reserva vigente.
@@ -38,12 +37,13 @@ public class ModifyReservationService implements ModifyReservationUseCase {
     private final AuditTrailPort auditTrail;
     private final Clock clock;
 
-    ModifyReservationService(ReservationRepositoryPort reservationRepository,
-                             ItineraryAssembler itineraryAssembler,
-                             AirportExistenceValidator airportValidator,
-                             ModifyReservationTransaction transaction,
-                             AuditTrailPort auditTrail,
-                             Clock clock) {
+    ModifyReservationService(
+            ReservationRepositoryPort reservationRepository,
+            ItineraryAssembler itineraryAssembler,
+            AirportExistenceValidator airportValidator,
+            ModifyReservationTransaction transaction,
+            AuditTrailPort auditTrail,
+            Clock clock) {
         this.reservationRepository = Objects.requireNonNull(reservationRepository);
         this.itineraryAssembler = Objects.requireNonNull(itineraryAssembler);
         this.airportValidator = Objects.requireNonNull(airportValidator);
@@ -58,7 +58,8 @@ public class ModifyReservationService implements ModifyReservationUseCase {
         ReservationId reservationId = ReservationId.of(command.reservationId());
         Instant now = clock.instant();
 
-        Reservation current = reservationRepository.findById(reservationId)
+        Reservation current = reservationRepository
+                .findById(reservationId)
                 .orElseThrow(() -> new ReservationNotFoundException(reservationId));
 
         // Primero quién, después todo lo demás: sin esto, un pedido sobre una
@@ -69,8 +70,8 @@ public class ModifyReservationService implements ModifyReservationUseCase {
         // resuelve el adaptador de auditoría—, así que no depende de que acá
         // haya una abierta.
         if (!ReservationAccessPolicy.canWrite(command.actor(), current)) {
-            auditTrail.record(AuditEntry.denied(AuditAction.RESERVATION_ACCESS_DENIED,
-                    command.actor().email(), reservationId.toString(), now));
+            auditTrail.record(AuditEntry.denied(
+                    AuditAction.RESERVATION_ACCESS_DENIED, command.actor().email(), reservationId.toString(), now));
             throw new ReservationNotFoundException(reservationId);
         }
 

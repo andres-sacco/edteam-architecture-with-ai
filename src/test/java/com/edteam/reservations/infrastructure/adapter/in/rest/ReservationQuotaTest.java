@@ -1,5 +1,15 @@
 package com.edteam.reservations.infrastructure.adapter.in.rest;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
 import com.edteam.reservations.application.port.in.CancelReservationUseCase;
 import com.edteam.reservations.application.port.in.CreateReservationUseCase;
 import com.edteam.reservations.application.port.in.GetReservationUseCase;
@@ -20,16 +30,6 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-
 /**
  * La cuota de pedidos, enchufada en la cadena real.
  *
@@ -44,15 +44,21 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * compartirlo con los demás tests de seguridad haría que el resultado dependa
  * del orden de ejecución.
  */
-@WebMvcTest(value = ReservationController.class, properties = {
-        "reservations.security.rate-limit.enabled=true",
-        "reservations.security.rate-limit.reads=3",
-        // Una hora: el test tiene que poder agotar la cuota sin que la ventana
-        // se dé vuelta en el medio.
-        "reservations.security.rate-limit.window=1h"
+@WebMvcTest(
+        value = ReservationController.class,
+        properties = {
+            "reservations.security.rate-limit.enabled=true",
+            "reservations.security.rate-limit.reads=3",
+            // Una hora: el test tiene que poder agotar la cuota sin que la ventana
+            // se dé vuelta en el medio.
+            "reservations.security.rate-limit.window=1h"
+        })
+@Import({
+    ReservationRestMapper.class,
+    SecurityConfiguration.class,
+    WebSliceConfiguration.class,
+    TestVersionCacheConfiguration.class
 })
-@Import({ReservationRestMapper.class, SecurityConfiguration.class, WebSliceConfiguration.class,
-        TestVersionCacheConfiguration.class})
 @WithMockActor
 @DisplayName("Cuota de pedidos en el borde")
 class ReservationQuotaTest {

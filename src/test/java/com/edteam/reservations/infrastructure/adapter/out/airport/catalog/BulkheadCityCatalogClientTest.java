@@ -1,11 +1,11 @@
 package com.edteam.reservations.infrastructure.adapter.out.airport.catalog;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
 import io.github.resilience4j.bulkhead.Bulkhead;
 import io.github.resilience4j.bulkhead.BulkheadConfig;
 import io.github.resilience4j.bulkhead.BulkheadFullException;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-
 import java.time.Duration;
 import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
@@ -13,9 +13,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 
 /**
  * La cota de llamadas en vuelo contra el proveedor.
@@ -40,19 +39,21 @@ class BulkheadCityCatalogClientTest {
         CountDownLatch release = new CountDownLatch(1);
         CountDownLatch started = new CountDownLatch(PERMITS);
 
-        CityCatalogClient client = new BulkheadCityCatalogClient(code -> {
-            int current = inFlight.incrementAndGet();
-            peak.accumulateAndGet(current, Math::max);
-            started.countDown();
-            try {
-                release.await(5, TimeUnit.SECONDS);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            } finally {
-                inFlight.decrementAndGet();
-            }
-            return Optional.of(new CatalogCity(code, code));
-        }, bulkhead());
+        CityCatalogClient client = new BulkheadCityCatalogClient(
+                code -> {
+                    int current = inFlight.incrementAndGet();
+                    peak.accumulateAndGet(current, Math::max);
+                    started.countDown();
+                    try {
+                        release.await(5, TimeUnit.SECONDS);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    } finally {
+                        inFlight.decrementAndGet();
+                    }
+                    return Optional.of(new CatalogCity(code, code));
+                },
+                bulkhead());
 
         try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
             for (int i = 0; i < 50; i++) {
@@ -84,8 +85,8 @@ class BulkheadCityCatalogClientTest {
             assertThat(full.tryAcquirePermission()).isTrue();
         }
 
-        CityCatalogClient client = new BulkheadCityCatalogClient(
-                code -> Optional.of(new CatalogCity(code, code)), full);
+        CityCatalogClient client =
+                new BulkheadCityCatalogClient(code -> Optional.of(new CatalogCity(code, code)), full);
 
         long startedAt = System.nanoTime();
         assertThatThrownBy(() -> client.findByCode("BUE")).isInstanceOf(BulkheadFullException.class);
@@ -99,16 +100,18 @@ class BulkheadCityCatalogClientTest {
     @Test
     @DisplayName("con permisos libres no se interpone: la llamada pasa igual")
     void doesNotInterfereWhenThereIsRoom() {
-        CityCatalogClient client = new BulkheadCityCatalogClient(
-                code -> Optional.of(new CatalogCity(code, "Buenos Aires")), bulkhead());
+        CityCatalogClient client =
+                new BulkheadCityCatalogClient(code -> Optional.of(new CatalogCity(code, "Buenos Aires")), bulkhead());
 
         assertThat(client.findByCode("BUE")).map(CatalogCity::name).contains("Buenos Aires");
     }
 
     private static Bulkhead bulkhead() {
-        return Bulkhead.of("catalog-test-" + System.nanoTime(), BulkheadConfig.custom()
-                .maxConcurrentCalls(PERMITS)
-                .maxWaitDuration(Duration.ZERO)
-                .build());
+        return Bulkhead.of(
+                "catalog-test-" + System.nanoTime(),
+                BulkheadConfig.custom()
+                        .maxConcurrentCalls(PERMITS)
+                        .maxWaitDuration(Duration.ZERO)
+                        .build());
     }
 }

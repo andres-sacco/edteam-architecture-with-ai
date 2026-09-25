@@ -6,16 +6,15 @@ import com.edteam.reservations.infrastructure.config.OutboxProperties;
 import com.edteam.reservations.infrastructure.logging.LogFields;
 import com.edteam.reservations.infrastructure.logging.MdcTaskDecorator;
 import com.edteam.reservations.infrastructure.logging.Throwables;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-
-import java.time.Clock;
-import java.time.Duration;
-import java.time.Instant;
-import java.util.Objects;
 
 /**
  * Purga diaria de las dos tablas de mensajería.
@@ -51,10 +50,8 @@ public class MessagingPurgeScheduler {
     private final OutboxProperties properties;
     private final Clock clock;
 
-    public MessagingPurgeScheduler(OutboxAdmin outbox,
-                                   ProcessedMessagePort processedMessages,
-                                   OutboxProperties properties,
-                                   Clock clock) {
+    public MessagingPurgeScheduler(
+            OutboxAdmin outbox, ProcessedMessagePort processedMessages, OutboxProperties properties, Clock clock) {
         this.outbox = Objects.requireNonNull(outbox);
         this.processedMessages = Objects.requireNonNull(processedMessages);
         this.properties = Objects.requireNonNull(properties);

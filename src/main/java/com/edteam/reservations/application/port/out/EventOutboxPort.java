@@ -3,7 +3,6 @@ package com.edteam.reservations.application.port.out;
 import com.edteam.reservations.application.outbox.OutboxFailure;
 import com.edteam.reservations.application.outbox.OutboxMessage;
 import com.edteam.reservations.domain.event.DomainEvent;
-
 import java.util.Collection;
 import java.util.List;
 

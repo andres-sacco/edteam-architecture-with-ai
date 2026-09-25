@@ -35,16 +35,15 @@ public class OpsConfiguration {
      * impedir que se registren las otras cuatro series.
      */
     @Bean
-    public OutboxMetrics outboxMetrics(OutboxAdmin outbox,
-                                       DeadLetterQueue deadLetterQueue,
-                                       OutboxProperties properties) {
+    public OutboxMetrics outboxMetrics(
+            OutboxAdmin outbox, DeadLetterQueue deadLetterQueue, OutboxProperties properties) {
         return new OutboxMetrics(outbox, deadLetterQueue::depth, properties.metricsCache());
     }
 
     @Bean
     @ConditionalOnAvailableEndpoint(endpoint = OutboxEndpoint.class)
-    public OutboxEndpoint outboxEndpoint(OutboxAdmin outbox,
-                                         DispatchPendingNotificationsUseCase dispatchNotifications) {
+    public OutboxEndpoint outboxEndpoint(
+            OutboxAdmin outbox, DispatchPendingNotificationsUseCase dispatchNotifications) {
         return new OutboxEndpoint(outbox, dispatchNotifications);
     }
 

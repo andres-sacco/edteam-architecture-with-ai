@@ -2,7 +2,6 @@ package com.edteam.reservations.infrastructure.adapter.out.persistence;
 
 import com.edteam.reservations.application.port.out.ReservationRepositoryPort;
 import com.edteam.reservations.application.query.ReservationSearchCriteria;
-
 import java.util.List;
 
 /**

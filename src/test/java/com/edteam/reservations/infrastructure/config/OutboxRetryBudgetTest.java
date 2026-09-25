@@ -1,15 +1,14 @@
 package com.edteam.reservations.infrastructure.config;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
+import java.time.Duration;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.test.context.ConfigDataApplicationContextInitializer;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Configuration;
-
-import java.time.Duration;
-
-import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Los dos cortes del outbox tienen que decir lo mismo.
@@ -34,8 +33,7 @@ class OutboxRetryBudgetTest {
 
     @Configuration(proxyBeanMethods = false)
     @EnableConfigurationProperties(OutboxProperties.class)
-    static class Properties {
-    }
+    static class Properties {}
 
     @Test
     @DisplayName("los intentos configurados cubren al menos el techo de tiempo: manda el techo, no el contador")
@@ -44,8 +42,11 @@ class OutboxRetryBudgetTest {
             OutboxProperties properties = context.getBean(OutboxProperties.class);
 
             assertThat(properties.worstCaseRetryWindow())
-                    .as("con %d intentos de %s a %s se cubren %d min, y el techo es de %d min",
-                            properties.maxAttempts(), properties.initialBackoff(), properties.maxBackoff(),
+                    .as(
+                            "con %d intentos de %s a %s se cubren %d min, y el techo es de %d min",
+                            properties.maxAttempts(),
+                            properties.initialBackoff(),
+                            properties.maxBackoff(),
                             properties.worstCaseRetryWindow().toMinutes(),
                             properties.retryCeiling().toMinutes())
                     .isGreaterThanOrEqualTo(properties.retryCeiling());
@@ -62,9 +63,8 @@ class OutboxRetryBudgetTest {
             // confirma, un tick de 50 mensajes dura más de cuatro minutos. Un
             // lease de dos dejaba que otra instancia re-reclamara mensajes
             // todavía en vuelo.
-            Duration worstCaseTick = Duration.ofSeconds(5)
-                    .multipliedBy(properties.batchSize())
-                    .plusSeconds(30);
+            Duration worstCaseTick =
+                    Duration.ofSeconds(5).multipliedBy(properties.batchSize()).plusSeconds(30);
 
             assertThat(properties.withClaimLeaseAtLeast(worstCaseTick).claimLease())
                     .isGreaterThanOrEqualTo(worstCaseTick);
@@ -75,9 +75,15 @@ class OutboxRetryBudgetTest {
     @DisplayName("la ventana se calcula, no se escribe: con el par viejo el test habría fallado")
     void theOldPairWouldHaveFailed() {
         OutboxProperties old = new OutboxProperties(
-                Duration.ofSeconds(5), 50, 10, Duration.ofHours(6),
-                Duration.ofSeconds(5), Duration.ofMinutes(5),
-                Duration.ofMinutes(2), Duration.ofDays(7), Duration.ofSeconds(5));
+                Duration.ofSeconds(5),
+                50,
+                10,
+                Duration.ofHours(6),
+                Duration.ofSeconds(5),
+                Duration.ofMinutes(5),
+                Duration.ofMinutes(2),
+                Duration.ofDays(7),
+                Duration.ofSeconds(5));
 
         assertThat(old.worstCaseRetryWindow())
                 .as("diez intentos se agotaban en ~20 min, no en seis horas")

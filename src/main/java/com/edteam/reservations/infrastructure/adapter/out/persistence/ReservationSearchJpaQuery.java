@@ -18,13 +18,12 @@ import jakarta.persistence.criteria.Order;
 import jakarta.persistence.criteria.Path;
 import jakarta.persistence.criteria.Predicate;
 import jakarta.persistence.criteria.Root;
-import org.springframework.stereotype.Component;
-
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
+import org.springframework.stereotype.Component;
 
 /**
  * Resuelve la parte "buscar ids" del listado de reservas.
@@ -88,7 +87,8 @@ public class ReservationSearchJpaQuery implements ReservationSearchQuery {
                 .where(toPredicates(builder, reservation, firstSegment, criteria))
                 .orderBy(toOrder(builder, reservation, firstSegment, criteria));
 
-        return entityManager.createQuery(query)
+        return entityManager
+                .createQuery(query)
                 .setFirstResult(criteria.offset())
                 .setMaxResults(criteria.size())
                 .getResultList();
@@ -100,35 +100,36 @@ public class ReservationSearchJpaQuery implements ReservationSearchQuery {
         return itinerary.joinList("segments");
     }
 
-    private static Predicate[] toPredicates(CriteriaBuilder builder,
-                                            Root<ReservationJpaEntity> reservation,
-                                            ListJoin<ItineraryJpaEntity, SegmentJpaEntity> firstSegment,
-                                            ReservationSearchCriteria criteria) {
+    private static Predicate[] toPredicates(
+            CriteriaBuilder builder,
+            Root<ReservationJpaEntity> reservation,
+            ListJoin<ItineraryJpaEntity, SegmentJpaEntity> firstSegment,
+            ReservationSearchCriteria criteria) {
         List<Predicate> predicates = new ArrayList<>();
         predicates.add(builder.equal(firstSegment.index(), FIRST_SEGMENT_INDEX));
 
         // El filtro llega como email —lo que el cliente conoce— y se resuelve
         // con un join contra usuario, no con el id interno.
-        criteria.userEmail().ifPresent(email ->
-                predicates.add(builder.equal(reservation.join("user").get("email"), email.value())));
+        criteria.userEmail()
+                .ifPresent(email ->
+                        predicates.add(builder.equal(reservation.join("user").get("email"), email.value())));
 
         if (criteria.filtersByStatus()) {
             predicates.add(reservation.get("status").in(toJpaStatuses(criteria.statuses())));
         }
 
         Path<Instant> departureAt = firstSegment.get("departureAt");
-        criteria.departureFrom().ifPresent(from ->
-                predicates.add(builder.greaterThanOrEqualTo(departureAt, from)));
-        criteria.departureTo().ifPresent(to ->
-                predicates.add(builder.lessThanOrEqualTo(departureAt, to)));
+        criteria.departureFrom().ifPresent(from -> predicates.add(builder.greaterThanOrEqualTo(departureAt, from)));
+        criteria.departureTo().ifPresent(to -> predicates.add(builder.lessThanOrEqualTo(departureAt, to)));
 
         return predicates.toArray(Predicate[]::new);
     }
 
-    private static List<Order> toOrder(CriteriaBuilder builder,
-                                       Root<ReservationJpaEntity> reservation,
-                                       ListJoin<ItineraryJpaEntity, SegmentJpaEntity> firstSegment,
-                                       ReservationSearchCriteria criteria) {
+    private static List<Order> toOrder(
+            CriteriaBuilder builder,
+            Root<ReservationJpaEntity> reservation,
+            ListJoin<ItineraryJpaEntity, SegmentJpaEntity> firstSegment,
+            ReservationSearchCriteria criteria) {
         Path<?> sortPath = criteria.sortBy() == ReservationSortBy.FIRST_DEPARTURE_AT
                 ? firstSegment.get("departureAt")
                 : reservation.get("createdAt");

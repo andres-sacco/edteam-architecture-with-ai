@@ -1,5 +1,7 @@
 package com.edteam.reservations.infrastructure.adapter.out.outbox;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import com.edteam.reservations.application.outbox.OutboxFailure;
 import com.edteam.reservations.application.outbox.OutboxMessage;
 import com.edteam.reservations.application.outbox.OutboxStatus;
@@ -10,11 +12,6 @@ import com.edteam.reservations.domain.event.ReservationConfirmed;
 import com.edteam.reservations.domain.event.ReservationCreated;
 import com.edteam.reservations.support.AbstractPostgresIT;
 import com.edteam.reservations.support.TestFixtures;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Nested;
-import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -26,8 +23,10 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
-
-import static org.assertj.core.api.Assertions.assertThat;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 
 /**
  * El outbox durable contra PostgreSQL real.
@@ -208,8 +207,8 @@ class JdbcEventOutboxIT extends AbstractPostgresIT {
         void enqueuesABatchAtomically() {
             inTransaction(() -> eventOutbox.enqueue(List.of(created(), confirmed(), cancelled())));
 
-            assertThat(outboxTypes("PENDING")).containsExactly(
-                    "reservation.created", "reservation.confirmed", "reservation.cancelled");
+            assertThat(outboxTypes("PENDING"))
+                    .containsExactly("reservation.created", "reservation.confirmed", "reservation.cancelled");
         }
     }
 
@@ -333,9 +332,11 @@ class JdbcEventOutboxIT extends AbstractPostgresIT {
             // garantía de orden moría ahí y el consumidor no recibía el número
             // con el que ordenar, así que la aserción no se podía escribir.
             assertThat(claimed).extracting(OutboxMessage::sequence).isSorted();
-            assertThat(claimed).allSatisfy(message -> assertThat(message.sequence()).isPositive());
-            assertThat(claimed).extracting(OutboxMessage::type).containsExactly(
-                    "reservation.created", "reservation.confirmed", "reservation.cancelled");
+            assertThat(claimed)
+                    .allSatisfy(message -> assertThat(message.sequence()).isPositive());
+            assertThat(claimed)
+                    .extracting(OutboxMessage::type)
+                    .containsExactly("reservation.created", "reservation.confirmed", "reservation.cancelled");
         }
 
         @Test
@@ -343,8 +344,7 @@ class JdbcEventOutboxIT extends AbstractPostgresIT {
         void subjectIsTheReservation() {
             inTransaction(() -> eventOutbox.enqueue(List.of(created())));
 
-            assertThat(outbox.pollPending(10).getFirst().subject())
-                    .isEqualTo(TestFixtures.RESERVATION_ID.toString());
+            assertThat(outbox.pollPending(10).getFirst().subject()).isEqualTo(TestFixtures.RESERVATION_ID.toString());
         }
     }
 
@@ -408,14 +408,14 @@ class JdbcEventOutboxIT extends AbstractPostgresIT {
             // veinte segundos que antes alcanzaban para destruirlos.
             for (int round = 0; round < 4; round++) {
                 jdbcTemplate.update("UPDATE outbox_message SET next_attempt_at = " + NOW_UTC + ", claimed_at = NULL");
-                outbox.pollPending(50).forEach(message ->
-                        outbox.markFailed(message.id(), "destino caído", OutboxFailure.TRANSIENT));
+                outbox.pollPending(50)
+                        .forEach(message -> outbox.markFailed(message.id(), "destino caído", OutboxFailure.TRANSIENT));
             }
 
             assertThat(countOutbox("FAILED")).isZero();
             assertThat(countOutbox("PENDING")).isEqualTo(50L);
-            assertThat(jdbcTemplate.queryForObject(
-                    "SELECT max(attempts) FROM outbox_message", Integer.class)).isEqualTo(4);
+            assertThat(jdbcTemplate.queryForObject("SELECT max(attempts) FROM outbox_message", Integer.class))
+                    .isEqualTo(4);
         }
 
         private Duration failAndReadBackoff(String id) {
@@ -426,13 +426,16 @@ class JdbcEventOutboxIT extends AbstractPostgresIT {
         private Duration readBackoff(String id) {
             Long millis = jdbcTemplate.queryForObject(
                     "SELECT (extract(epoch from (next_attempt_at - " + NOW_UTC + ")) * 1000)::bigint "
-                            + "FROM outbox_message WHERE id = ?::uuid", Long.class, id);
+                            + "FROM outbox_message WHERE id = ?::uuid",
+                    Long.class,
+                    id);
             return Duration.ofMillis(millis == null ? 0L : millis);
         }
 
         private void makeEligible(String id) {
-            jdbcTemplate.update("UPDATE outbox_message SET next_attempt_at = " + NOW_UTC
-                    + ", claimed_at = NULL WHERE id = ?::uuid", id);
+            jdbcTemplate.update(
+                    "UPDATE outbox_message SET next_attempt_at = " + NOW_UTC + ", claimed_at = NULL WHERE id = ?::uuid",
+                    id);
         }
     }
 
@@ -455,11 +458,10 @@ class JdbcEventOutboxIT extends AbstractPostgresIT {
             // Sin esta distinción, un mensaje venenoso quemaba todos los
             // intentos y veinticinco segundos del despachador por nada.
             assertThat(countOutbox("FAILED")).isEqualTo(1L);
-            assertThat(outbox.deadLetter(10)).singleElement()
-                    .satisfies(dead -> {
-                        assertThat(dead.attempts()).isEqualTo(1);
-                        assertThat(dead.lastError()).contains("no es JSON válido");
-                    });
+            assertThat(outbox.deadLetter(10)).singleElement().satisfies(dead -> {
+                assertThat(dead.attempts()).isEqualTo(1);
+                assertThat(dead.lastError()).contains("no es JSON válido");
+            });
         }
 
         @Test
@@ -473,8 +475,10 @@ class JdbcEventOutboxIT extends AbstractPostgresIT {
             // un número literal acá habría quedado viejo en silencio.
             for (int i = 0; i < outboxProperties.maxAttempts() + 2; i++) {
                 outbox.markFailed(id, "destino caído", OutboxFailure.TRANSIENT);
-                jdbcTemplate.update("UPDATE outbox_message SET next_attempt_at = " + NOW_UTC
-                        + ", claimed_at = NULL WHERE id = ?::uuid", id);
+                jdbcTemplate.update(
+                        "UPDATE outbox_message SET next_attempt_at = " + NOW_UTC
+                                + ", claimed_at = NULL WHERE id = ?::uuid",
+                        id);
                 outbox.pollPending(10);
             }
 
@@ -487,8 +491,9 @@ class JdbcEventOutboxIT extends AbstractPostgresIT {
             inTransaction(() -> eventOutbox.enqueue(List.of(created())));
             String id = outbox.pollPending(10).getFirst().id();
             // Lleva más de las seis horas de techo esperando.
-            jdbcTemplate.update("UPDATE outbox_message SET enqueued_at = " + NOW_UTC
-                    + " - interval '7 hours' WHERE id = ?::uuid", id);
+            jdbcTemplate.update(
+                    "UPDATE outbox_message SET enqueued_at = " + NOW_UTC + " - interval '7 hours' WHERE id = ?::uuid",
+                    id);
 
             outbox.markFailed(id, "el broker sigue caído", OutboxFailure.TRANSIENT);
 
@@ -504,7 +509,8 @@ class JdbcEventOutboxIT extends AbstractPostgresIT {
             outbox.markFailed(id, "payload inválido", OutboxFailure.PERMANENT);
 
             assertThat(outbox.stats().dead()).isEqualTo(1L);
-            assertThat(outbox.deadLetter(10)).singleElement()
+            assertThat(outbox.deadLetter(10))
+                    .singleElement()
                     .satisfies(dead -> assertThat(dead.id()).isEqualTo(id));
 
             assertThat(outbox.replay(id)).isTrue();
@@ -514,11 +520,10 @@ class JdbcEventOutboxIT extends AbstractPostgresIT {
             // agotado lo mandaría de vuelta a la dead letter en el primer
             // tropiezo.
             assertThat(countOutbox("FAILED")).isZero();
-            assertThat(outbox.pollPending(10)).singleElement()
-                    .satisfies(message -> {
-                        assertThat(message.id()).isEqualTo(id);
-                        assertThat(message.attempts()).isZero();
-                    });
+            assertThat(outbox.pollPending(10)).singleElement().satisfies(message -> {
+                assertThat(message.id()).isEqualTo(id);
+                assertThat(message.attempts()).isZero();
+            });
         }
 
         @Test
@@ -531,8 +536,8 @@ class JdbcEventOutboxIT extends AbstractPostgresIT {
         @DisplayName("replayAll reencola toda la dead letter")
         void replayAllRequeuesEverything() {
             inTransaction(() -> eventOutbox.enqueue(List.of(created(), confirmed(), cancelled())));
-            outbox.pollPending(10).forEach(message ->
-                    outbox.markFailed(message.id(), "payload inválido", OutboxFailure.PERMANENT));
+            outbox.pollPending(10)
+                    .forEach(message -> outbox.markFailed(message.id(), "payload inválido", OutboxFailure.PERMANENT));
 
             assertThat(outbox.replayAll()).isEqualTo(3);
             assertThat(countOutbox("PENDING")).isEqualTo(3L);
@@ -572,8 +577,7 @@ class JdbcEventOutboxIT extends AbstractPostgresIT {
         @DisplayName("el lag es la antigüedad del pendiente más viejo")
         void lagIsTheAgeOfTheOldestPending() {
             inTransaction(() -> eventOutbox.enqueue(List.of(created())));
-            jdbcTemplate.update("UPDATE outbox_message SET enqueued_at = " + NOW_UTC
-                    + " - interval '12 minutes'");
+            jdbcTemplate.update("UPDATE outbox_message SET enqueued_at = " + NOW_UTC + " - interval '12 minutes'");
 
             assertThat(outbox.stats().lag()).isBetween(Duration.ofMinutes(11), Duration.ofMinutes(13));
         }
@@ -602,8 +606,7 @@ class JdbcEventOutboxIT extends AbstractPostgresIT {
             outbox.markDispatched(claimed.get(0).id());
             outbox.markDispatched(claimed.get(1).id());
             outbox.markFailed(claimed.get(2).id(), "payload inválido", OutboxFailure.PERMANENT);
-            jdbcTemplate.update("UPDATE outbox_message SET enqueued_at = " + NOW_UTC
-                    + " - interval '10 days'");
+            jdbcTemplate.update("UPDATE outbox_message SET enqueued_at = " + NOW_UTC + " - interval '10 days'");
 
             int purged = outbox.purgeDispatchedBefore(Instant.now().minus(Duration.ofDays(7)));
 
@@ -619,7 +622,8 @@ class JdbcEventOutboxIT extends AbstractPostgresIT {
             inTransaction(() -> eventOutbox.enqueue(List.of(created())));
             outbox.markDispatched(outbox.pollPending(10).getFirst().id());
 
-            assertThat(outbox.purgeDispatchedBefore(Instant.now().minus(Duration.ofDays(7)))).isZero();
+            assertThat(outbox.purgeDispatchedBefore(Instant.now().minus(Duration.ofDays(7))))
+                    .isZero();
             assertThat(countOutbox("DISPATCHED")).isEqualTo(1L);
         }
     }
@@ -629,8 +633,7 @@ class JdbcEventOutboxIT extends AbstractPostgresIT {
     void storesTheSerializedPayloadWithoutSensitiveData() {
         inTransaction(() -> eventOutbox.enqueue(List.of(created())));
 
-        String payload = jdbcTemplate.queryForObject(
-                "SELECT payload::text FROM outbox_message", String.class);
+        String payload = jdbcTemplate.queryForObject("SELECT payload::text FROM outbox_message", String.class);
 
         assertThat(payload)
                 .contains("\"reservationId\"")

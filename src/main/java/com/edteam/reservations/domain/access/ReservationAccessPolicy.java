@@ -2,7 +2,6 @@ package com.edteam.reservations.domain.access;
 
 import com.edteam.reservations.domain.model.Email;
 import com.edteam.reservations.domain.model.Reservation;
-
 import java.util.Objects;
 import java.util.Optional;
 
@@ -29,8 +28,7 @@ import java.util.Optional;
  */
 public final class ReservationAccessPolicy {
 
-    private ReservationAccessPolicy() {
-    }
+    private ReservationAccessPolicy() {}
 
     /**
      * Si el actor puede ver la reserva: es suya, o tiene el rol que alcanza
@@ -93,8 +91,7 @@ public final class ReservationAccessPolicy {
             // en un log y en un cuerpo de error, y los dos son sistemas con
             // otra retención y otro perímetro que la base. Quién pidió qué lo
             // dice la fila de `auditoria`, que para eso existe.
-            throw new ReservationAccessDeniedException(
-                    "El solicitante no puede listar las reservas de otro usuario");
+            throw new ReservationAccessDeniedException("El solicitante no puede listar las reservas de otro usuario");
         }
         return Optional.of(actor.email());
     }

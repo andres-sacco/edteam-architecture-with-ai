@@ -1,18 +1,17 @@
 package com.edteam.reservations.infrastructure.adapter.in.messaging;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
 import com.edteam.reservations.application.exception.UnprocessableEventException;
 import com.edteam.reservations.application.port.in.InboundEvent;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.core.MessageProperties;
-
-import java.nio.charset.StandardCharsets;
-import java.time.Instant;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @DisplayName("InboundEnvelopeParser")
 class InboundEnvelopeParserTest {
@@ -71,8 +70,8 @@ class InboundEnvelopeParserTest {
     @Test
     @DisplayName("ignora los campos que no conoce")
     void ignoresUnknownFields() {
-        String withExtras = COMPLETE.replace("\"version\": 1,",
-                "\"version\": 1, \"tenantId\": \"ar\", \"experimento\": { \"a\": 1 },");
+        String withExtras = COMPLETE.replace(
+                "\"version\": 1,", "\"version\": 1, \"tenantId\": \"ar\", \"experimento\": { \"a\": 1 },");
 
         assertThat(parser.parse(message(withExtras)).type()).isEqualTo("reservation.created");
     }
@@ -80,8 +79,8 @@ class InboundEnvelopeParserTest {
     @Test
     @DisplayName("no falla por un campo opcional ausente")
     void toleratesMissingOptionalFields() {
-        String withoutCorrelation = COMPLETE
-                .replace("\"correlationId\": \"3f7c2b81-5a4e-4d62-9f31-2b0c8d5e7a14\",", "");
+        String withoutCorrelation =
+                COMPLETE.replace("\"correlationId\": \"3f7c2b81-5a4e-4d62-9f31-2b0c8d5e7a14\",", "");
 
         assertThat(parser.parse(message(withoutCorrelation)).correlationId()).isNull();
     }
@@ -120,8 +119,8 @@ class InboundEnvelopeParserTest {
     @Test
     @DisplayName("sin messageId no hay con qué deduplicar")
     void rejectsAMissingMessageId() {
-        assertThatThrownBy(() -> parser.parse(message(
-                COMPLETE.replace("\"messageId\": \"0f7a6f2e-6b77-4a3a-9a5f-3c4a6b2f10d1\",", ""))))
+        assertThatThrownBy(() -> parser.parse(
+                        message(COMPLETE.replace("\"messageId\": \"0f7a6f2e-6b77-4a3a-9a5f-3c4a6b2f10d1\",", ""))))
                 .isInstanceOf(UnprocessableEventException.class)
                 .hasMessageContaining("messageId");
     }
@@ -137,8 +136,8 @@ class InboundEnvelopeParserTest {
     @Test
     @DisplayName("sin occurredAt no se puede decidir si el hecho todavía vale la pena")
     void rejectsAMissingOccurredAt() {
-        assertThatThrownBy(() -> parser.parse(message(
-                COMPLETE.replace("\"occurredAt\": \"2026-09-23T14:05:12.481Z\",", ""))))
+        assertThatThrownBy(() ->
+                        parser.parse(message(COMPLETE.replace("\"occurredAt\": \"2026-09-23T14:05:12.481Z\",", ""))))
                 .isInstanceOf(UnprocessableEventException.class)
                 .hasMessageContaining("occurredAt");
     }
@@ -146,8 +145,7 @@ class InboundEnvelopeParserTest {
     @Test
     @DisplayName("un occurredAt que no es RFC 3339 no es procesable")
     void rejectsAnInvalidOccurredAt() {
-        assertThatThrownBy(() -> parser.parse(message(
-                COMPLETE.replace("2026-09-23T14:05:12.481Z", "23/09/2026"))))
+        assertThatThrownBy(() -> parser.parse(message(COMPLETE.replace("2026-09-23T14:05:12.481Z", "23/09/2026"))))
                 .isInstanceOf(UnprocessableEventException.class)
                 .hasMessageContaining("RFC 3339");
     }

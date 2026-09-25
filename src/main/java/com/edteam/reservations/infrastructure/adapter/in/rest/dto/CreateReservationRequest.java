@@ -6,7 +6,6 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
-
 import java.util.List;
 
 /**
@@ -27,8 +26,7 @@ import java.util.List;
  *       para el cliente.</li>
  * </ul>
  */
-@Schema(name = "CreateReservationRequest",
-        description = """
+@Schema(name = "CreateReservationRequest", description = """
                 Datos para crear una reserva.
 
                 **El comprador no va en el cuerpo**: sale del token. La reserva se crea a
@@ -38,9 +36,7 @@ import java.util.List;
                 porque describe el intento de ejecución y no el recurso que se está
                 creando.""")
 public record CreateReservationRequest(
-
-        @NotNull(message = "El itinerario es obligatorio")
-        @Valid
+        @NotNull(message = "El itinerario es obligatorio") @Valid
         ItineraryRequest itinerary,
 
         @ArraySchema(arraySchema = @Schema(description = "Pasajeros de la reserva."))
@@ -51,5 +47,4 @@ public record CreateReservationRequest(
         // documento anunciaría minItems: 0 y mentiría.
         @Size(min = 1, max = 9, message = "Se admiten entre 1 y 9 pasajeros por reserva")
         @Valid
-        List<PassengerRequest> passengers) {
-}
+        List<PassengerRequest> passengers) {}

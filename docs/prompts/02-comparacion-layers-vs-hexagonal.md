@@ -34,4 +34,3 @@ Usar criterios explícitos:
 ## Formato de salida
 
 Tabla comparativa con una recomendación justificada, no un ensayo.
-

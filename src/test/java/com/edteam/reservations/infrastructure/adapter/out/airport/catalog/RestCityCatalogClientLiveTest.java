@@ -1,12 +1,12 @@
 package com.edteam.reservations.infrastructure.adapter.out.airport.catalog;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.client.RestClient;
-
-import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Contrato contra el catálogo de verdad, el de {@code compose.yaml}.
@@ -65,9 +65,8 @@ class RestCityCatalogClientLiveTest {
     @Test
     @DisplayName("centinela: el 'no existe' todavía llega como 200 vacío, no como 404")
     void unknownCodeStillAnswersEmpty200() {
-        ResponseEntity<String> response = RestClient.create()
-                .get().uri(BASE_URL + "/city/ZZZ")
-                .retrieve().toEntity(String.class);
+        ResponseEntity<String> response =
+                RestClient.create().get().uri(BASE_URL + "/city/ZZZ").retrieve().toEntity(String.class);
 
         assertThat(response.getStatusCode().value()).isEqualTo(200);
         assertThat(response.getBody()).isNull();

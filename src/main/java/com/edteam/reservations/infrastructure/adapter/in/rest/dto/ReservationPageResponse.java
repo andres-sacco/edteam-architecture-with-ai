@@ -10,16 +10,13 @@ import java.util.List;
  * así se le pueden agregar metadatos —hoy la paginación, mañana un cursor o
  * un total filtrado— sin romper a ningún cliente.
  */
-@Schema(name = "ReservationPage",
-        description = """
+@Schema(name = "ReservationPage", description = """
                 Página de reservas.
 
                 La colección viaja envuelta en un objeto y nunca como arreglo en la raíz,
                 para poder agregarle metadatos sin romper a los clientes.""")
 public record ReservationPageResponse(
-
         @Schema(description = "Reservas de la página, en el orden pedido.")
         List<ReservationResponse> items,
 
-        PageMetadataResponse page) {
-}
+        PageMetadataResponse page) {}

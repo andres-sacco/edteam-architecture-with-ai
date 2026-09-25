@@ -11,7 +11,6 @@ import jakarta.persistence.JoinTable;
 import jakarta.persistence.ManyToMany;
 import jakarta.persistence.OrderColumn;
 import jakarta.persistence.Table;
-
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
@@ -44,7 +43,8 @@ public class ItineraryJpaEntity {
     private String currency;
 
     @ManyToMany(fetch = FetchType.LAZY)
-    @JoinTable(name = "itinerario_segmento",
+    @JoinTable(
+            name = "itinerario_segmento",
             joinColumns = @JoinColumn(name = "itinerario_id"),
             inverseJoinColumns = @JoinColumn(name = "segmento_id"))
     @OrderColumn(name = "orden")

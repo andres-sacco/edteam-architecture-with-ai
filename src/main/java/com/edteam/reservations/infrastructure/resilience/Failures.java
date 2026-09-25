@@ -8,7 +8,6 @@ import com.edteam.reservations.application.exception.EventPublisherUnavailableEx
 import com.edteam.reservations.application.exception.EventRoutingException;
 import io.github.resilience4j.bulkhead.BulkheadFullException;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
-
 import java.util.function.Predicate;
 
 /**
@@ -34,8 +33,7 @@ import java.util.function.Predicate;
  */
 public final class Failures {
 
-    private Failures() {
-    }
+    private Failures() {}
 
     // -----------------------------------------------------------------
     // api-catalog
@@ -108,8 +106,7 @@ public final class Failures {
      * duplicarla adentro del publicador retendría el hilo del relay.
      */
     public static FailureClassification broker(Throwable error) {
-        if (error instanceof CallNotPermittedException
-                || error instanceof EventPublisherUnavailableException) {
+        if (error instanceof CallNotPermittedException || error instanceof EventPublisherUnavailableException) {
             return FailureClassification.SHED;
         }
         if (error instanceof EventRoutingException) {
@@ -137,7 +134,8 @@ public final class Failures {
      * enchufa a la librería, y el que garantiza que el circuito no pueda
      * contar algo distinto de lo que el retry reintenta.
      */
-    public static Predicate<Throwable> countsFor(java.util.function.Function<Throwable, FailureClassification> classifier) {
+    public static Predicate<Throwable> countsFor(
+            java.util.function.Function<Throwable, FailureClassification> classifier) {
         return error -> classifier.apply(error).countsForCircuit();
     }
 }

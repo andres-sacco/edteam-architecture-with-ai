@@ -1,13 +1,12 @@
 package com.edteam.reservations.infrastructure.adapter.out.persistence.repository;
 
 import com.edteam.reservations.infrastructure.adapter.out.persistence.entity.UserJpaEntity;
+import java.time.Instant;
+import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
-
-import java.time.Instant;
-import java.util.Optional;
 
 /**
  * Acceso a la tabla {@code usuario}.
@@ -36,8 +35,9 @@ public interface UserJpaRepository extends JpaRepository<UserJpaEntity, Long> {
             VALUES (:email, :firstName, :lastName, :registeredAt)
             ON CONFLICT ON CONSTRAINT uq_usuario_email DO NOTHING
             """, nativeQuery = true)
-    int insertIfAbsent(@Param("email") String email,
-                       @Param("firstName") String firstName,
-                       @Param("lastName") String lastName,
-                       @Param("registeredAt") Instant registeredAt);
+    int insertIfAbsent(
+            @Param("email") String email,
+            @Param("firstName") String firstName,
+            @Param("lastName") String lastName,
+            @Param("registeredAt") Instant registeredAt);
 }

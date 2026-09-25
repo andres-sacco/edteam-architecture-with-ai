@@ -23,12 +23,8 @@ import java.util.Objects;
  * @param sequence   orden del hecho dentro de la reserva
  * @param occurredAt cuándo ocurrió el hecho (no cuándo se entregó)
  */
-public record NotificationDelivery(String messageId,
-                                   String type,
-                                   String subject,
-                                   String userId,
-                                   long sequence,
-                                   Instant occurredAt) {
+public record NotificationDelivery(
+        String messageId, String type, String subject, String userId, long sequence, Instant occurredAt) {
 
     public NotificationDelivery {
         Objects.requireNonNull(messageId, "messageId es obligatorio");

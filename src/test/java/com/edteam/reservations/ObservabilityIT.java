@@ -1,5 +1,12 @@
 package com.edteam.reservations;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
 import ch.qos.logback.classic.Level;
 import com.edteam.reservations.infrastructure.logging.ActorRef;
 import com.edteam.reservations.infrastructure.logging.LogFields;
@@ -8,6 +15,11 @@ import com.edteam.reservations.support.ForbiddenPatterns;
 import com.edteam.reservations.support.LogCapture;
 import com.edteam.reservations.support.SecurityTestSupport;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -20,19 +32,6 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
-
-import java.time.Duration;
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
-import java.util.List;
-import java.util.UUID;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
  * La observabilidad, verificada de punta a punta contra los adaptadores reales.
@@ -98,22 +97,22 @@ class ObservabilityIT extends AbstractPostgresIT {
         @DisplayName("el X-Correlation-Id del cliente aparece en todos los registros del pedido")
         void theClientCorrelationIdReachesEveryRecord() throws Exception {
             logs.clear();
-            mockMvc.perform(post("/v1/reservations").with(asUser(EMAIL))
+            mockMvc.perform(post("/v1/reservations")
+                            .with(asUser(EMAIL))
                             .header(CORRELATION_HEADER, KNOWN_CORRELATION_ID)
                             .header(IDEMPOTENCY_KEY_HEADER, UUID.randomUUID().toString())
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(createBody("1250.50", "SCL", departure)))
                     .andExpect(status().isCreated())
-                    .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
-                            .header().string(CORRELATION_HEADER, KNOWN_CORRELATION_ID));
+                    .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header()
+                            .string(CORRELATION_HEADER, KNOWN_CORRELATION_ID));
 
             // Todo lo que el pedido escribió, escrito DENTRO del pedido, lleva
             // el id. Se excluye lo que corre fuera del hilo del pedido —el
             // relay, el consumidor— porque tiene su propio id.
-            List<LogCapture.Captured> duringTheRequest = logs.matching(captured ->
-                    captured.field("event") != null
-                            && !String.valueOf(captured.field("event")).startsWith("outbox.")
-                            && !String.valueOf(captured.field("event")).startsWith("consumer."));
+            List<LogCapture.Captured> duringTheRequest = logs.matching(captured -> captured.field("event") != null
+                    && !String.valueOf(captured.field("event")).startsWith("outbox.")
+                    && !String.valueOf(captured.field("event")).startsWith("consumer."));
 
             assertThat(duringTheRequest)
                     .withFailMessage("El pedido no dejó ningún registro con 'event': "
@@ -121,7 +120,8 @@ class ObservabilityIT extends AbstractPostgresIT {
                     .isNotEmpty();
             assertThat(duringTheRequest)
                     .allSatisfy(captured -> assertThat(captured.mdc(LogFields.CORRELATION_ID))
-                            .withFailMessage("El registro %s [%s] salió sin correlationId",
+                            .withFailMessage(
+                                    "El registro %s [%s] salió sin correlationId",
                                     captured.field("event"), captured.logger())
                             .isEqualTo(KNOWN_CORRELATION_ID));
         }
@@ -129,7 +129,8 @@ class ObservabilityIT extends AbstractPostgresIT {
         @Test
         @DisplayName("el mismo id queda en la fila de auditoría y en el envelope del outbox")
         void theSameIdIsWrittenOutsideTheLog() throws Exception {
-            mockMvc.perform(post("/v1/reservations").with(asUser(EMAIL))
+            mockMvc.perform(post("/v1/reservations")
+                            .with(asUser(EMAIL))
                             .header(CORRELATION_HEADER, KNOWN_CORRELATION_ID)
                             .header(IDEMPOTENCY_KEY_HEADER, UUID.randomUUID().toString())
                             .contentType(MediaType.APPLICATION_JSON)
@@ -137,13 +138,12 @@ class ObservabilityIT extends AbstractPostgresIT {
                     .andExpect(status().isCreated());
 
             // (c) la columna correlation_id de 'auditoria'
-            List<String> audited = jdbcTemplate.queryForList(
-                    "SELECT correlation_id FROM auditoria", String.class);
+            List<String> audited = jdbcTemplate.queryForList("SELECT correlation_id FROM auditoria", String.class);
             assertThat(audited).containsOnly(KNOWN_CORRELATION_ID);
 
             // (d) el campo del EventEnvelope de la fila del outbox
-            List<String> payloads = jdbcTemplate.queryForList(
-                    "SELECT correlation_id FROM outbox_message", String.class);
+            List<String> payloads =
+                    jdbcTemplate.queryForList("SELECT correlation_id FROM outbox_message", String.class);
             assertThat(payloads).containsOnly(KNOWN_CORRELATION_ID);
         }
 
@@ -156,29 +156,30 @@ class ObservabilityIT extends AbstractPostgresIT {
             // nuestros logs. Un valor que no cumple se descarta y se genera uno
             // nuevo, sin error: no es culpa del pedido y no hay nada que el
             // cliente pueda arreglar.
-            MvcResult result = mockMvc.perform(get("/v1/reservations").with(asUser(EMAIL))
-                            .header(CORRELATION_HEADER, "corto"))
+            MvcResult result = mockMvc.perform(
+                            get("/v1/reservations").with(asUser(EMAIL)).header(CORRELATION_HEADER, "corto"))
                     .andExpect(status().isOk())
                     .andReturn();
 
             String emitted = result.getResponse().getHeader(CORRELATION_HEADER);
-            assertThat(emitted)
-                    .isNotNull()
-                    .doesNotContain("\n")
-                    .matches("[A-Za-z0-9_-]{8,64}");
+            assertThat(emitted).isNotNull().doesNotContain("\n").matches("[A-Za-z0-9_-]{8,64}");
         }
 
         @Test
         @DisplayName("el log de acceso describe el pedido: método, ruta plantilla, status y duración")
         void theAccessRecordDescribesTheRequest() throws Exception {
             logs.clear();
-            MvcResult created = mockMvc.perform(post("/v1/reservations").with(asUser(EMAIL))
+            MvcResult created = mockMvc.perform(post("/v1/reservations")
+                            .with(asUser(EMAIL))
                             .header(IDEMPOTENCY_KEY_HEADER, UUID.randomUUID().toString())
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(createBody("1250.50", "SCL", departure)))
                     .andExpect(status().isCreated())
                     .andReturn();
-            String id = objectMapper.readTree(created.getResponse().getContentAsString()).get("id").asText();
+            String id = objectMapper
+                    .readTree(created.getResponse().getContentAsString())
+                    .get("id")
+                    .asText();
 
             logs.clear();
             mockMvc.perform(get("/v1/reservations/{id}", id).with(asUser(EMAIL)))
@@ -215,13 +216,12 @@ class ObservabilityIT extends AbstractPostgresIT {
         @DisplayName("un 401 deja auth.failed en WARN con el motivo, y nunca el token")
         void unauthenticatedLeavesARecord() throws Exception {
             logs.clear();
-            mockMvc.perform(get("/v1/reservations"))
-                    .andExpect(status().isUnauthorized());
+            mockMvc.perform(get("/v1/reservations")).andExpect(status().isUnauthorized());
 
             List<LogCapture.Captured> failures = logs.withEvent(LogFields.AUTH_FAILED);
             assertThat(failures)
-                    .withFailMessage("Un 401 no dejaba ninguna huella, contra lo que el javadoc "
-                            + "del entry point prometía")
+                    .withFailMessage(
+                            "Un 401 no dejaba ninguna huella, contra lo que el javadoc " + "del entry point prometía")
                     .hasSize(1);
             assertThat(failures.get(0).level()).isEqualTo("WARN");
             assertThat(failures.get(0).field(LogFields.REASON)).isEqualTo("no_token");
@@ -232,8 +232,7 @@ class ObservabilityIT extends AbstractPostgresIT {
         @DisplayName("un token inválido se distingue de la ausencia de token")
         void anInvalidTokenHasItsOwnReason() throws Exception {
             logs.clear();
-            mockMvc.perform(get("/v1/reservations")
-                            .header(HttpHeaders.AUTHORIZATION, "Bearer no-es-un-token"))
+            mockMvc.perform(get("/v1/reservations").header(HttpHeaders.AUTHORIZATION, "Bearer no-es-un-token"))
                     .andExpect(status().isUnauthorized());
 
             // Sólo esta distinción justifica la alerta de presión de
@@ -248,7 +247,8 @@ class ObservabilityIT extends AbstractPostgresIT {
         @DisplayName("un rechazo por alcance deja auth.denied en WARN, sin el email")
         void scopeViolationLeavesARecord() throws Exception {
             logs.clear();
-            mockMvc.perform(get("/v1/reservations").with(asUser("bruno.diaz@example.com"))
+            mockMvc.perform(get("/v1/reservations")
+                            .with(asUser("bruno.diaz@example.com"))
                             .param("userId", EMAIL))
                     .andExpect(status().isForbidden());
 
@@ -267,16 +267,21 @@ class ObservabilityIT extends AbstractPostgresIT {
         @Test
         @DisplayName("un 409 por If-Match desactualizado deja registro y no se confunde con el de idempotencia")
         void aVersionConflictLeavesARecord() throws Exception {
-            MvcResult created = mockMvc.perform(post("/v1/reservations").with(asUser(EMAIL))
+            MvcResult created = mockMvc.perform(post("/v1/reservations")
+                            .with(asUser(EMAIL))
                             .header(IDEMPOTENCY_KEY_HEADER, UUID.randomUUID().toString())
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(createBody("1250.50", "SCL", departure)))
                     .andExpect(status().isCreated())
                     .andReturn();
-            String id = objectMapper.readTree(created.getResponse().getContentAsString()).get("id").asText();
+            String id = objectMapper
+                    .readTree(created.getResponse().getContentAsString())
+                    .get("id")
+                    .asText();
 
             logs.clear();
-            mockMvc.perform(put("/v1/reservations/{id}", id).with(asUser(EMAIL))
+            mockMvc.perform(put("/v1/reservations/{id}", id)
+                            .with(asUser(EMAIL))
                             .header(IF_MATCH, "\"99\"")
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(updateBody("1980.00", departure)))
@@ -298,18 +303,23 @@ class ObservabilityIT extends AbstractPostgresIT {
         @DisplayName("el alta deja reservation.created con el mismo juego de campos que el resto")
         void domainEventsShareTheSameFields() throws Exception {
             logs.clear();
-            MvcResult created = mockMvc.perform(post("/v1/reservations").with(asUser(EMAIL))
+            MvcResult created = mockMvc.perform(post("/v1/reservations")
+                            .with(asUser(EMAIL))
                             .header(IDEMPOTENCY_KEY_HEADER, UUID.randomUUID().toString())
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(createBody("1250.50", "SCL", departure)))
                     .andExpect(status().isCreated())
                     .andReturn();
-            String id = objectMapper.readTree(created.getResponse().getContentAsString()).get("id").asText();
+            String id = objectMapper
+                    .readTree(created.getResponse().getContentAsString())
+                    .get("id")
+                    .asText();
 
             assertRequiredFields(logs.withEvent(LogFields.RESERVATION_CREATED));
 
             logs.clear();
-            mockMvc.perform(delete("/v1/reservations/{id}", id).with(asUser(EMAIL))
+            mockMvc.perform(delete("/v1/reservations/{id}", id)
+                            .with(asUser(EMAIL))
                             .header(IF_MATCH, "\"0\""))
                     .andExpect(status().isOk());
 
@@ -322,9 +332,12 @@ class ObservabilityIT extends AbstractPostgresIT {
         private void assertRequiredFields(List<LogCapture.Captured> records) {
             assertThat(records).hasSize(1);
             assertThat(records.get(0).fields())
-                    .containsKeys(LogFields.RESERVATION_ID, LogFields.USER_ID,
+                    .containsKeys(
+                            LogFields.RESERVATION_ID,
+                            LogFields.USER_ID,
                             LogFields.RESERVATION_VERSION,
-                            LogFields.ITINERARY_ORIGIN, LogFields.ITINERARY_DESTINATION);
+                            LogFields.ITINERARY_ORIGIN,
+                            LogFields.ITINERARY_DESTINATION);
             assertThat(records.get(0).level()).isEqualTo("INFO");
             // El message es texto fijo: el dato va en los campos.
             assertThat(records.get(0).message()).doesNotMatch(".*\\d.*");
@@ -367,11 +380,13 @@ class ObservabilityIT extends AbstractPostgresIT {
 
             assertThat(ourRecords())
                     .isNotEmpty()
-                    .allSatisfy(captured -> assertThat(
-                            ForbiddenPatterns.firstMatch(captured.allText()))
-                            .withFailMessage("El registro '%s' [%s] filtró %s",
-                                    captured.message(), captured.logger(),
-                                    ForbiddenPatterns.firstMatch(captured.allText()).orElse(""))
+                    .allSatisfy(captured -> assertThat(ForbiddenPatterns.firstMatch(captured.allText()))
+                            .withFailMessage(
+                                    "El registro '%s' [%s] filtró %s",
+                                    captured.message(),
+                                    captured.logger(),
+                                    ForbiddenPatterns.firstMatch(captured.allText())
+                                            .orElse(""))
                             .isEmpty());
         }
 
@@ -384,24 +399,30 @@ class ObservabilityIT extends AbstractPostgresIT {
             // nombre, apellido y fecha_nacimiento están EN CLARO en el modelo.
             jdbcTemplate.update(
                     "INSERT INTO usuario (email, nombre, apellido, fecha_alta) VALUES (?, ?, ?, ?)",
-                    EMAIL, "Ana", "Pérez", java.sql.Timestamp.from(Instant.now()));
+                    EMAIL,
+                    "Ana",
+                    "Pérez",
+                    java.sql.Timestamp.from(Instant.now()));
 
             logs.clear();
             // El alta encuentra al usuario ya existente y no falla; lo que
             // interesa es que NADA de lo que se escriba en el camino lleve el
             // email, que era el vector del hallazgo 2.
-            mockMvc.perform(post("/v1/reservations").with(asUser(EMAIL))
+            mockMvc.perform(post("/v1/reservations")
+                            .with(asUser(EMAIL))
                             .header(IDEMPOTENCY_KEY_HEADER, UUID.randomUUID().toString())
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(createBody("1250.50", "SCL", departure)))
                     .andExpect(status().isCreated());
 
             assertThat(ourRecords())
-                    .allSatisfy(captured -> assertThat(
-                            ForbiddenPatterns.firstMatch(captured.allText()))
-                            .withFailMessage("El registro '%s' [%s] filtró %s",
-                                    captured.message(), captured.logger(),
-                                    ForbiddenPatterns.firstMatch(captured.allText()).orElse(""))
+                    .allSatisfy(captured -> assertThat(ForbiddenPatterns.firstMatch(captured.allText()))
+                            .withFailMessage(
+                                    "El registro '%s' [%s] filtró %s",
+                                    captured.message(),
+                                    captured.logger(),
+                                    ForbiddenPatterns.firstMatch(captured.allText())
+                                            .orElse(""))
                             .isEmpty());
         }
 
@@ -415,12 +436,15 @@ class ObservabilityIT extends AbstractPostgresIT {
                 captured.fields().forEach((key, value) -> {
                     String text = String.valueOf(value);
                     assertThat(text)
-                            .withFailMessage("El campo '%s' del registro '%s' trae un salto de línea: "
-                                    + "en un recolector orientado a líneas eso fabrica un registro",
+                            .withFailMessage(
+                                    "El campo '%s' del registro '%s' trae un salto de línea: "
+                                            + "en un recolector orientado a líneas eso fabrica un registro",
                                     key, captured.message())
-                            .doesNotContain("\n").doesNotContain("\r");
+                            .doesNotContain("\n")
+                            .doesNotContain("\r");
                     assertThat(text.length())
-                            .withFailMessage("El campo '%s' del registro '%s' tiene %d caracteres",
+                            .withFailMessage(
+                                    "El campo '%s' del registro '%s' tiene %d caracteres",
                                     key, captured.message(), text.length())
                             .isLessThanOrEqualTo(1024);
                 });
@@ -433,34 +457,37 @@ class ObservabilityIT extends AbstractPostgresIT {
     // ------------------------------------------------------------------
 
     private void runTheFullFlow() throws Exception {
-        MvcResult created = mockMvc.perform(post("/v1/reservations").with(asUser(EMAIL))
+        MvcResult created = mockMvc.perform(post("/v1/reservations")
+                        .with(asUser(EMAIL))
                         .header(CORRELATION_HEADER, KNOWN_CORRELATION_ID)
                         .header(IDEMPOTENCY_KEY_HEADER, UUID.randomUUID().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(createBody("1250.50", "SCL", departure)))
                 .andExpect(status().isCreated())
                 .andReturn();
-        String id = objectMapper.readTree(created.getResponse().getContentAsString()).get("id").asText();
+        String id = objectMapper
+                .readTree(created.getResponse().getContentAsString())
+                .get("id")
+                .asText();
 
-        mockMvc.perform(get("/v1/reservations/{id}", id).with(asUser(EMAIL)))
-                .andExpect(status().isOk());
+        mockMvc.perform(get("/v1/reservations/{id}", id).with(asUser(EMAIL))).andExpect(status().isOk());
         mockMvc.perform(get("/v1/reservations").with(asUser(EMAIL))).andExpect(status().isOk());
-        mockMvc.perform(put("/v1/reservations/{id}", id).with(asUser(EMAIL))
+        mockMvc.perform(put("/v1/reservations/{id}", id)
+                        .with(asUser(EMAIL))
                         .header(IF_MATCH, "\"0\"")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(updateBody("1980.00", departure)))
                 .andExpect(status().isOk());
-        mockMvc.perform(delete("/v1/reservations/{id}", id).with(asUser(EMAIL))
-                        .header(IF_MATCH, "\"1\""))
+        mockMvc.perform(delete("/v1/reservations/{id}", id).with(asUser(EMAIL)).header(IF_MATCH, "\"1\""))
                 .andExpect(status().isOk());
         // Los caminos de rechazo, que son los que menos se prueban y los que
         // más fácil filtran.
         mockMvc.perform(get("/v1/reservations")).andExpect(status().isUnauthorized());
-        mockMvc.perform(get("/v1/reservations").with(asUser("bruno.diaz@example.com"))
+        mockMvc.perform(get("/v1/reservations")
+                        .with(asUser("bruno.diaz@example.com"))
                         .param("userId", EMAIL))
                 .andExpect(status().isForbidden());
-        mockMvc.perform(get("/v1/reservations/999999").with(asUser(EMAIL)))
-                .andExpect(status().isNotFound());
+        mockMvc.perform(get("/v1/reservations/999999").with(asUser(EMAIL))).andExpect(status().isNotFound());
     }
 
     private static RequestPostProcessor asUser(String email) {

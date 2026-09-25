@@ -3,7 +3,6 @@ package com.edteam.reservations.infrastructure.observability;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tags;
-
 import java.util.Objects;
 import java.util.Set;
 

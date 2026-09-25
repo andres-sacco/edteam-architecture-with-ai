@@ -1,19 +1,18 @@
 package com.edteam.reservations.infrastructure.resilience;
 
 import com.edteam.reservations.infrastructure.config.CircuitBreakerProperties;
+import com.edteam.reservations.infrastructure.logging.LogFields;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
-import com.edteam.reservations.infrastructure.logging.LogFields;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.time.Clock;
 import java.time.Duration;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
 import java.util.function.Supplier;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Un circuito, con las dos cosas que la librería no trae de fábrica y este
@@ -64,11 +63,12 @@ public final class Circuit {
      *                   circuito no pueda contar algo distinto de lo que se
      *                   reintenta
      */
-    public static Circuit of(String name,
-                             CircuitBreakerProperties properties,
-                             Function<Throwable, FailureClassification> classifier,
-                             CircuitBreakerRegistry registry,
-                             Clock clock) {
+    public static Circuit of(
+            String name,
+            CircuitBreakerProperties properties,
+            Function<Throwable, FailureClassification> classifier,
+            CircuitBreakerRegistry registry,
+            Clock clock) {
         Objects.requireNonNull(name, "El nombre del circuito es obligatorio");
         Objects.requireNonNull(properties, "Los umbrales son obligatorios");
 
@@ -85,18 +85,22 @@ public final class Circuit {
                 // sin esto la vuelta a semiabierto depende de que llegue una
                 // llamada, y un circuito que se abrió justo cuando el tráfico
                 // cayó se quedaría abierto hasta el próximo pedido.
-                .automaticTransitionFromOpenToHalfOpenEnabled(
-                        properties.automaticTransitionFromOpenToHalfOpen())
+                .automaticTransitionFromOpenToHalfOpenEnabled(properties.automaticTransitionFromOpenToHalfOpen())
                 .recordException(Failures.countsFor(classifier))
                 .build();
 
         CircuitBreaker breaker = registry.circuitBreaker(name, config);
-        breaker.getEventPublisher().onStateTransition(event -> log.atWarn()
-                .addKeyValue(LogFields.EVENT, LogFields.CIRCUIT_STATE)
-                .addKeyValue("circuit", name)
-                .addKeyValue("state.from", event.getStateTransition().getFromState().name())
-                .addKeyValue("state.to", event.getStateTransition().getToState().name())
-                .log("Transición de estado del circuito"));
+        breaker.getEventPublisher()
+                .onStateTransition(event -> log.atWarn()
+                        .addKeyValue(LogFields.EVENT, LogFields.CIRCUIT_STATE)
+                        .addKeyValue("circuit", name)
+                        .addKeyValue(
+                                "state.from",
+                                event.getStateTransition().getFromState().name())
+                        .addKeyValue(
+                                "state.to",
+                                event.getStateTransition().getToState().name())
+                        .log("Transición de estado del circuito"));
 
         // Toda la configuración en campos y no en prosa: antes era una frase
         // de la que no se podía filtrar un solo valor, y son los umbrales que
@@ -109,10 +113,15 @@ public final class Circuit {
                 .addKeyValue("circuit.minimumCalls", properties.minimumNumberOfCalls())
                 .addKeyValue("circuit.failureRateThreshold", properties.failureRateThreshold())
                 .addKeyValue("circuit.slowCallRateThreshold", properties.slowCallRateThreshold())
-                .addKeyValue("circuit.slowCallDurationMs", properties.slowCallDurationThreshold().toMillis())
-                .addKeyValue("circuit.openSeconds", properties.waitDurationInOpenState().toSeconds())
+                .addKeyValue(
+                        "circuit.slowCallDurationMs",
+                        properties.slowCallDurationThreshold().toMillis())
+                .addKeyValue(
+                        "circuit.openSeconds",
+                        properties.waitDurationInOpenState().toSeconds())
                 .addKeyValue("circuit.halfOpenCalls", properties.permittedCallsInHalfOpenState())
-                .addKeyValue("circuit.windowMaxAgeMinutes", properties.windowMaxAge().toMinutes())
+                .addKeyValue(
+                        "circuit.windowMaxAgeMinutes", properties.windowMaxAge().toMinutes())
                 .log("Circuito configurado");
 
         return new Circuit(breaker, properties.windowMaxAge(), clock);

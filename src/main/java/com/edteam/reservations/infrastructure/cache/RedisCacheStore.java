@@ -1,7 +1,5 @@
 package com.edteam.reservations.infrastructure.cache;
 
-import org.springframework.data.redis.core.StringRedisTemplate;
-
 import java.time.Duration;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -9,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import org.springframework.data.redis.core.StringRedisTemplate;
 
 /**
  * El almacén contra Redis. Sólo eso: habla con Redis y

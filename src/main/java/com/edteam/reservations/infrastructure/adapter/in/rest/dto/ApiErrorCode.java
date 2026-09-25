@@ -15,8 +15,7 @@ import java.util.Locale;
  * <p>Cada código lleva su {@code type}, la URI que RFC 7807 usa para
  * identificar el tipo de problema.
  */
-@Schema(name = "ErrorCode",
-        description = """
+@Schema(name = "ErrorCode", description = """
                 Código de error estable. Es la parte del contrato de errores contra la que
                 los clientes pueden programar.
 
@@ -27,10 +26,8 @@ import java.util.Locale;
                 e `INTERNAL_ERROR` no corresponden a ninguna regla de negocio: aparecen
                 cuando el pedido no llega a ninguna operación o cuando algo falla del lado
                 del servidor. `AIRPORT_CATALOG_UNAVAILABLE` y `RATE_LIMIT_EXCEEDED` son los que vale la pena
-                reintentar tal cual, respetando el header `Retry-After`.""",
-        example = "RESERVATION_NOT_FOUND")
+                reintentar tal cual, respetando el header `Retry-After`.""", example = "RESERVATION_NOT_FOUND")
 public enum ApiErrorCode {
-
     VALIDATION_ERROR("Pedido inválido"),
     UNKNOWN_AIRPORT("Aeropuerto desconocido"),
     INVALID_ITINERARY("Itinerario inválido"),

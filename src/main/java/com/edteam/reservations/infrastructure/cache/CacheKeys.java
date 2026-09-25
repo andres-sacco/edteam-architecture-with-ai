@@ -31,8 +31,7 @@ public final class CacheKeys {
      */
     private static final int DIGEST_BYTES = 16;
 
-    private CacheKeys() {
-    }
+    private CacheKeys() {}
 
     /**
      * Resumen estable de un descriptor.
@@ -47,8 +46,7 @@ public final class CacheKeys {
      */
     public static String digest(String descriptor) {
         try {
-            byte[] hash = MessageDigest.getInstance("SHA-256")
-                    .digest(descriptor.getBytes(StandardCharsets.UTF_8));
+            byte[] hash = MessageDigest.getInstance("SHA-256").digest(descriptor.getBytes(StandardCharsets.UTF_8));
             byte[] truncated = new byte[DIGEST_BYTES];
             System.arraycopy(hash, 0, truncated, 0, DIGEST_BYTES);
             return HexFormat.of().formatHex(truncated);

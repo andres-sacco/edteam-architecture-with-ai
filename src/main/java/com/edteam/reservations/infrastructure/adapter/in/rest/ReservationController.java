@@ -14,12 +14,12 @@ import com.edteam.reservations.application.query.ResultPage;
 import com.edteam.reservations.domain.access.Actor;
 import com.edteam.reservations.domain.model.Reservation;
 import com.edteam.reservations.domain.model.ReservationId;
+import com.edteam.reservations.infrastructure.adapter.in.rest.dto.ApiProblem;
 import com.edteam.reservations.infrastructure.adapter.in.rest.dto.CreateReservationRequest;
 import com.edteam.reservations.infrastructure.adapter.in.rest.dto.ListReservationsParams;
 import com.edteam.reservations.infrastructure.adapter.in.rest.dto.ReservationPageResponse;
 import com.edteam.reservations.infrastructure.adapter.in.rest.dto.ReservationResponse;
 import com.edteam.reservations.infrastructure.adapter.in.rest.dto.UpdateReservationRequest;
-import com.edteam.reservations.infrastructure.adapter.in.rest.dto.ApiProblem;
 import com.edteam.reservations.infrastructure.adapter.in.rest.mapper.ReservationRestMapper;
 import com.edteam.reservations.infrastructure.config.OpenApiConfiguration;
 import io.swagger.v3.oas.annotations.Operation;
@@ -30,12 +30,16 @@ import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
-import io.swagger.v3.oas.annotations.security.SecurityRequirement;
-import org.springdoc.core.annotations.ParameterObject;
+import java.net.URI;
+import java.util.Objects;
+import java.util.OptionalLong;
+import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -53,11 +57,6 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.util.UriComponentsBuilder;
-
-import java.net.URI;
-import java.util.Objects;
-import java.util.OptionalLong;
-import java.util.UUID;
 
 /**
  * Adaptador de entrada HTTP para el recurso {@code reservations}.
@@ -186,13 +185,14 @@ public class ReservationController {
     private final ReservationRestMapper mapper;
     private final ReservationVersionCache versionCache;
 
-    public ReservationController(CreateReservationUseCase createReservation,
-                                 GetReservationUseCase getReservation,
-                                 ListReservationsUseCase listReservations,
-                                 ModifyReservationUseCase modifyReservation,
-                                 CancelReservationUseCase cancelReservation,
-                                 ReservationRestMapper mapper,
-                                 ReservationVersionCache versionCache) {
+    public ReservationController(
+            CreateReservationUseCase createReservation,
+            GetReservationUseCase getReservation,
+            ListReservationsUseCase listReservations,
+            ModifyReservationUseCase modifyReservation,
+            CancelReservationUseCase cancelReservation,
+            ReservationRestMapper mapper,
+            ReservationVersionCache versionCache) {
         this.createReservation = Objects.requireNonNull(createReservation);
         this.getReservation = Objects.requireNonNull(getReservation);
         this.listReservations = Objects.requireNonNull(listReservations);
@@ -215,9 +215,7 @@ public class ReservationController {
      * uso se entere.
      */
     @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
-    @Operation(operationId = "createReservation",
-            summary = "Crear una reserva",
-            description = """
+    @Operation(operationId = "createReservation", summary = "Crear una reserva", description = """
                     Crea una reserva en estado `PENDING` a nombre de quien la pide.
 
                     ## El usuario
@@ -257,20 +255,31 @@ public class ReservationController {
                     resuelve internamente y también recibe **200** con la reserva
                     ganadora.""")
     @ApiResponses({
-            @ApiResponse(responseCode = "201", description = "Reserva creada.",
-                    headers = {
-                            @Header(name = "Location", description = "URI de la reserva creada.",
-                                    schema = @Schema(type = "string", example = "/v1/reservations/1042")),
-                            @Header(name = "ETag", description = ETAG_DESCRIPTION,
-                                    schema = @Schema(type = "string", example = "\"0\""))
-                    }),
-            @ApiResponse(responseCode = "200",
-                    description = "Reintento: la clave ya había sido usada. Devuelve la "
-                            + "reserva creada con esa clave, sin crear una nueva.",
-                    headers = @Header(name = "ETag", description = ETAG_DESCRIPTION,
-                            schema = @Schema(type = "string", example = "\"0\""))),
-            @ApiResponse(responseCode = "400",
-                    description = """
+        @ApiResponse(
+                responseCode = "201",
+                description = "Reserva creada.",
+                headers = {
+                    @Header(
+                            name = "Location",
+                            description = "URI de la reserva creada.",
+                            schema = @Schema(type = "string", example = "/v1/reservations/1042")),
+                    @Header(
+                            name = "ETag",
+                            description = ETAG_DESCRIPTION,
+                            schema = @Schema(type = "string", example = "\"0\""))
+                }),
+        @ApiResponse(
+                responseCode = "200",
+                description = "Reintento: la clave ya había sido usada. Devuelve la "
+                        + "reserva creada con esa clave, sin crear una nueva.",
+                headers =
+                        @Header(
+                                name = "ETag",
+                                description = ETAG_DESCRIPTION,
+                                schema = @Schema(type = "string", example = "\"0\""))),
+        @ApiResponse(
+                responseCode = "400",
+                description = """
                             El pedido es inválido. Además de los errores de formato, incluye
                             los datos que existen pero no resuelven:
 
@@ -281,29 +290,34 @@ public class ReservationController {
                             - `UNKNOWN_AIRPORT`: algún código de aeropuerto no está en el
                               catálogo.
                             - `ITINERARY_ALREADY_DEPARTED`: el primer tramo ya salió.""",
-                    content = @Content(mediaType = PROBLEM_JSON,
-                            schema = @Schema(implementation = ApiProblem.class))),
-            @ApiResponse(responseCode = "409",
-                    description = "No se pudo resolver la carrera por la `Idempotency-Key`. "
-                            + "Es una situación excepcional: el caso normal de clave "
-                            + "repetida responde 200.",
-                    content = @Content(mediaType = PROBLEM_JSON,
-                            schema = @Schema(implementation = ApiProblem.class))),
-            @ApiResponse(responseCode = "401", description = UNAUTHORIZED_DESCRIPTION,
-                    content = @Content(mediaType = PROBLEM_JSON,
-                            schema = @Schema(implementation = ApiProblem.class))),
-            @ApiResponse(responseCode = "429", description = TOO_MANY_REQUESTS_DESCRIPTION,
-                    content = @Content(mediaType = PROBLEM_JSON,
-                            schema = @Schema(implementation = ApiProblem.class)))
+                content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ApiProblem.class))),
+        @ApiResponse(
+                responseCode = "409",
+                description = "No se pudo resolver la carrera por la `Idempotency-Key`. "
+                        + "Es una situación excepcional: el caso normal de clave "
+                        + "repetida responde 200.",
+                content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ApiProblem.class))),
+        @ApiResponse(
+                responseCode = "401",
+                description = UNAUTHORIZED_DESCRIPTION,
+                content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ApiProblem.class))),
+        @ApiResponse(
+                responseCode = "429",
+                description = TOO_MANY_REQUESTS_DESCRIPTION,
+                content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ApiProblem.class)))
     })
     public ResponseEntity<ReservationResponse> create(
-            @Parameter(name = IDEMPOTENCY_KEY_HEADER, in = ParameterIn.HEADER, required = true,
-                    description = """
+            @Parameter(
+                            name = IDEMPOTENCY_KEY_HEADER,
+                            in = ParameterIn.HEADER,
+                            required = true,
+                            description = """
                             UUID generado por el cliente que identifica el intento de
                             creación. Debe mantenerse constante entre reintentos del mismo
                             pedido y ser distinto entre pedidos distintos.""",
-                    example = "3f1a9c7e-0f6e-4a39-9d2c-8b5f0c1e7a44")
-            @RequestHeader(IDEMPOTENCY_KEY_HEADER) UUID idempotencyKey,
+                            example = "3f1a9c7e-0f6e-4a39-9d2c-8b5f0c1e7a44")
+                    @RequestHeader(IDEMPOTENCY_KEY_HEADER)
+                    UUID idempotencyKey,
             @Valid @RequestBody CreateReservationRequest request,
             @Parameter(hidden = true) @AuthenticationPrincipal Actor actor) {
 
@@ -316,9 +330,8 @@ public class ReservationController {
         // reintento devuelve la reserva ya creada sin cambiarle la versión, así
         // que lo que hubiera en el cache sigue siendo correcto.
 
-        ResponseEntity.BodyBuilder response = result.created()
-                ? ResponseEntity.created(locationOf(reservation))
-                : ResponseEntity.ok();
+        ResponseEntity.BodyBuilder response =
+                result.created() ? ResponseEntity.created(locationOf(reservation)) : ResponseEntity.ok();
 
         return response.eTag(EntityVersion.toETag(reservation.version()))
                 .cacheControl(NO_STORE)
@@ -346,7 +359,8 @@ public class ReservationController {
         try {
             return createReservation.create(command);
         } catch (DuplicateReservationException e) {
-            log.info("Carrera por la clave de idempotencia {}: se reintenta para devolver la reserva ganadora",
+            log.info(
+                    "Carrera por la clave de idempotencia {}: se reintenta para devolver la reserva ganadora",
                     command.idempotencyKey());
             return createReservation.create(command);
         }
@@ -373,9 +387,7 @@ public class ReservationController {
      * ver el razonamiento completo en {@link ReservationVersionCache}.
      */
     @GetMapping("/{reservationId}")
-    @Operation(operationId = "getReservation",
-            summary = "Obtener una reserva",
-            description = """
+    @Operation(operationId = "getReservation", summary = "Obtener una reserva", description = """
                     Devuelve la representación completa de la reserva, con su itinerario y
                     sus pasajeros resueltos.
 
@@ -397,33 +409,50 @@ public class ReservationController {
                     aplicación cliente —que es lo que ya hace falta para poder mandar
                     `If-Match`— no está afectado por eso.""")
     @ApiResponses({
-            @ApiResponse(responseCode = "200", description = "Reserva encontrada.",
-                    headers = @Header(name = "ETag", description = ETAG_DESCRIPTION,
-                            schema = @Schema(type = "string", example = "\"7\""))),
-            @ApiResponse(responseCode = "304",
-                    description = "La reserva no cambió respecto del `ETag` enviado en "
-                            + "`If-None-Match`. No lleva cuerpo.",
-                    headers = @Header(name = "ETag", description = ETAG_DESCRIPTION,
-                            schema = @Schema(type = "string", example = "\"7\""))),
-            @ApiResponse(responseCode = "400", description = "El identificador no es válido.",
-                    content = @Content(mediaType = PROBLEM_JSON,
-                            schema = @Schema(implementation = ApiProblem.class))),
-            @ApiResponse(responseCode = "404", description = NOT_FOUND_DESCRIPTION,
-                    content = @Content(mediaType = PROBLEM_JSON,
-                            schema = @Schema(implementation = ApiProblem.class))),
-            @ApiResponse(responseCode = "401", description = UNAUTHORIZED_DESCRIPTION,
-                    content = @Content(mediaType = PROBLEM_JSON,
-                            schema = @Schema(implementation = ApiProblem.class))),
-            @ApiResponse(responseCode = "429", description = TOO_MANY_REQUESTS_DESCRIPTION,
-                    content = @Content(mediaType = PROBLEM_JSON,
-                            schema = @Schema(implementation = ApiProblem.class)))
+        @ApiResponse(
+                responseCode = "200",
+                description = "Reserva encontrada.",
+                headers =
+                        @Header(
+                                name = "ETag",
+                                description = ETAG_DESCRIPTION,
+                                schema = @Schema(type = "string", example = "\"7\""))),
+        @ApiResponse(
+                responseCode = "304",
+                description =
+                        "La reserva no cambió respecto del `ETag` enviado en " + "`If-None-Match`. No lleva cuerpo.",
+                headers =
+                        @Header(
+                                name = "ETag",
+                                description = ETAG_DESCRIPTION,
+                                schema = @Schema(type = "string", example = "\"7\""))),
+        @ApiResponse(
+                responseCode = "400",
+                description = "El identificador no es válido.",
+                content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ApiProblem.class))),
+        @ApiResponse(
+                responseCode = "404",
+                description = NOT_FOUND_DESCRIPTION,
+                content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ApiProblem.class))),
+        @ApiResponse(
+                responseCode = "401",
+                description = UNAUTHORIZED_DESCRIPTION,
+                content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ApiProblem.class))),
+        @ApiResponse(
+                responseCode = "429",
+                description = TOO_MANY_REQUESTS_DESCRIPTION,
+                content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ApiProblem.class)))
     })
     public ResponseEntity<ReservationResponse> getById(
-            @Parameter(description = "Identificador opaco de la reserva.", example = "1042")
-            @PathVariable long reservationId,
-            @Parameter(name = "If-None-Match", in = ParameterIn.HEADER,
-                    description = IF_NONE_MATCH_DESCRIPTION, example = "\"7\"")
-            @RequestHeader(value = HttpHeaders.IF_NONE_MATCH, required = false) String ifNoneMatch,
+            @Parameter(description = "Identificador opaco de la reserva.", example = "1042") @PathVariable
+                    long reservationId,
+            @Parameter(
+                            name = "If-None-Match",
+                            in = ParameterIn.HEADER,
+                            description = IF_NONE_MATCH_DESCRIPTION,
+                            example = "\"7\"")
+                    @RequestHeader(value = HttpHeaders.IF_NONE_MATCH, required = false)
+                    String ifNoneMatch,
             @Parameter(hidden = true) @AuthenticationPrincipal Actor actor) {
 
         ReservationId id = ReservationId.of(reservationId);
@@ -466,9 +495,7 @@ public class ReservationController {
      * reserva de la lista hay que leerla primero.
      */
     @GetMapping
-    @Operation(operationId = "listReservations",
-            summary = "Listar reservas",
-            description = """
+    @Operation(operationId = "listReservations", summary = "Listar reservas", description = """
                     Devuelve una página de **tus** reservas, de la más reciente a la más
                     antigua.
 
@@ -482,21 +509,23 @@ public class ReservationController {
                     se aplican los valores por defecto, nunca se devuelve la colección
                     completa.""")
     @ApiResponses({
-            @ApiResponse(responseCode = "200",
-                    description = "Página de reservas. Puede venir vacía; eso no es un error."),
-            @ApiResponse(responseCode = "400", description = "Algún parámetro de consulta es inválido.",
-                    content = @Content(mediaType = PROBLEM_JSON,
-                            schema = @Schema(implementation = ApiProblem.class))),
-            @ApiResponse(responseCode = "403",
-                    description = "Se pidió el listado de otro usuario sin el rol que lo permite.",
-                    content = @Content(mediaType = PROBLEM_JSON,
-                            schema = @Schema(implementation = ApiProblem.class))),
-            @ApiResponse(responseCode = "401", description = UNAUTHORIZED_DESCRIPTION,
-                    content = @Content(mediaType = PROBLEM_JSON,
-                            schema = @Schema(implementation = ApiProblem.class))),
-            @ApiResponse(responseCode = "429", description = TOO_MANY_REQUESTS_DESCRIPTION,
-                    content = @Content(mediaType = PROBLEM_JSON,
-                            schema = @Schema(implementation = ApiProblem.class)))
+        @ApiResponse(responseCode = "200", description = "Página de reservas. Puede venir vacía; eso no es un error."),
+        @ApiResponse(
+                responseCode = "400",
+                description = "Algún parámetro de consulta es inválido.",
+                content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ApiProblem.class))),
+        @ApiResponse(
+                responseCode = "403",
+                description = "Se pidió el listado de otro usuario sin el rol que lo permite.",
+                content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ApiProblem.class))),
+        @ApiResponse(
+                responseCode = "401",
+                description = UNAUTHORIZED_DESCRIPTION,
+                content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ApiProblem.class))),
+        @ApiResponse(
+                responseCode = "429",
+                description = TOO_MANY_REQUESTS_DESCRIPTION,
+                content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ApiProblem.class)))
     })
     public ResponseEntity<ReservationPageResponse> list(
             // @ParameterObject expande el record en sus parámetros de consulta.
@@ -504,8 +533,8 @@ public class ReservationController {
             // objeto, que no le dice a nadie cómo se llama la API.
             @ParameterObject @Valid @ModelAttribute ListReservationsParams params,
             @Parameter(hidden = true) @AuthenticationPrincipal Actor actor) {
-        ResultPage<Reservation> page = listReservations.list(
-                new ListReservationsQuery(mapper.toCriteria(params), actor));
+        ResultPage<Reservation> page =
+                listReservations.list(new ListReservationsQuery(mapper.toCriteria(params), actor));
         return ResponseEntity.ok().cacheControl(NO_STORE).body(mapper.toResponse(page));
     }
 
@@ -518,7 +547,8 @@ public class ReservationController {
      * {@code ConcurrentUpdateException} y la respuesta es 409, sin escribir.
      */
     @PutMapping(path = "/{reservationId}", consumes = MediaType.APPLICATION_JSON_VALUE)
-    @Operation(operationId = "updateReservation",
+    @Operation(
+            operationId = "updateReservation",
             summary = "Actualizar el itinerario de una reserva",
             description = """
                     Reemplaza el itinerario de una reserva vigente. Es un reemplazo
@@ -533,46 +563,59 @@ public class ReservationController {
                     reserva cambió mientras tanto, la operación se rechaza con **409** y
                     no escribe nada; el cliente debe releer y decidir.""")
     @ApiResponses({
-            @ApiResponse(responseCode = "200", description = "Reserva actualizada.",
-                    headers = @Header(name = "ETag", description = ETAG_DESCRIPTION,
-                            schema = @Schema(type = "string", example = "\"8\""))),
-            @ApiResponse(responseCode = "400",
-                    description = "El cuerpo es inválido, el `If-Match` está ausente o "
-                            + "malformado, o el itinerario vigente ya despegó "
-                            + "(`ITINERARY_ALREADY_DEPARTED`).",
-                    content = @Content(mediaType = PROBLEM_JSON,
-                            schema = @Schema(implementation = ApiProblem.class))),
-            @ApiResponse(responseCode = "404", description = NOT_FOUND_DESCRIPTION,
-                    content = @Content(mediaType = PROBLEM_JSON,
-                            schema = @Schema(implementation = ApiProblem.class))),
-            @ApiResponse(responseCode = "409",
-                    description = """
+        @ApiResponse(
+                responseCode = "200",
+                description = "Reserva actualizada.",
+                headers =
+                        @Header(
+                                name = "ETag",
+                                description = ETAG_DESCRIPTION,
+                                schema = @Schema(type = "string", example = "\"8\""))),
+        @ApiResponse(
+                responseCode = "400",
+                description = "El cuerpo es inválido, el `If-Match` está ausente o "
+                        + "malformado, o el itinerario vigente ya despegó "
+                        + "(`ITINERARY_ALREADY_DEPARTED`).",
+                content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ApiProblem.class))),
+        @ApiResponse(
+                responseCode = "404",
+                description = NOT_FOUND_DESCRIPTION,
+                content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ApiProblem.class))),
+        @ApiResponse(
+                responseCode = "409",
+                description = """
                             La operación choca con el estado actual del recurso:
 
                             - `CONCURRENT_UPDATE`: el `If-Match` no coincide con la versión
                               almacenada.
                             - `RESERVATION_NOT_MODIFIABLE`: la reserva está cancelada.""",
-                    content = @Content(mediaType = PROBLEM_JSON,
-                            schema = @Schema(implementation = ApiProblem.class))),
-            @ApiResponse(responseCode = "401", description = UNAUTHORIZED_DESCRIPTION,
-                    content = @Content(mediaType = PROBLEM_JSON,
-                            schema = @Schema(implementation = ApiProblem.class))),
-            @ApiResponse(responseCode = "429", description = TOO_MANY_REQUESTS_DESCRIPTION,
-                    content = @Content(mediaType = PROBLEM_JSON,
-                            schema = @Schema(implementation = ApiProblem.class)))
+                content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ApiProblem.class))),
+        @ApiResponse(
+                responseCode = "401",
+                description = UNAUTHORIZED_DESCRIPTION,
+                content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ApiProblem.class))),
+        @ApiResponse(
+                responseCode = "429",
+                description = TOO_MANY_REQUESTS_DESCRIPTION,
+                content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ApiProblem.class)))
     })
     public ResponseEntity<ReservationResponse> update(
-            @Parameter(description = "Identificador opaco de la reserva.", example = "1042")
-            @PathVariable long reservationId,
-            @Parameter(name = "If-Match", in = ParameterIn.HEADER, required = true,
-                    description = IF_MATCH_DESCRIPTION, example = "\"7\"")
-            @RequestHeader(HttpHeaders.IF_MATCH) String ifMatch,
+            @Parameter(description = "Identificador opaco de la reserva.", example = "1042") @PathVariable
+                    long reservationId,
+            @Parameter(
+                            name = "If-Match",
+                            in = ParameterIn.HEADER,
+                            required = true,
+                            description = IF_MATCH_DESCRIPTION,
+                            example = "\"7\"")
+                    @RequestHeader(HttpHeaders.IF_MATCH)
+                    String ifMatch,
             @Valid @RequestBody UpdateReservationRequest request,
             @Parameter(hidden = true) @AuthenticationPrincipal Actor actor) {
 
         long expectedVersion = EntityVersion.parseIfMatch(ifMatch);
-        Reservation modified = modifyReservation.modify(
-                mapper.toCommand(reservationId, expectedVersion, request.itinerary(), actor));
+        Reservation modified =
+                modifyReservation.modify(mapper.toCommand(reservationId, expectedVersion, request.itinerary(), actor));
 
         // Después del caso de uso, o sea con la transacción ya confirmada: si
         // se borrara antes, una lectura concurrente podría repoblar el cache
@@ -594,9 +637,7 @@ public class ReservationController {
      * de cancelación.
      */
     @DeleteMapping("/{reservationId}")
-    @Operation(operationId = "cancelReservation",
-            summary = "Cancelar una reserva",
-            description = """
+    @Operation(operationId = "cancelReservation", summary = "Cancelar una reserva", description = """
                     Cancela la reserva. La cancelación es **lógica**: la reserva pasa a
                     `CANCELLED` y se conserva por trazabilidad, penalidades y reintegros.
                     El recurso sigue siendo accesible por `GET` después de cancelarlo.
@@ -607,45 +648,57 @@ public class ReservationController {
 
                     Requiere `If-Match`, igual que la actualización.""")
     @ApiResponses({
-            @ApiResponse(responseCode = "200", description = "Reserva cancelada.",
-                    headers = @Header(name = "ETag", description = ETAG_DESCRIPTION,
-                            schema = @Schema(type = "string", example = "\"8\""))),
-            @ApiResponse(responseCode = "400",
-                    description = "El `If-Match` está ausente o malformado, o el itinerario "
-                            + "ya despegó (`ITINERARY_ALREADY_DEPARTED`).",
-                    content = @Content(mediaType = PROBLEM_JSON,
-                            schema = @Schema(implementation = ApiProblem.class))),
-            @ApiResponse(responseCode = "404", description = NOT_FOUND_DESCRIPTION,
-                    content = @Content(mediaType = PROBLEM_JSON,
-                            schema = @Schema(implementation = ApiProblem.class))),
-            @ApiResponse(responseCode = "409",
-                    description = """
+        @ApiResponse(
+                responseCode = "200",
+                description = "Reserva cancelada.",
+                headers =
+                        @Header(
+                                name = "ETag",
+                                description = ETAG_DESCRIPTION,
+                                schema = @Schema(type = "string", example = "\"8\""))),
+        @ApiResponse(
+                responseCode = "400",
+                description = "El `If-Match` está ausente o malformado, o el itinerario "
+                        + "ya despegó (`ITINERARY_ALREADY_DEPARTED`).",
+                content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ApiProblem.class))),
+        @ApiResponse(
+                responseCode = "404",
+                description = NOT_FOUND_DESCRIPTION,
+                content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ApiProblem.class))),
+        @ApiResponse(
+                responseCode = "409",
+                description = """
                             La operación choca con el estado actual del recurso:
 
                             - `CONCURRENT_UPDATE`: el `If-Match` no coincide con la versión
                               almacenada.
                             - `RESERVATION_ALREADY_CANCELLED`: la reserva ya estaba
                               cancelada.""",
-                    content = @Content(mediaType = PROBLEM_JSON,
-                            schema = @Schema(implementation = ApiProblem.class))),
-            @ApiResponse(responseCode = "401", description = UNAUTHORIZED_DESCRIPTION,
-                    content = @Content(mediaType = PROBLEM_JSON,
-                            schema = @Schema(implementation = ApiProblem.class))),
-            @ApiResponse(responseCode = "429", description = TOO_MANY_REQUESTS_DESCRIPTION,
-                    content = @Content(mediaType = PROBLEM_JSON,
-                            schema = @Schema(implementation = ApiProblem.class)))
+                content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ApiProblem.class))),
+        @ApiResponse(
+                responseCode = "401",
+                description = UNAUTHORIZED_DESCRIPTION,
+                content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ApiProblem.class))),
+        @ApiResponse(
+                responseCode = "429",
+                description = TOO_MANY_REQUESTS_DESCRIPTION,
+                content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ApiProblem.class)))
     })
     public ResponseEntity<ReservationResponse> cancel(
-            @Parameter(description = "Identificador opaco de la reserva.", example = "1042")
-            @PathVariable long reservationId,
-            @Parameter(name = "If-Match", in = ParameterIn.HEADER, required = true,
-                    description = IF_MATCH_DESCRIPTION, example = "\"7\"")
-            @RequestHeader(HttpHeaders.IF_MATCH) String ifMatch,
+            @Parameter(description = "Identificador opaco de la reserva.", example = "1042") @PathVariable
+                    long reservationId,
+            @Parameter(
+                            name = "If-Match",
+                            in = ParameterIn.HEADER,
+                            required = true,
+                            description = IF_MATCH_DESCRIPTION,
+                            example = "\"7\"")
+                    @RequestHeader(HttpHeaders.IF_MATCH)
+                    String ifMatch,
             @Parameter(hidden = true) @AuthenticationPrincipal Actor actor) {
 
         long expectedVersion = EntityVersion.parseIfMatch(ifMatch);
-        Reservation cancelled = cancelReservation.cancel(
-                mapper.toCancelCommand(reservationId, expectedVersion, actor));
+        Reservation cancelled = cancelReservation.cancel(mapper.toCancelCommand(reservationId, expectedVersion, actor));
 
         versionCache.forget(ReservationId.of(reservationId));
 

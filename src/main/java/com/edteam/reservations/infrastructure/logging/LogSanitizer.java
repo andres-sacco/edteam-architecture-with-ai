@@ -32,8 +32,7 @@ public final class LogSanitizer {
     private static final String ELLIPSIS = "…";
     private static final String EMPTY = "<vacío>";
 
-    private LogSanitizer() {
-    }
+    private LogSanitizer() {}
 
     public static String sanitize(String value) {
         return sanitize(value, MAX_LENGTH);

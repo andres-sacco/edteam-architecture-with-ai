@@ -1,5 +1,9 @@
 package com.edteam.reservations.infrastructure.adapter.in.rest;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
 import com.edteam.reservations.application.port.in.CancelReservationUseCase;
 import com.edteam.reservations.application.port.in.CreateReservationUseCase;
 import com.edteam.reservations.application.port.in.GetReservationUseCase;
@@ -10,6 +14,9 @@ import com.edteam.reservations.infrastructure.config.OpenApiConfiguration;
 import com.edteam.reservations.infrastructure.security.SecurityConfiguration;
 import com.edteam.reservations.support.WebSliceConfiguration;
 import com.edteam.reservations.support.WithMockActor;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
@@ -22,14 +29,6 @@ import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
-
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
  * Regenera {@code docs/api/openapi.yaml} a partir del código.
@@ -47,16 +46,17 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * puede correr en cada build. Que el documento generado y el código no se
  * separen lo verifica {@code OpenApiContractTest}, que sí corre siempre.
  */
-@WebMvcTest(properties = {
-        "reservations.security.rate-limit.enabled=false",
-        "springdoc.api-docs.enabled=true"
+@WebMvcTest(properties = {"reservations.security.rate-limit.enabled=false", "springdoc.api-docs.enabled=true"})
+@Import({
+    ReservationRestMapper.class,
+    OpenApiConfiguration.class,
+    SecurityConfiguration.class,
+    WebSliceConfiguration.class
 })
-@Import({ReservationRestMapper.class, OpenApiConfiguration.class,
-        SecurityConfiguration.class, WebSliceConfiguration.class})
 @ImportAutoConfiguration({
-        SpringDocConfiguration.class,
-        SpringDocConfigProperties.class,
-        SpringDocWebMvcConfiguration.class
+    SpringDocConfiguration.class,
+    SpringDocConfigProperties.class,
+    SpringDocWebMvcConfiguration.class
 })
 @WithMockActor
 @EnabledIfSystemProperty(named = "openapi.dump", matches = "true")
@@ -102,12 +102,12 @@ class OpenApiDocumentDumpTest {
     void dumpsTheDocument() throws Exception {
         String yaml = mockMvc.perform(get("/v3/api-docs.yaml"))
                 .andExpect(status().isOk())
-                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+                .andReturn()
+                .getResponse()
+                .getContentAsString(StandardCharsets.UTF_8);
 
         Files.writeString(TARGET, HEADER + yaml);
 
-        assertThat(Files.readString(TARGET))
-                .contains("bearerAuth")
-                .contains("/v1/reservations");
+        assertThat(Files.readString(TARGET)).contains("bearerAuth").contains("/v1/reservations");
     }
 }

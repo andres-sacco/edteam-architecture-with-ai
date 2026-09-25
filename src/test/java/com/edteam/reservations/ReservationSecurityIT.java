@@ -1,11 +1,26 @@
 package com.edteam.reservations;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
 import com.edteam.reservations.domain.access.Actor;
 import com.edteam.reservations.domain.model.Email;
 import com.edteam.reservations.support.AbstractPostgresIT;
 import com.edteam.reservations.support.SecurityTestSupport;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -16,22 +31,6 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
-
-import java.time.Duration;
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
  * La autorización por recurso, de punta a punta y contra PostgreSQL.
@@ -82,12 +81,14 @@ class ReservationSecurityIT extends AbstractPostgresIT {
         mockMvc.perform(get("/v1/reservations/{id}", id).with(asUser(STRANGER)))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("RESERVATION_NOT_FOUND"));
-        mockMvc.perform(put("/v1/reservations/{id}", id).with(asUser(STRANGER))
+        mockMvc.perform(put("/v1/reservations/{id}", id)
+                        .with(asUser(STRANGER))
                         .header(HttpHeaders.IF_MATCH, "\"0\"")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(updateBody(departure)))
                 .andExpect(status().isNotFound());
-        mockMvc.perform(delete("/v1/reservations/{id}", id).with(asUser(STRANGER))
+        mockMvc.perform(delete("/v1/reservations/{id}", id)
+                        .with(asUser(STRANGER))
                         .header(HttpHeaders.IF_MATCH, "\"0\""))
                 .andExpect(status().isNotFound());
 
@@ -125,13 +126,12 @@ class ReservationSecurityIT extends AbstractPostgresIT {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.userId").value(OWNER));
 
-        mockMvc.perform(delete("/v1/reservations/{id}", id).with(asBackoffice())
-                        .header(HttpHeaders.IF_MATCH, "\"0\""))
+        mockMvc.perform(delete("/v1/reservations/{id}", id).with(asBackoffice()).header(HttpHeaders.IF_MATCH, "\"0\""))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("CANCELLED"));
 
-        Map<String, Object> audit = jdbcTemplate.queryForMap(
-                "SELECT actor, accion, resultado, recurso_id, recurso_version FROM auditoria "
+        Map<String, Object> audit =
+                jdbcTemplate.queryForMap("SELECT actor, accion, resultado, recurso_id, recurso_version FROM auditoria "
                         + "WHERE accion = 'RESERVATION_CANCELLED'");
         assertThat(audit)
                 .containsEntry("actor", SUPPORT)
@@ -187,7 +187,8 @@ class ReservationSecurityIT extends AbstractPostgresIT {
     void aLeakedIdempotencyKeyIsUseless() throws Exception {
         String key = UUID.randomUUID().toString();
 
-        MvcResult original = mockMvc.perform(post("/v1/reservations").with(asUser(OWNER))
+        MvcResult original = mockMvc.perform(post("/v1/reservations")
+                        .with(asUser(OWNER))
                         .header(IDEMPOTENCY_KEY_HEADER, key)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(createBody(departure)))
@@ -197,7 +198,8 @@ class ReservationSecurityIT extends AbstractPostgresIT {
         // El atacante reenvía la clave que encontró en un log de acceso. Antes
         // esto respondía 200 con la reserva completa del dueño, documentos de
         // los pasajeros incluidos. Ahora crea la suya.
-        MvcResult attempt = mockMvc.perform(post("/v1/reservations").with(asUser(STRANGER))
+        MvcResult attempt = mockMvc.perform(post("/v1/reservations")
+                        .with(asUser(STRANGER))
                         .header(IDEMPOTENCY_KEY_HEADER, key)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(createBody(departure)))
@@ -214,12 +216,14 @@ class ReservationSecurityIT extends AbstractPostgresIT {
     void idempotencyStillWorksForTheSameUser() throws Exception {
         String key = UUID.randomUUID().toString();
 
-        mockMvc.perform(post("/v1/reservations").with(asUser(OWNER))
+        mockMvc.perform(post("/v1/reservations")
+                        .with(asUser(OWNER))
                         .header(IDEMPOTENCY_KEY_HEADER, key)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(createBody(departure)))
                 .andExpect(status().isCreated());
-        mockMvc.perform(post("/v1/reservations").with(asUser(OWNER))
+        mockMvc.perform(post("/v1/reservations")
+                        .with(asUser(OWNER))
                         .header(IDEMPOTENCY_KEY_HEADER, key)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(createBody(departure)))
@@ -242,7 +246,8 @@ class ReservationSecurityIT extends AbstractPostgresIT {
         // respuesta del 201 devolvía el nombre, el apellido y la fecha de
         // nacimiento reales de la víctima, porque el adaptador reutilizaba su
         // fila.
-        mockMvc.perform(post("/v1/reservations").with(asUser(STRANGER))
+        mockMvc.perform(post("/v1/reservations")
+                        .with(asUser(STRANGER))
                         .header(IDEMPOTENCY_KEY_HEADER, UUID.randomUUID().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(createBody(departure.plus(Duration.ofDays(1)), "Inventado", "1970-01-01")))
@@ -265,7 +270,8 @@ class ReservationSecurityIT extends AbstractPostgresIT {
 
         List<String> stored = jdbcTemplate.queryForList("SELECT documento FROM pasajero", String.class);
 
-        assertThat(stored).singleElement()
+        assertThat(stored)
+                .singleElement()
                 .satisfies(value -> assertThat(value).startsWith("v1:").doesNotContain("30123456"));
     }
 
@@ -281,15 +287,13 @@ class ReservationSecurityIT extends AbstractPostgresIT {
                 .andExpect(jsonPath("$.code").value("UNAUTHENTICATED"));
 
         mockMvc.perform(get("/v1/reservations")
-                        .header(HttpHeaders.AUTHORIZATION,
-                                SecurityTestSupport.expiredBearer(customer(OWNER))))
+                        .header(HttpHeaders.AUTHORIZATION, SecurityTestSupport.expiredBearer(customer(OWNER))))
                 .andExpect(status().isUnauthorized());
 
         // Firmado con otra clave, y pidiendo backoffice: si la firma no se
         // verificara, los roles del token serían un formulario de privilegios.
         mockMvc.perform(get("/v1/reservations")
-                        .header(HttpHeaders.AUTHORIZATION,
-                                SecurityTestSupport.forgedBearer(customer(OWNER))))
+                        .header(HttpHeaders.AUTHORIZATION, SecurityTestSupport.forgedBearer(customer(OWNER))))
                 .andExpect(status().isUnauthorized());
     }
 
@@ -302,8 +306,7 @@ class ReservationSecurityIT extends AbstractPostgresIT {
     void auditsDeniedAttempts() throws Exception {
         String id = createReservationAs(OWNER);
 
-        mockMvc.perform(get("/v1/reservations/{id}", id).with(asUser(STRANGER)))
-                .andExpect(status().isNotFound());
+        mockMvc.perform(get("/v1/reservations/{id}", id).with(asUser(STRANGER))).andExpect(status().isNotFound());
 
         Map<String, Object> audit = jdbcTemplate.queryForMap(
                 "SELECT actor, accion, resultado, recurso_id, correlation_id, client_ip FROM auditoria "
@@ -324,8 +327,7 @@ class ReservationSecurityIT extends AbstractPostgresIT {
     void auditsWrites() throws Exception {
         String id = createReservationAs(OWNER);
 
-        mockMvc.perform(delete("/v1/reservations/{id}", id).with(asUser(OWNER))
-                        .header(HttpHeaders.IF_MATCH, "\"0\""))
+        mockMvc.perform(delete("/v1/reservations/{id}", id).with(asUser(OWNER)).header(HttpHeaders.IF_MATCH, "\"0\""))
                 .andExpect(status().isOk());
 
         assertThat(countAudit("RESERVATION_CREATED")).isEqualTo(1L);
@@ -339,8 +341,7 @@ class ReservationSecurityIT extends AbstractPostgresIT {
         String id = createReservationAs(OWNER);
         long before = countAudit("RESERVATION_CREATED");
 
-        mockMvc.perform(get("/v1/reservations/{id}", id).with(asUser(OWNER)))
-                .andExpect(status().isOk());
+        mockMvc.perform(get("/v1/reservations/{id}", id).with(asUser(OWNER))).andExpect(status().isOk());
 
         assertThat(countRows("auditoria")).isEqualTo(before);
     }
@@ -355,8 +356,7 @@ class ReservationSecurityIT extends AbstractPostgresIT {
         // DDL, y queda en los logs del motor— para poder tocar una línea.
         assertThatThrownBy(() -> jdbcTemplate.update("UPDATE auditoria SET actor = 'otro'"))
                 .hasMessageContaining("append-only");
-        assertThatThrownBy(() -> jdbcTemplate.update("DELETE FROM auditoria"))
-                .hasMessageContaining("append-only");
+        assertThatThrownBy(() -> jdbcTemplate.update("DELETE FROM auditoria")).hasMessageContaining("append-only");
     }
 
     // ------------------------------------------------------------------
@@ -368,7 +368,8 @@ class ReservationSecurityIT extends AbstractPostgresIT {
     }
 
     private String createReservationAs(String email, Instant departureAt) throws Exception {
-        MvcResult result = mockMvc.perform(post("/v1/reservations").with(asUser(email))
+        MvcResult result = mockMvc.perform(post("/v1/reservations")
+                        .with(asUser(email))
                         .header(IDEMPOTENCY_KEY_HEADER, UUID.randomUUID().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(createBody(departureAt)))
@@ -391,8 +392,7 @@ class ReservationSecurityIT extends AbstractPostgresIT {
     }
 
     private static RequestPostProcessor asBackoffice() {
-        return bearer(SecurityTestSupport.bearer(
-                Actor.backoffice(Email.of(SUPPORT), "Soporte", "Reservas")));
+        return bearer(SecurityTestSupport.bearer(Actor.backoffice(Email.of(SUPPORT), "Soporte", "Reservas")));
     }
 
     private static RequestPostProcessor bearer(String authorization) {

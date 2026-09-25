@@ -11,7 +11,6 @@ package com.edteam.reservations.application.audit;
  * qué, y quién intentó entrar donde no debía.
  */
 public enum AuditAction {
-
     RESERVATION_CREATED,
     RESERVATION_MODIFIED,
     RESERVATION_CANCELLED,

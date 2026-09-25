@@ -1,19 +1,15 @@
 package com.edteam.reservations;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.doAnswer;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
 import com.edteam.reservations.application.port.out.AirportCatalogPort;
-import com.edteam.reservations.domain.model.AirportCode;
 import com.edteam.reservations.support.AbstractPostgresIT;
 import com.edteam.reservations.support.SecurityTestSupport;
 import com.edteam.reservations.support.TestFixtures;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
-import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
-import org.springframework.test.web.servlet.MockMvc;
-
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -25,13 +21,14 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doAnswer;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.test.web.servlet.MockMvc;
 
 /**
  * H7 — la llamada al maestro de aeropuertos ya no ocurre dentro de la
@@ -74,9 +71,11 @@ class CatalogOutsideTransactionIT extends AbstractPostgresIT {
 
         // Ahora el catálogo se degrada: cada consulta tarda 1,5 s.
         doAnswer(invocation -> {
-            Thread.sleep(CATALOG_DELAY.toMillis());
-            return java.util.Set.of();
-        }).when(airportCatalog).unknown(org.mockito.ArgumentMatchers.anyCollection());
+                    Thread.sleep(CATALOG_DELAY.toMillis());
+                    return java.util.Set.of();
+                })
+                .when(airportCatalog)
+                .unknown(org.mockito.ArgumentMatchers.anyCollection());
 
         CountDownLatch start = new CountDownLatch(1);
         AtomicLong slowestRead = new AtomicLong();
@@ -136,7 +135,9 @@ class CatalogOutsideTransactionIT extends AbstractPostgresIT {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isCreated())
-                .andReturn().getResponse().getHeader(HttpHeaders.LOCATION);
+                .andReturn()
+                .getResponse()
+                .getHeader(HttpHeaders.LOCATION);
         return location == null ? "" : location.substring(location.lastIndexOf('/') + 1);
     }
 }

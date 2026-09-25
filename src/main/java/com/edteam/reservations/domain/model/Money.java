@@ -1,7 +1,6 @@
 package com.edteam.reservations.domain.model;
 
 import com.edteam.reservations.domain.exception.InvalidMoneyException;
-
 import java.math.BigDecimal;
 import java.util.Locale;
 import java.util.regex.Pattern;
@@ -45,12 +44,11 @@ public record Money(BigDecimal amount, String currency) {
             throw new InvalidMoneyException("El importe no puede ser negativo: %s".formatted(amount));
         }
         if (amount.scale() > MAX_SCALE) {
-            throw new InvalidMoneyException(
-                    "El importe %s tiene más de %d decimales".formatted(amount, MAX_SCALE));
+            throw new InvalidMoneyException("El importe %s tiene más de %d decimales".formatted(amount, MAX_SCALE));
         }
         if (amount.compareTo(MAX_AMOUNT) > 0) {
-            throw new InvalidMoneyException("El importe %s supera el máximo admitido (%s)"
-                    .formatted(amount, MAX_AMOUNT));
+            throw new InvalidMoneyException(
+                    "El importe %s supera el máximo admitido (%s)".formatted(amount, MAX_AMOUNT));
         }
         amount = amount.setScale(MAX_SCALE, java.math.RoundingMode.UNNECESSARY);
     }
