@@ -5,6 +5,15 @@
 #   docker compose down         los detiene (conserva los datos)
 #   docker compose down -v      los detiene y borra los datos
 #
+# La aplicación también corre en contenedor, detrás del profile 'app':
+#
+#   docker compose --profile app up -d --build     el sistema completo
+#
+# Sin el profile, este archivo hace exactamente lo mismo que antes: levanta la
+# infraestructura y deja el 8080 libre para quien corra la aplicación desde el
+# IDE o con './mvnw spring-boot:run'. Los dos flujos conviven y elegir uno es
+# explícito.
+#
 # El backend de observabilidad va aparte, detrás de un profile:
 #
 #   docker compose --profile observability up -d
@@ -333,6 +342,164 @@ services:
       - ./docker/tempo/tempo.yml:/etc/tempo.yaml:ro
       - tempo-data:/var/tempo
     command: -config.file=/etc/tempo.yaml
+    restart: unless-stopped
+
+
+  # ------------------------------------------------------------------
+  # El servicio de reservas, en contenedor. Profile 'app'.
+  # ------------------------------------------------------------------
+  #
+  #   docker compose up -d                    igual que siempre: sólo la
+  #                                           infraestructura. El IDE y
+  #                                           './mvnw spring-boot:run' siguen
+  #                                           funcionando exactamente igual.
+  #
+  #   docker compose --profile app up -d --build    el sistema completo, con
+  #                                           la aplicación adentro.
+  #
+  # Está detrás de un profile y NO encendido por defecto a propósito. Sin el
+  # profile, este servicio tomaría el 8080 de la máquina y quien corra la
+  # aplicación desde el IDE se encontraría con un "port already in use" y una
+  # API que responde pero que no es la que está editando —que es peor, porque
+  # parece que funciona—. Con el profile, los dos flujos conviven y elegir uno
+  # es explícito.
+  reservations-api:
+    profiles: ["app"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: flight-reservations:0.0.1-SNAPSHOT
+    container_name: reservations-api
+    # Sólo la API. El 9090 de gestión NO se publica, igual que en cualquier
+    # otro entorno: se alcanza desde adentro de la red de compose (el
+    # healthcheck de acá abajo) y desde 'docker compose exec'. Publicarlo en
+    # local "para probar" es cómo termina publicado en producción.
+    ports:
+      - "8080:8080"
+    environment:
+      # --- Obligatorias -------------------------------------------------
+      # 'postgres' es el nombre del servicio, que es el DNS de la red de
+      # compose. 'localhost' desde adentro del contenedor es el contenedor.
+      DB_URL: jdbc:postgresql://postgres:5432/${DB_NAME:-reservations}
+      DB_USERNAME: ${DB_USERNAME:-reservations}
+      DB_PASSWORD: ${DB_PASSWORD:-reservations}
+      # Clave AES-256 con la que se cifra el documento del pasajero. Acá viene
+      # del entorno con el default de desarrollo del .env.example; en cualquier
+      # otro entorno la pone el gestor de secretos. Si cambia entre dos
+      # arranques, los documentos ya cifrados no se pueden leer.
+      PII_ENCRYPTION_KEY: ${PII_ENCRYPTION_KEY:?falta PII_ENCRYPTION_KEY - copiar .env.example a .env}
+
+      # --- Dependencias opcionales, que degradan ------------------------
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-reservations-local}
+      RABBIT_HOST: rabbitmq
+      RABBIT_PORT: "5672"
+      RABBIT_USERNAME: ${RABBIT_USERNAME:-reservations}
+      RABBIT_PASSWORD: ${RABBIT_PASSWORD:-reservations-local}
+      MESSAGING_ENABLED: "true"
+      MESSAGING_DECLARE_CONSUMER_TOPOLOGY: "true"
+      MESSAGING_CONSUMER_ENABLED: "true"
+
+      # Catálogo de ciudades: VACÍO a propósito, y no 'http://api-catalog:6070'.
+      #
+      # AirportCatalogProperties.usesSecureTransport() sólo admite https://,
+      # http://localhost y http://127.0.0.1, porque la API key viaja en un
+      # header. Desde adentro de la red de compose el catálogo es
+      # 'http://api-catalog:6070', que no es ninguno de los tres, y la
+      # aplicación se NIEGA A ARRANCAR con un IllegalStateException — que es la
+      # regla haciendo exactamente lo que se le pidió.
+      #
+      # Vacío cae al maestro de aeropuertos en memoria: la aplicación arranca
+      # degradada, que es el comportamiento ya decidido para "sin catálogo".
+      # Quien necesite el catálogo real contra el contenedor tiene dos caminos,
+      # y ninguno es este archivo: poner TLS delante del catálogo, o ampliar la
+      # allowlist de usesSecureTransport() a los nombres de la red privada.
+      CATALOG_BASE_URL: ""
+
+      # --- Superficie y observabilidad -----------------------------------
+      APP_ENV: docker
+      MANAGEMENT_PORT: "9090"
+      # Sin profile 'local' ni 'dev', logback ya escribe JSON: es el formato de
+      # cualquier entorno que no sea la máquina de uno, y acá el destino es
+      # 'docker logs'.
+      API_DOCS_ENABLED: "true"
+      SWAGGER_UI_ENABLED: "true"
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
+      SECURITY_DEV_TOKENS: ${SECURITY_DEV_TOKENS:-true}
+      JWT_JWK_SET_URI: ${JWT_JWK_SET_URI:-}
+      JWT_ISSUER: ${JWT_ISSUER:-}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-}
+
+    # Sólo PostgreSQL es condición de arranque, y es una decisión: Flyway migra
+    # en el arranque y 'ddl-auto: validate' hace que sin esquema el proceso no
+    # levante. Redis y RabbitMQ van con 'service_started' y no con
+    # 'service_healthy' porque la aplicación arranca sin ellos —cache en
+    # memoria y eventos acumulados en el outbox— y esperarlos convertiría dos
+    # dependencias que degradan en dos que bloquean.
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      rabbitmq:
+        condition: service_started
+
+    # La sonda vive acá y no en el Dockerfile: es este archivo el que sabe que
+    # MANAGEMENT_PORT es 9090. 'wget' ya viene en la base Alpine, así que no
+    # agrega ni un byte ni una CVE a la imagen.
+    #
+    # readiness y no 'health' a secas: la pregunta es "¿le mando tráfico?".
+    # start_period de 60 s cubre el arranque de la JVM más las migraciones de
+    # Flyway; sin él, un arranque normal se lee como una falla.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9090/actuator/health/readiness"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 60s
+
+    # 35 s y no los 10 s por defecto de 'docker stop'. La aplicación tiene
+    # 'server.shutdown: graceful' con 'timeout-per-shutdown-phase: 25s': con el
+    # default, Docker manda SIGKILL a los 10 s, en la mitad del drenaje, y los
+    # pedidos en vuelo se cortan. El graceful shutdown está configurado y
+    # simplemente no ocurre. 25 s de drenaje + margen para que la JVM cierre el
+    # pool y el contexto.
+    stop_grace_period: 35s
+
+    # El filesystem de la aplicación es de sólo lectura. Nada del runtime
+    # escribe en /app: el jar viene extraído y las migraciones las aplica
+    # Flyway contra la base, no contra el disco.
+    #
+    # La excepción justificada es /tmp, que la JVM sí necesita: el directorio
+    # de trabajo de Tomcat para los multipart y los archivos temporales del
+    # JIT. Va como tmpfs —en RAM, y se va con el contenedor— y con 'noexec' y
+    # 'nosuid', que es lo que evita que un archivo escrito ahí se pueda
+    # ejecutar.
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m
+
+    # Ninguna capacidad de Linux. El proceso escucha en 8080 y 9090, que están
+    # por encima de 1024 y no necesitan NET_BIND_SERVICE. 'no-new-privileges'
+    # cierra el camino de escalar con un binario setuid.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+    # Cotas explícitas, con los números de un free tier típico. No están para
+    # "limitar" sino para que el entorno local se parezca a producción en lo
+    # único que importa acá: la JVM lee el límite del cgroup y dimensiona el
+    # heap con -XX:MaxRAMPercentage=75 sobre ESTE número, no sobre la RAM de la
+    # máquina de desarrollo. Sin esto, la aplicación en local arranca con
+    # gigabytes de heap y el primer OOM aparece recién en el despliegue.
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+
     restart: unless-stopped
 
 volumes:

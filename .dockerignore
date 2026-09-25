@@ -1,0 +1,124 @@
+# =============================================================================
+# Contexto de build
+# =============================================================================
+# Todo lo que está acá NO se sube al demonio de Docker. Importa por dos
+# motivos distintos y conviene no confundirlos:
+#
+#   PESO      un contexto grande se transfiere entero en cada build, antes de
+#             que se ejecute la primera instrucción. Con target/ adentro son
+#             ~500 MB por build.
+#
+#   SEGURIDAD lo que entra al contexto puede terminar en una capa. Una capa es
+#             pública para cualquiera que tenga la imagen ('docker history',
+#             'docker save'), y borrarlo en un RUN posterior NO lo saca: queda
+#             en la capa donde estuvo.
+#
+# Se excluye por defecto y se incluye a mano, que es el orden seguro: lo
+# contrario deja que cualquier archivo nuevo entre al contexto sin que nadie
+# lo decida.
+
+# --- SEGURIDAD: credenciales -------------------------------------------------
+# El .env real, con la contraseña de la base, la del broker, la API key del
+# catálogo y la clave AES de cifrado de datos personales. Es el archivo más
+# peligroso del repositorio y el que application.yml lee solo
+# ('spring.config.import: optional:file:./.env[.properties]'): si entrara al
+# contexto y alguien lo copiara al WORKDIR, la imagen arrancaría con las
+# credenciales de la máquina de desarrollo horneadas adentro y funcionando.
+.env
+.env.*
+# El .example sí puede entrar: son nombres de variables y valores de juguete.
+# No se copia igual —la imagen no lo necesita— pero no es un riesgo.
+!.env.example
+
+# Material criptográfico local. Mismo criterio: si existe, no entra.
+*.pem
+*.key
+*.p12
+*.jks
+*.keystore
+*.crt
+secrets/
+**/id_rsa*
+.npmrc
+.netrc
+
+# Configuración de Maven con credenciales de repositorios privados.
+# El build usa el repositorio público y el wrapper versionado: no necesita
+# ningún settings.xml, y el que exista en la máquina no tiene que influir.
+.m2/
+settings.xml
+**/settings-security.xml
+
+# --- SEGURIDAD: historia del repositorio -------------------------------------
+# .git no es sólo peso (~50 MB acá): contiene TODO el historial. Un secreto
+# que se commiteó y se sacó en el commit siguiente sigue estando en los
+# objetos de git, y un .git dentro de una imagen es ese secreto entregado.
+# Además rompe la reproducibilidad: el índice de git cambia con cada
+# operación local e invalidaría el caché sin que cambie una línea de código.
+.git/
+.gitignore
+.gitattributes
+.github/
+
+# --- PESO: artefactos de build ------------------------------------------------
+# ~500 MB, y además contaminan: el jar que compila la etapa 1 tiene que salir
+# del código fuente del contexto, no de un target/ que quedó de una corrida
+# anterior en la máquina de alguien. Excluirlo es lo que hace que dos builds
+# del mismo commit den lo mismo.
+target/
+build/
+out/
+bin/
+*.jar
+*.war
+
+# --- PESO: entornos de desarrollo ---------------------------------------------
+# No aportan nada al build y cambian todo el tiempo, así que además de pesar
+# invalidan el caché del contexto sin motivo.
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+.eclipse/
+.settings/
+.classpath
+.project
+.metadata/
+.sts4-cache/
+.history/
+.shelf/
+
+# --- PESO: documentación y contenido no ejecutable ----------------------------
+# docs/ y README no los lee la JVM ni el compilador. En este repositorio el
+# README solo son ~53 KB y docs/ bastante más.
+docs/
+README.md
+LICENSE
+*.md
+
+# --- PESO: infraestructura local ----------------------------------------------
+# El compose y sus configuraciones describen cómo levantar el entorno de
+# desarrollo ALREDEDOR de esta imagen. Adentro no sirven, y docker/logs/ puede
+# tener megas de logs de corridas viejas.
+compose.yaml
+compose.*.yaml
+docker-compose*.yml
+docker/
+Dockerfile
+.dockerignore
+
+# --- Ruido del sistema operativo y de corridas anteriores ---------------------
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+*.bak
+*.swp
+*~
+hs_err_pid*
+replay_pid*
+.sdkmanrc
+
+# El wrapper, si alguna vez se versiona el jar en lugar del script.
+!.mvn/wrapper/maven-wrapper.jar
