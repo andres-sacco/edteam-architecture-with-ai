@@ -316,7 +316,7 @@ cambia muy poco.
 
 **Resiliencia del catálogo: timeouts y reintentos.** Es la única dependencia de red del
 camino del pedido, así que la cadena está armada por capas y cada una hace una sola cosa
-([ADR 0002](docs/adr/0002-timeouts-y-reintentos-del-catalogo.md)):
+([ADR 0009](docs/adr/0009-integracion-con-el-catalogo-externo.md)):
 
 ```
 CachingAirportCatalog        ← la mayoría de las consultas mueren acá
@@ -339,7 +339,7 @@ ciego pisaría.
 
 **Cache: metadatos y escalares, nunca representaciones.** Tres puntos, salidos de un
 análisis de cuellos de botella sobre este código
-([ADR 0001](docs/adr/0001-cache-sobre-los-cuellos-de-botella.md)):
+([ADR 0011](docs/adr/0011-alcance-de-la-cache.md)):
 
 | Qué se cachea | Clave | TTL | Invalidación |
 |---|---|---|---|
