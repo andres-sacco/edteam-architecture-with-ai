@@ -6,6 +6,7 @@
 - **Complementa a:** [0004 — Mensajería asincrónica: eventos sobre RabbitMQ con outbox en PostgreSQL](0004-mensajeria-asincronica-y-broker.md)
 - **Diseño:** [`docs/messaging/topology.md`](../messaging/topology.md)
 - **Auditoría que origina esta decisión:** [`docs/messaging/audit.md`](../messaging/audit.md)
+- **Se ve en:** [Diagramas C4 de contexto y contenedores](../architecture/c4.md)
 
 ## Contexto
 

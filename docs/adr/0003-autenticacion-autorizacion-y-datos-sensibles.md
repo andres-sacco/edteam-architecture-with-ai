@@ -4,6 +4,7 @@
 - **Fecha:** 2026-09-23
 - **Prompt origen:** [12 — Remediación de seguridad](../prompts/12-remediacion-de-seguridad.md)
 - **Entrada:** [Modelo de amenazas STRIDE](../security/threat-model.md)
+- **Se ve en:** [Diagramas C4 de contexto y contenedores](../architecture/c4.md)
 
 ## Contexto
 

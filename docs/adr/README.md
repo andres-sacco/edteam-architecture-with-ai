@@ -2,6 +2,9 @@
 
 Decisiones de arquitectura del sistema de reservas de vuelos.
 
+La vista de conjunto —con quién habla el sistema y de qué contenedores está
+hecho— está en [`docs/architecture/c4.md`](../architecture/c4.md).
+
 Cada ADR documenta una decisión significativa, su contexto y sus consecuencias. El formato usado es el de Michael Nygard:
 
 ```markdown

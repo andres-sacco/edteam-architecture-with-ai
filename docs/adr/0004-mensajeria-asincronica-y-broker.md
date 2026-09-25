@@ -5,6 +5,7 @@
 - **Prompt origen:** [13 — Topología de eventos y colas](../prompts/13-topologia-de-eventos-y-colas.md)
 - **Diseño completo:** [`docs/messaging/topology.md`](../messaging/topology.md)
 - **Auditoría:** [`docs/messaging/audit.md`](../messaging/audit.md)
+- **Se ve en:** [Diagramas C4 de contexto y contenedores](../architecture/c4.md)
 
 ## Contexto
 

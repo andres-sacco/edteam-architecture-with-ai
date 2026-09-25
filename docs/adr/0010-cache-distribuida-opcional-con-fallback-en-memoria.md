@@ -5,6 +5,7 @@
 - **Prompt origen:** [10 — Implementación de la caché](../prompts/10-implementacion-de-cache.md)
 - **Entrada:** [`docs/performance/cache-bottlenecks.md`](../performance/cache-bottlenecks.md) ([09](../prompts/09-cuellos-de-botella-cache.md))
 - **Custodiado por:** `HexagonalArchitectureTest#cacheStaysInInfrastructure`, `CacheIT`, `RedisCacheStoreTest`, `InMemoryCacheStoreTest`
+- **Se ve en:** [Diagramas C4 de contexto y contenedores](../architecture/c4.md)
 
 > Redactado retroactivamente el 2026-09-25. El número refleja el orden en que se
 > tomó la decisión, no el orden en que se escribió el documento.

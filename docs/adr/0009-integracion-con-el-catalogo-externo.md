@@ -5,6 +5,7 @@
 - **Prompt origen:** [08 — Adaptador REST hacia un servicio externo](../prompts/08-adaptador-rest-servicio-externo.md)
 - **Se apoya en:** [0001 — Arquitectura hexagonal](0001-arquitectura-hexagonal-en-un-modulo.md)
 - **Custodiado por:** `RestCityCatalogClientTest`, `CityCatalogValidationTest`, `CatalogResilienceIT`, `HexagonalArchitectureTest#noTransactionalClassReachesTheAirportCatalog`
+- **Se ve en:** [Diagramas C4 de contexto y contenedores](../architecture/c4.md)
 
 > Redactado retroactivamente el 2026-09-25. El número refleja el orden en que se
 > tomó la decisión, no el orden en que se escribió el documento.

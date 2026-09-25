@@ -7,6 +7,7 @@
 - **Auditoría que origina buena parte de esta decisión:** [`docs/resilience/audit.md`](../resilience/audit.md)
 - **Complementa a:** [0012 — Circuit breakers y clasificación de fallos](0012-circuit-breakers-y-clasificacion-de-fallos.md)
 - **Custodiado por:** `CatalogResilienceIT`, `ResilienceObservabilityIT`, `CachingAirportCatalogTest`
+- **Se ve en:** [Diagramas C4 de contexto y contenedores](../architecture/c4.md)
 
 ## Contexto
 

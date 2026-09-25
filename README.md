@@ -11,6 +11,9 @@ springdoc y se publica en `/v3/api-docs`, con **Swagger UI** en `/swagger-ui.htm
 La API exige un **token Bearer** y una reserva sólo la ve su titular: ver
 [Seguridad](#seguridad) y el [ADR 0003](docs/adr/0003-autenticacion-autorizacion-y-datos-sensibles.md).
 
+Con quién habla el sistema y de qué contenedores está hecho, en dos diagramas C4:
+[`docs/architecture/c4.md`](docs/architecture/c4.md).
+
 ## Cómo ejecutarlo
 
 Requiere JDK 21 (hay un `.sdkmanrc`: `sdk env install && sdk env`) y Docker.
@@ -163,6 +166,10 @@ prueban, y con tokens HMAC firmados con la clave de desarrollo. Eso es también 
 de verificar en cada build que la aplicación arranca sin esas dependencias.
 
 ## Estructura
+
+La vista de afuera —el contexto y los contenedores— está en
+[`docs/architecture/c4.md`](docs/architecture/c4.md). Lo que sigue es la de adentro:
+cómo está organizado el único proceso.
 
 ```
 com.edteam.reservations
