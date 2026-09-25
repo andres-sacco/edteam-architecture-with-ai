@@ -1,0 +1,78 @@
+# =============================================================================
+# Trivy — el gate de vulnerabilidades del pipeline
+# =============================================================================
+#
+# ESTE ARCHIVO ES EL GATE. No el workflow.
+#
+# Trivy lee 'trivy.yaml' del directorio de trabajo automáticamente, así que el
+# comando de abajo, corrido a mano, da EXACTAMENTE el mismo veredicto que el
+# CI: mismo umbral, mismo archivo de excepciones, mismo formato.
+#
+#     ./mvnw cyclonedx:makeAggregateBom     # produce target/bom.json
+#     trivy sbom target/bom.json            # lee este archivo y decide
+#
+# Si el umbral viviera en el YAML del workflow, la única forma de reproducir un
+# fallo sería empujar un commit y esperar. Un gate que no se puede correr en la
+# máquina de quien tiene que arreglarlo se arregla a fuerza de 'rerun'.
+#
+# POR QUÉ UN SBOM Y NO 'trivy fs .'
+# 'trivy fs' sobre este repositorio parsearía el 'pom.xml' a mano y tendría que
+# adivinar la resolución de transitivas, de <dependencyManagement> y del parent
+# de Spring Boot. El SBOM de CycloneDX no adivina: lo produce Maven, con el
+# mismo árbol que compila. Es la diferencia entre escanear lo que se declara y
+# escanear lo que de verdad entra a la imagen.
+
+# --- Qué se considera un fallo -----------------------------------------------
+# HIGH y CRITICAL es el equivalente exacto de <failBuildOnCVSS>7</failBuildOnCVSS>
+# en el pom: 7.0 es el piso de "High" en CVSS v3.
+#
+# MEDIUM y LOW no se listan, y es a propósito. Un informe con ochenta líneas en
+# amarillo enseña a cerrar el informe, que es el único modo real en que un gate
+# de seguridad se rompe. Lo que no bloquea, no se muestra.
+severity:
+  - HIGH
+  - CRITICAL
+
+# Rojo de verdad. Sin esta línea Trivy imprime la tabla y sale 0: un informe,
+# no un control. El pipeline no tiene gates decorativos.
+exit-code: 1
+
+# Sólo vulnerabilidades. Trivy también sabe buscar secretos y malas
+# configuraciones, pero sobre un SBOM no hay nada de eso que mirar: serían dos
+# escáneres corriendo sobre una lista de coordenadas.
+scan:
+  scanners:
+    - vuln
+
+# --- Falsos positivos --------------------------------------------------------
+# El equivalente de 'owasp-suppressions.xml'. Mismo contrato: se escribe el
+# motivo y se escribe la fecha.
+ignorefile: .trivyignore
+
+# NO se activa 'ignore-unfixed'. Una vulnerabilidad sin parche disponible sigue
+# siendo una vulnerabilidad: lo que cambia es la respuesta (mitigar, aislar,
+# aceptar por escrito), no si hay que enterarse.
+
+# --- Salida ------------------------------------------------------------------
+# JSON, porque lo consume 'scripts/ci-security-summary.py' para escribir el
+# resumen del panel de la corrida. La tabla legible la arma ese script; dejar
+# que Trivy imprima además la suya sería el mismo contenido dos veces, una de
+# ellas dentro de un log de cuatro mil líneas.
+format: json
+# En 'target/' y no en 'target/trivy/': Trivy NO crea el directorio de salida y
+# muere con un FATAL si no existe. 'target/' ya está cuando corre, porque lo
+# acaba de crear Maven al escribir el SBOM. Con un subdirectorio, el comando de
+# reproducción local de arriba fallaría hasta que alguien agregara un 'mkdir',
+# y un comando documentado que no funciona es peor que no documentar ninguno.
+output: target/trivy-report.json
+
+# Medido: sin esto, Trivy escribe 651 líneas de log por corrida. La enorme
+# mayoría son 'WARN Unsupported hash algorithm' — el SBOM de CycloneDX declara
+# cada componente con seis o siete hashes distintos y Trivy avisa una vez por
+# cada uno que no usa. No es un problema: es ruido, y el ruido en el log de un
+# gate es lo que hace que el log no se abra.
+#
+# Los errores de verdad (FATAL) siguen imprimiéndose, y el código de salida no
+# cambia: verificado contra un SBOM inexistente, que sigue saliendo 1 con el
+# mensaje visible.
+quiet: true

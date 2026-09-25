@@ -90,18 +90,59 @@
         <palantir.format.version>2.99.0</palantir.format.version>
 
         <!--
+          CycloneDX: escribe el SBOM del proyecto — el árbol de dependencias
+          RESUELTO, transitivas incluidas, con las coordenadas Maven exactas de
+          cada una.
+
+          POR QUÉ HAY UN SBOM Y NO SÓLO UN ESCÁNER
+          Un escáner que mira un DIRECTORIO no sirve acá: un checkout limpio de
+          este repositorio tiene CERO archivos .jar (el wrapper es
+          'distributionType=only-script'), así que no encontraría un solo
+          artefacto Java y reportaría que no hay nada — un check verde que no
+          probó nada. El SBOM invierte el problema: lo produce Maven, que sí
+          sabe qué se resuelve, y el escáner pasa a leer una lista exacta en vez
+          de adivinar mirando el disco.
+
+          'includeTestScope' queda en false, que es su default: una CVE en
+          Testcontainers, en JUnit o en assertj no se corrige, porque nada de
+          eso entra a la imagen — el Dockerfile copia el classpath de ejecución
+          y nada más. Es el mismo criterio que 'skipTestScope' en
+          Dependency-Check, y por eso los dos escaneos miran el mismo conjunto.
+
+          El SBOM además se publica como artefacto de la corrida: es lo que hace
+          falta el día que se publica una CVE y hay que contestar «¿esta versión
+          la tiene?» sin reconstruir nada.
+        -->
+        <cyclonedx.version>2.9.3</cyclonedx.version>
+
+        <!--
           OWASP Dependency-Check: cruza el árbol de dependencias resuelto
           contra la base de vulnerabilidades del NVD.
 
-          Se usa el PLUGIN DE MAVEN y no la acción de GitHub que envuelve la
-          CLI, por una razón que se puede verificar: la CLI escanea un
-          DIRECTORIO, y un checkout limpio de este repositorio tiene CERO
-          archivos .jar (el wrapper es 'distributionType=only-script'). Sin
-          construir antes, la CLI no tiene un solo artefacto Java que mirar y
-          reporta que no encontró nada — un check verde que no probó nada. El
-          plugin, en cambio, corre dentro de Maven y ve el árbol de
-          dependencias RESUELTO, transitivas incluidas, que es exactamente lo
-          que termina adentro de la imagen.
+          YA NO ES EL GATE DEL PULL REQUEST. Lo es Trivy, que lee el SBOM de
+          CycloneDX y tarda segundos. Dependency-Check quedó en un workflow
+          NOCTURNO ('.github/workflows/security-nightly.yml') por una razón que
+          no es la velocidad sino la cobertura, y las dos herramientas no ven lo
+          mismo:
+
+            · Trivy identifica cada dependencia por sus COORDENADAS declaradas
+              (groupId:artifactId:version). Es exacto y casi no produce falsos
+              positivos, pero no ve un jar que embebió otro jar adentro
+              (shading, vendoring): para Trivy ese contenido no existe.
+
+            · Dependency-Check identifica por HUELLA (hash, metadatos, nombre
+              del archivo). Ve lo embebido, y ése es exactamente el punto ciego
+              del otro. El precio es la base del NVD —cientos de megas que hay
+              que bajar e indexar— y una tasa de falsos positivos bastante más
+              alta.
+
+          Poner al lento en el camino crítico de cada pull request para cubrir
+          un caso poco frecuente es lo que hace que un pipeline se esquive.
+          Corriendo de noche contra 'main', la cobertura se conserva y el costo
+          lo paga un runner que nadie está esperando.
+
+          Se usa el PLUGIN DE MAVEN y no la CLI por lo mismo que se genera un
+          SBOM: el plugin corre dentro de Maven y ve el árbol resuelto.
         -->
         <dependency.check.version>13.0.0</dependency.check.version>
 
@@ -112,7 +153,7 @@
           Lo único que NO está acá es el token.
         -->
         <sonar.host.url>https://sonarcloud.io</sonar.host.url>
-        <sonar.organization>andres-sacco</sonar.organization>
+        <sonar.organization>adschosen-github</sonar.organization>
         <sonar.projectKey>andres-sacco_edteam-architecture-with-ai</sonar.projectKey>
 
         <!--
@@ -704,7 +745,61 @@
                 </configuration>
             </plugin>
             <!--
-              Vulnerabilidades conocidas en las dependencias.
+              El SBOM: la lista exacta de lo que entra a la imagen.
+
+              NO está atado a ninguna fase. Se invoca explícitamente
+              ('./mvnw cyclonedx:makeAggregateBom') y no compila nada: resuelve
+              el árbol de dependencias y lo escribe. Atarlo a 'package' haría
+              que cada build local pagara la resolución completa para producir
+              un archivo que sólo consume el escáner.
+
+              'makeAggregateBom' y no 'makeBom': el primero agrega los módulos
+              del reactor. Hoy hay uno solo y dan lo mismo; el día que haya dos,
+              'makeBom' dejaría la mitad del árbol afuera sin que nada falle.
+
+              El escáner que lo lee es Trivy, y el umbral con el que falla está
+              en 'trivy.yaml' — no acá y no en el workflow. Ese archivo es lo
+              que hace que
+
+                  trivy sbom target/bom.json
+
+              a mano dé exactamente el mismo veredicto que el CI.
+            -->
+            <plugin>
+                <groupId>org.cyclonedx</groupId>
+                <artifactId>cyclonedx-maven-plugin</artifactId>
+                <version>${cyclonedx.version}</version>
+                <configuration>
+                    <!--
+                      JSON y no XML: es lo que lee Trivy sin conversiones, y es
+                      lo que se puede diffear entre dos corridas para ver qué
+                      dependencia entró o cambió de versión.
+                    -->
+                    <outputFormat>json</outputFormat>
+                    <outputDirectory>${project.build.directory}</outputDirectory>
+                    <outputName>bom</outputName>
+                    <!--
+                      El default ya es false; está explícito porque es una
+                      decisión, no una omisión. Ver el comentario de
+                      'cyclonedx.version' arriba.
+                    -->
+                    <includeTestScope>false</includeTestScope>
+                    <!--
+                      Sin esto el plugin escribe una línea por dependencia
+                      resuelta: varios cientos de líneas de ruido en el log del
+                      CI, arriba de lo único que hay que leer ahí.
+                    -->
+                    <verbose>false</verbose>
+                </configuration>
+            </plugin>
+            <!--
+              Vulnerabilidades conocidas en las dependencias, por HUELLA.
+
+              Esto ya no corre en el pipeline de cada pull request: corre de
+              noche contra 'main' ('.github/workflows/security-nightly.yml').
+              El porqué está en el comentario de 'dependency.check.version',
+              arriba, y se resume en que ve lo que Trivy no ve —jars embebidos
+              dentro de otros jars— a cambio de bajar e indexar la base del NVD.
 
               NO está atado a ninguna fase, por lo mismo que el escáner de
               Sonar: cada 'mvn verify' local intentaría hablar con el NVD y
@@ -744,6 +839,15 @@
                         <format>JSON</format>
                     </formats>
                     <outputDirectory>${project.build.directory}/dependency-check</outputDirectory>
+                    <!--
+                      La base del NVD, FUERA de '~/.m2/repository'. Su lugar por
+                      defecto está adentro, y eso hacía que la caché del
+                      repositorio Maven —la que administra 'setup-java', que
+                      comparten todos los trabajos— se llevara puestos varios
+                      gigabytes de base de vulnerabilidades en cada corrida. Dos
+                      cachés sobre la misma ruta no se suman: se desalojan.
+                    -->
+                    <dataDirectory>${user.home}/.cache/dependency-check</dataDirectory>
                     <failBuildOnCVSS>7</failBuildOnCVSS>
                     <suppressionFiles>
                         <suppressionFile>${project.basedir}/owasp-suppressions.xml</suppressionFile>

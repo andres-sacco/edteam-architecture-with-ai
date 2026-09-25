@@ -1,0 +1,38 @@
+# Falsos positivos de Trivy, por escrito.
+#
+# Este archivo existe vacío a propósito, por el mismo motivo que
+# 'owasp-suppressions.xml': el día que el escáner marque un falso positivo, la
+# salida más rápida no puede ser sacar HIGH de 'trivy.yaml' ni borrar el paso
+# del pipeline. Dos cambios de una línea que apagan el gate entero para
+# resolver un caso puntual. Con el archivo acá, la salida barata ya está
+# construida y es la correcta.
+#
+# CUÁNDO SE IGNORA
+# Sólo cuando la vulnerabilidad NO aplica, y el motivo se escribe. Trivy
+# identifica por coordenadas Maven, no por huella, así que el caso de
+# "identificó mal el jar" —frecuente en Dependency-Check— acá casi no ocurre.
+# Lo que sí ocurre:
+#
+#   · La ruta vulnerable no se ejercita. Hay que poder decir cuál es la ruta y
+#     por qué este servicio no la toma. Si no se puede decir, no se ignora.
+#
+#   · La CVE es contra un componente que la dependencia trae pero este
+#     proyecto no activa (un módulo opcional, un backend alternativo).
+#
+# Lo que NO es un motivo: "todavía no hay versión corregida", "es sólo de
+# desarrollo" (las de scope test ya están fuera del SBOM), o "hace tres semanas
+# que rompe el build".
+#
+# CADA ENTRADA LLEVA FECHA Y VENCIMIENTO. Una excepción sin fecha es permanente
+# de hecho: no hay forma de saber si sigue siendo cierta.
+#
+# Formato:
+#
+#   # 2026-09-25 — quien lo ignora. Vence 2026-12-31.
+#   # Por qué no aplica, con el detalle concreto.
+#   CVE-0000-00000
+#
+# Trivy soporta además '.trivyignore.yaml', con un campo 'expired_at' que el
+# propio escáner respeta: cuando vence, la CVE vuelve a romper el build sola.
+# Si este archivo llega a tener más de dos o tres entradas, conviene migrarlo:
+# una fecha que sólo vive en un comentario depende de que alguien la lea.

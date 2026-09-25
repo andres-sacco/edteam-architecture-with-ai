@@ -19,19 +19,26 @@
 # 'image', 'sonar' y 'security-scan' corren EN PARALELO y ninguno depende de
 # otro. Es deliberado: ni el análisis estático ni el escaneo de dependencias
 # tienen por qué demorar la publicación de un artefacto cuyos 798 tests ya
-# pasaron, y la caída de un servicio externo (sonarcloud.io, el NVD) no tiene
+# pasaron, y la caída de un servicio externo (sonarcloud.io, ghcr.io) no tiene
 # por qué impedir que se publique una imagen.
 #
 # Eso no los convierte en informes decorativos. Los dos fallan de verdad
-# —quality gate y failBuildOnCVSS— y el lugar donde eso frena algo es el pull
-# request, declarándolos required status checks: ahí una decisión de calidad o
-# de seguridad se puede discutir y arreglar antes de que entre a main.
+# —el quality gate de Sonar y el 'exit-code: 1' de trivy.yaml— y el lugar donde
+# eso frena algo es el pull request, declarándolos required status checks: ahí
+# una decisión de calidad o de seguridad se puede discutir y arreglar antes de
+# que entre a main.
 #
-# 'lint' y 'security-scan' además no esperan a los tests, y por razones
-# opuestas: 'lint' es el trabajo más corto del archivo y conviene que su
-# veredicto esté antes que ningún otro; 'security-scan' es el más largo (la
-# base del NVD) y conviene que arranque cuanto antes. Ninguno de los dos
-# necesita que nada compile.
+# 'lint' y 'security-scan' además no esperan a los tests, por la misma razón:
+# son los dos trabajos más cortos del archivo —bajo el minuto los dos— y
+# conviene que su veredicto esté antes que ningún otro. Ninguno necesita que
+# nada compile.
+#
+# El escaneo de dependencias es corto PORQUE no mantiene una base de datos
+# local: genera el SBOM con CycloneDX y lo cruza con Trivy, cuya base viaja
+# como artefacto OCI de ~50 MB. La contraparte —OWASP Dependency-Check, que
+# identifica por huella y ve jars embebidos dentro de otros jars, a cambio de
+# bajar el NVD entero— no desapareció: corre todas las noches contra 'main' en
+# '.github/workflows/security-nightly.yml', donde nadie la está esperando.
 #
 # No hay un solo 'continue-on-error' en este archivo. Convierte un paso rojo en
 # un trabajo verde: el grafo sigue y la imagen se publica igual. Un pipeline
@@ -500,22 +507,49 @@ jobs:
   # ===========================================================================
   # 5. Seguridad — vulnerabilidades conocidas en las dependencias
   # ===========================================================================
-  # SIN 'needs', a propósito, y es el único trabajo del archivo que no espera a
-  # nadie. Es el más lento —la base del NVD— así que arranca en t=0 y no queda
-  # detrás de los cuatro minutos de los tests. Y no depende de ellos: para
-  # resolver el árbol de dependencias no hace falta que un test pase.
+  # SIN 'needs', a propósito: para resolver el árbol de dependencias no hace
+  # falta que un test pase, así que este trabajo arranca en t=0 y su veredicto
+  # está listo antes que el de los tests.
   #
   # Tampoco lo espera nadie: no bloquea 'image'. Mismo criterio que con Sonar.
   # Que se pueda publicar una imagen no puede quedar atado a la disponibilidad
-  # del NVD, que es un servicio externo con límite de ritmo. Donde este trabajo
-  # SÍ frena algo es en el pull request, como required status check — y ahí
-  # frena de verdad, porque 'failBuildOnCVSS' lo deja en rojo.
+  # de un servicio externo. Donde este trabajo SÍ frena algo es en el pull
+  # request, como required status check — y ahí frena de verdad, porque
+  # 'trivy.yaml' declara 'exit-code: 1'.
+  #
+  # CÓMO ESTÁ ARMADO, Y POR QUÉ NO ES UN SOLO PASO
+  # Son dos herramientas con un contrato en el medio:
+  #
+  #   ./mvnw cyclonedx:makeAggregateBom   → target/bom.json   (quién está)
+  #   trivy sbom target/bom.json                              (quién es vulnerable)
+  #
+  # Maven es el único que sabe qué se resuelve de verdad —transitivas,
+  # <dependencyManagement>, el parent de Spring Boot—, y Trivy es el único que
+  # sabe qué está publicado como vulnerable. Partirlo en dos evita que cada uno
+  # adivine la mitad del otro: un escáner que parsea el pom a mano se equivoca
+  # en las transitivas, y un Maven que mantiene una base de CVE local es
+  # exactamente lo que tardaba minutos acá.
+  #
+  # POR QUÉ NO ES OWASP DEPENDENCY-CHECK
+  # Lo era. Mantenía una copia local del NVD entero: 30 a 60 minutos en frío,
+  # ~2 minutos con la caché caliente, un secreto que alguien tiene que pedir y
+  # cargar (NVD_API_KEY), y un trabajo que moría en los PR desde un fork porque
+  # GitHub no entrega secretos ahí. La base de Trivy viaja como artefacto OCI
+  # de ~50 MB: el trabajo entero tarda menos que lo que tardaba el delta diario
+  # de la otra, y no necesita ninguna credencial.
+  #
+  # Lo que se pierde es real y está cubierto aparte: Trivy identifica por
+  # COORDENADAS y no ve un jar embebido dentro de otro jar. Dependency-Check,
+  # que identifica por huella, sí lo ve — y sigue corriendo todas las noches
+  # contra 'main' en '.github/workflows/security-nightly.yml'. La cobertura no
+  # se recortó; se sacó del camino crítico de cada pull request.
   security-scan:
     name: Vulnerabilidades en dependencias
     runs-on: ubuntu-24.04
-    # Treinta minutos y no diez: la primera corrida, con la caché del NVD
-    # vacía, se baja la base entera. Las siguientes son ~2 minutos.
-    timeout-minutes: 30
+    # Diez y no treinta: ya no hay una base de datos que bajar. Si este trabajo
+    # llega a tardar diez minutos es que algo se rompió, y eso es justamente lo
+    # que un timeout tiene que decir.
+    timeout-minutes: 10
     permissions:
       contents: read
 
@@ -533,71 +567,89 @@ jobs:
           distribution: ${{ env.JAVA_DISTRIBUTION }}
           cache: maven
 
-      - name: Caché de la base del NVD
-        # Es LA optimización de este trabajo, no una más. Sin caché, cada
-        # corrida vuelve a bajar y a indexar la base de vulnerabilidades
-        # entera; con caché, sólo pide el delta desde la última actualización.
+      - name: Generar el SBOM
+        # No compila. 'cyclonedx:makeAggregateBom' resuelve el árbol de
+        # dependencias y lo escribe en target/bom.json; compilar acá sería un
+        # minuto de más para nada.
         #
-        # La clave lleva la fecha del día: la caché se renueva una vez por
-        # jornada (que es el ritmo al que el NVD publica) y 'restore-keys'
-        # hace que mientras tanto se reutilice la de ayer como punto de
-        # partida en vez de empezar de cero. Sin la fecha, la caché se
-        # congelaría en el primer día y el escaneo miraría una base vieja
-        # dando por buenas dependencias que ya tienen CVE publicada.
+        # Los formatos, el scope y el nombre del archivo están en el pom, no
+        # acá: así './mvnw cyclonedx:makeAggregateBom' a mano produce el mismo
+        # SBOM que el CI.
+        run: ./mvnw ${{ env.MAVEN_ARGS }} cyclonedx:makeAggregateBom
+
+      - name: Instalar Trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          # Versión fijada por la misma razón que las acciones se fijan por
+          # SHA: 'latest' es un puntero que alguien más mueve, y un escáner que
+          # cambia de versión solo cambia también lo que considera un fallo.
+          version: v0.74.0
+
+      - name: Fecha de hoy, para la clave de caché
+        id: fecha
+        # La clave NO puede llevar 'github.run_id': es único por corrida, así
+        # que la clave primaria no acertaría NUNCA y cada corrida escribiría
+        # una entrada nueva. El cupo de cachés del repositorio es de 10 GB y se
+        # desaloja por antigüedad: una clave que nunca acierta no sólo no
+        # ahorra nada, además se lleva puestas las cachés de los otros
+        # trabajos. Lo que hace falta es una clave que cambie UNA VEZ POR DÍA.
+        run: echo "hoy=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Caché de la base de vulnerabilidades
+        # No es LA optimización de este trabajo —la base son ~50 MB y bajan en
+        # segundos—, es protección contra el límite de ritmo de ghcr.io, que es
+        # de donde Trivy la baja de forma anónima.
+        #
+        # Con 'restore-keys', mientras la entrada del día no exista se parte de
+        # la de ayer en vez de cero — y Trivy, que sabe que su base vence a las
+        # 24 h, la descarta y baja la nueva sola. La caché no puede dejarlo
+        # mirando datos viejos sin que él se entere: ésa es la diferencia con
+        # una base de vulnerabilidades que se administra a mano.
+        #
+        # La ruta NO está dentro de '~/.m2/repository': esa la administra
+        # 'setup-java' y dos cachés sobre la misma ruta no se suman, se
+        # desalojan.
         uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
-          path: ~/.m2/repository/org/owasp/dependency-check-data
-          key: nvd-${{ runner.os }}-${{ github.run_id }}
+          path: ~/.cache/trivy
+          key: trivy-db-${{ runner.os }}-${{ steps.fecha.outputs.hoy }}
           restore-keys: |
-            nvd-${{ runner.os }}-
+            trivy-db-${{ runner.os }}-
 
-      - name: OWASP Dependency-Check
-        env:
-          # La clave entra por el entorno; el pom la lee con
-          # ${env.NVD_API_KEY}. No se pasa con -D: un -D queda en el argv del
-          # proceso y lo ve cualquier cosa que liste procesos en el runner.
-          #
-          # Es gratis y se pide en https://nvd.nist.gov/developers/request-an-api-key
-          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
-        run: |
-          set -euo pipefail
-
-          if [ -z "${NVD_API_KEY}" ]; then
-            echo "::error::Falta el secreto NVD_API_KEY. Sin clave, el NVD limita el ritmo a un punto en que la descarga inicial tarda entre 30 y 60 minutos y falla seguido — este trabajo moriría por timeout sin decir nada útil. Pedila gratis en https://nvd.nist.gov/developers/request-an-api-key y cargala en Settings → Secrets and variables → Actions."
-            exit 1
-          fi
-
-          # 'dependency-check:check' y no una fase del ciclo de vida: el plugin
-          # resuelve el árbol de dependencias por su cuenta y no necesita que
-          # el proyecto esté compilado. Compilar acá sería un minuto de más
-          # para nada.
-          #
-          # El umbral (failBuildOnCVSS), los formatos, el archivo de
-          # supresiones y los analizadores apagados están en el pom, no acá:
-          # así './mvnw dependency-check:check' a mano da exactamente el mismo
-          # resultado que el CI.
-          ./mvnw ${MAVEN_ARGS} dependency-check:check
+      - name: Escanear el SBOM
+        # El umbral (HIGH,CRITICAL), el 'exit-code: 1', el archivo de
+        # excepciones y el formato de salida están en 'trivy.yaml', que Trivy
+        # lee solo del directorio de trabajo. Por eso este paso es el comando
+        # pelado: correrlo a mano después de generar el SBOM da exactamente el
+        # mismo veredicto que el CI.
+        #
+        # No hay ningún secreto en este trabajo. Un PR desde un fork —que
+        # GitHub ejecuta sin acceso a los secretos del repositorio— corre este
+        # escaneo completo y su autor ve el mismo resultado que vería en un PR
+        # interno.
+        run: trivy sbom target/bom.json
 
       - name: Resumen en el panel del workflow
         # 'always()': el informe hace falta sobre todo cuando el paso anterior
         # falló. Si sólo corriera en verde, el único caso en el que sirve sería
         # el único en el que no se genera.
         if: ${{ always() }}
-        run: python3 scripts/ci-security-summary.py target/dependency-check/dependency-check-report.json
+        run: python3 scripts/ci-security-summary.py target/trivy-report.json
 
-      - name: Subir el informe
+      - name: Subir el SBOM y el informe
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: dependency-check-report-${{ github.run_id }}
-          # El HTML es el informe navegable, con el detalle por CVE y la
-          # evidencia de por qué Dependency-Check identificó cada jar como lo
-          # identificó — que es lo que hay que mirar para decidir si algo es
-          # un falso positivo.
-          path: target/dependency-check/
+          name: sbom-and-scan-${{ github.run_id }}
+          # Los dos archivos, no sólo el informe. El SBOM es lo que hace falta
+          # el día que se publica una CVE nueva y hay que contestar «¿esta
+          # versión la tiene?» sin reconstruir el proyecto — y es también lo
+          # que permite diffear dos corridas para ver qué dependencia entró.
+          path: |
+            target/bom.json
+            target/trivy-report.json
           retention-days: 30
           if-no-files-found: warn
-
   # ===========================================================================
   # 6. La imagen — se construye siempre, se publica sólo desde main
   # ===========================================================================
