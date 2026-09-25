@@ -45,6 +45,72 @@
         -->
         <logstash.encoder.version>8.1</logstash.encoder.version>
         <exec.plugin.version>3.5.0</exec.plugin.version>
+
+        <!--
+          JaCoCo: el agente que mide qué líneas ejecuta la suite. Hace falta
+          porque Sonar NO mide cobertura: la importa. Sin un jacoco.xml que
+          leer, el análisis sube igual y publica 0,0% — que es peor que no
+          publicar nada, porque es un número que parece medido.
+        -->
+        <jacoco.version>0.8.15</jacoco.version>
+
+        <!--
+          El escáner de Sonar. Versión FIJA por el mismo motivo que el resto de
+          este pom: el análisis produce un número con el que se bloquean pull
+          requests, y ese número no puede cambiar de definición porque alguien
+          publicó una versión nueva un martes.
+        -->
+        <sonar.plugin.version>5.8.0.7211</sonar.plugin.version>
+
+        <!--
+          OWASP Dependency-Check: cruza el árbol de dependencias resuelto
+          contra la base de vulnerabilidades del NVD.
+
+          Se usa el PLUGIN DE MAVEN y no la acción de GitHub que envuelve la
+          CLI, por una razón que se puede verificar: la CLI escanea un
+          DIRECTORIO, y un checkout limpio de este repositorio tiene CERO
+          archivos .jar (el wrapper es 'distributionType=only-script'). Sin
+          construir antes, la CLI no tiene un solo artefacto Java que mirar y
+          reporta que no encontró nada — un check verde que no probó nada. El
+          plugin, en cambio, corre dentro de Maven y ve el árbol de
+          dependencias RESUELTO, transitivas incluidas, que es exactamente lo
+          que termina adentro de la imagen.
+        -->
+        <dependency.check.version>13.0.0</dependency.check.version>
+
+        <!--
+          Coordenadas del proyecto en SonarQube Cloud. Van acá y no en el
+          workflow para que 'sonar:sonar' se pueda correr a mano contra el
+          mismo proyecto, y para que no haya dos lugares donde equivocarse.
+          Lo único que NO está acá es el token.
+        -->
+        <sonar.host.url>https://sonarcloud.io</sonar.host.url>
+        <sonar.organization>andres-sacco</sonar.organization>
+        <sonar.projectKey>andres-sacco_edteam-architecture-with-ai</sonar.projectKey>
+
+        <!--
+          De dónde lee Sonar la cobertura. Es el informe MEZCLADO de unitarios
+          y de integración: apuntarlo sólo al de surefire descontaría todo lo
+          que cubren los *IT —que son los que ejercitan los adaptadores de
+          salida contra PostgreSQL y RabbitMQ reales— y dejaría a la capa de
+          infraestructura pareciendo sin tests.
+        -->
+        <sonar.coverage.jacoco.xmlReportPaths>${project.build.directory}/site/jacoco-merged/jacoco.xml</sonar.coverage.jacoco.xmlReportPaths>
+
+        <!--
+          De dónde lee Sonar los RESULTADOS de los tests (cuántos corrieron,
+          cuántos fallaron, cuánto tardaron). El default es sólo
+          'target/surefire-reports': sin nombrar también el de failsafe, los
+          148 tests de integración no se contarían y el panel diría que el
+          proyecto tiene 650 tests en vez de 798.
+
+          No se declara 'sonar.exclusions' para las clases de test: en un
+          proyecto Maven, Sonar ya deriva 'sonar.sources' de src/main y
+          'sonar.tests' de src/test del propio POM, y las analiza con reglas
+          distintas. Excluirlas a mano sólo lograría que dejaran de analizarse
+          como tests.
+        -->
+        <sonar.junit.reportPaths>${project.build.directory}/surefire-reports,${project.build.directory}/failsafe-reports</sonar.junit.reportPaths>
         <!-- El gate de PII necesita 'sh'. Se apaga con -Dpii.gate.skip=true. -->
         <pii.gate.skip>false</pii.gate.skip>
     </properties>
@@ -434,6 +500,184 @@
                         </configuration>
                     </execution>
                 </executions>
+            </plugin>
+            <!--
+              Cobertura, en dos mediciones y un informe.
+
+              Hacen falta DOS agentes y no uno porque surefire y failsafe
+              forkean JVMs distintas y cada una escribe su propio .exec. Con un
+              solo 'prepare-agent', 'mvn verify' mide los unitarios y pierde
+              todo lo que cubren los 148 tests de integración — que son
+              justamente los que ejercitan los adaptadores contra PostgreSQL y
+              RabbitMQ reales. El informe resultante mostraría la capa de
+              infraestructura casi sin cubrir y la conclusión sería la
+              contraria a la verdadera.
+
+              El orden importa: 'merge' y 'report' están los dos en la fase
+              'verify' y Maven los ejecuta en el orden en que están declarados
+              acá. Al revés, 'report' leería un archivo mezclado que todavía no
+              existe. Y los dos van DESPUÉS de failsafe en este pom, que es lo
+              que garantiza que jacoco-it.exec ya esté escrito.
+
+              Los dos agentes escriben en la MISMA propiedad 'argLine', que es
+              el default, y no en dos propiedades distintas. No es pereza de
+              configuración: es el único camino que funciona.
+
+              Si se declara un <propertyName> propio y se lo referencia desde
+              <argLine> de surefire, hay que declarar además esa propiedad en
+              <properties> para que un build con -Djacoco.skip no reviente con
+              el literal sin resolver... y esa declaración es exactamente lo
+              que rompe el mecanismo: Maven interpola <argLine> contra
+              <properties> al CONSTRUIR EL MODELO, mucho antes de que
+              'prepare-agent' exista, así que surefire forkea con un argLine
+              vacío. El síntoma es silencioso y cuesta ver: el log dice
+              "argLine set to -javaagent:..." y después "Skipping JaCoCo
+              execution due to missing execution data file", el build queda en
+              verde y Sonar publica 0,0% de cobertura.
+
+              Con el default no se toca <argLine> en ningún lado: surefire y
+              failsafe leen la propiedad 'argLine' del proyecto en tiempo de
+              ejecución. 'prepare-agent' la fija en 'initialize' (la usa
+              surefire, fase 'test') y 'prepare-agent-integration' la pisa en
+              'pre-integration-test' (la usa failsafe, fase
+              'integration-test'). Los dos llegan a tiempo y cada uno escribe
+              su propio .exec.
+            -->
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>${jacoco.version}</version>
+                <executions>
+                    <execution>
+                        <id>jacoco-unitarios</id>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                        <configuration>
+                            <destFile>${project.build.directory}/jacoco-ut.exec</destFile>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>jacoco-integracion</id>
+                        <goals>
+                            <goal>prepare-agent-integration</goal>
+                        </goals>
+                        <configuration>
+                            <destFile>${project.build.directory}/jacoco-it.exec</destFile>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>jacoco-merge</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>merge</goal>
+                        </goals>
+                        <configuration>
+                            <fileSets>
+                                <fileSet>
+                                    <directory>${project.build.directory}</directory>
+                                    <includes>
+                                        <include>jacoco-*.exec</include>
+                                    </includes>
+                                </fileSet>
+                            </fileSets>
+                            <!--
+                              El destino NO se llama 'jacoco-*.exec' a
+                              propósito: con ese nombre entraría en su propio
+                              patrón de entrada y cada corrida se mezclaría con
+                              el resultado de la anterior, arrastrando
+                              cobertura de código que ya no existe.
+                            -->
+                            <destFile>${project.build.directory}/merged.exec</destFile>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>jacoco-report</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
+                        <configuration>
+                            <dataFile>${project.build.directory}/merged.exec</dataFile>
+                            <outputDirectory>${project.build.directory}/site/jacoco-merged</outputDirectory>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <!--
+              Vulnerabilidades conocidas en las dependencias.
+
+              NO está atado a ninguna fase, por lo mismo que el escáner de
+              Sonar: cada 'mvn verify' local intentaría hablar con el NVD y
+              descargar una base de datos de cientos de megas. Se invoca
+              explícitamente ('./mvnw dependency-check:check').
+
+              QUÉ SE ESCANEA Y QUÉ NO
+              'skipTestScope' queda en su default (true): una CVE en
+              Testcontainers, en JUnit o en assertj no se corrige, porque nada
+              de eso entra a la imagen — el Dockerfile copia el classpath de
+              ejecución y nada más. Marcarlas rojas sería ruido que enseña a
+              ignorar el informe entero, que es el único modo real en que un
+              gate de seguridad se rompe.
+
+              POR QUÉ FALLA EL BUILD Y NO SÓLO INFORMA
+              Un informe que nadie tiene que mirar no se mira. Con
+              'failBuildOnCVSS' en 7 (el piso de "High" en CVSS v3), una
+              dependencia con una vulnerabilidad alta o crítica pone el trabajo
+              en rojo. La salida correcta cuando eso pasa es subir la versión
+              de la dependencia o, si es un falso positivo, suprimirlo POR
+              ESCRITO en owasp-suppressions.xml, con su motivo y su fecha. La
+              salida incorrecta es subir este número.
+            -->
+            <plugin>
+                <groupId>org.owasp</groupId>
+                <artifactId>dependency-check-maven</artifactId>
+                <version>${dependency.check.version}</version>
+                <configuration>
+                    <!--
+                      HTML para leer, JSON para que lo parsee el paso que
+                      escribe el resumen del workflow. Sin el JSON, la única
+                      forma de saber qué falló es bajar el artefacto y abrirlo
+                      en un navegador.
+                    -->
+                    <formats>
+                        <format>HTML</format>
+                        <format>JSON</format>
+                    </formats>
+                    <outputDirectory>${project.build.directory}/dependency-check</outputDirectory>
+                    <failBuildOnCVSS>7</failBuildOnCVSS>
+                    <suppressionFiles>
+                        <suppressionFile>${project.basedir}/owasp-suppressions.xml</suppressionFile>
+                    </suppressionFiles>
+                    <!--
+                      La clave del NVD, leída del ENTORNO y no de un -D en la
+                      línea de comandos: un -D queda en el argv del proceso y
+                      lo ve cualquier cosa que liste procesos en el runner.
+                      Sin clave, el NVD limita el ritmo a un punto en que la
+                      descarga inicial tarda entre treinta y sesenta minutos y
+                      falla seguido; con clave son un par de minutos.
+                    -->
+                    <nvdApiKey>${env.NVD_API_KEY}</nvdApiKey>
+                    <!--
+                      Analizadores que no aportan nada acá y cuestan tiempo:
+                      este proyecto no tiene .NET, ni Node, ni Ruby, ni Python.
+                    -->
+                    <assemblyAnalyzerEnabled>false</assemblyAnalyzerEnabled>
+                    <nodeAnalyzerEnabled>false</nodeAnalyzerEnabled>
+                    <retireJsAnalyzerEnabled>false</retireJsAnalyzerEnabled>
+                </configuration>
+            </plugin>
+            <!--
+              El escáner de Sonar. NO está atado a ninguna fase: se invoca
+              explícitamente ('./mvnw sonar:sonar') después de que el build
+              produjo las clases y la cobertura. Atarlo a una fase haría que
+              cada 'mvn verify' local intentara hablar con sonarcloud.io y
+              fallara por falta de token.
+            -->
+            <plugin>
+                <groupId>org.sonarsource.scanner.maven</groupId>
+                <artifactId>sonar-maven-plugin</artifactId>
+                <version>${sonar.plugin.version}</version>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

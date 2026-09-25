@@ -31,8 +31,8 @@ Cada archivo documenta **un prompt** con su estructura completa (Rol / Contexto 
 | 21 | [Implementación de la observabilidad](21-implementacion-de-observabilidad.md) | Implementación | Logs en JSON, métricas del pedido, trazabilidad y alertas |
 | 22 | [Dockerfile multietapa](22-dockerfile-multietapa.md) | Implementación | Dockerfile comentado + `.dockerignore` |
 | 23 | [Auditoría de la imagen](23-auditoria-de-la-imagen.md) | Revisión | Tabla de hallazgos + medición de la imagen |
-| 24 | [Pipeline de CI/CD](24-pipeline-ci-cd.md) | Implementación | Workflow de GitHub Actions completo |
-| 25 | [Auditoría del pipeline](25-auditoria-del-pipeline.md) | Revisión | Tabla de hallazgos + medición de tiempos |
+| 24 | [Pipeline de CI: prueba, calidad, seguridad y publicación de la imagen](24-pipeline-ci-cd.md) | Implementación | Workflow de GitHub Actions completo |
+| 25 | [Auditoría del pipeline: tests que no corren, gates que no frenan y métricas que mienten](25-auditoria-del-pipeline.md) | Revisión | Tabla de hallazgos + medición de tiempos |
 | 26 | [ADRs de las decisiones](26-adrs-de-las-decisiones.md) | Documentación | Un ADR por decisión + índice actualizado |
 | 27 | [Auditoría de los ADRs](27-auditoria-de-los-adrs.md) | Revisión | Matriz de consistencia + verificación contra el código |
 | 28 | [Diagramas C4 en Mermaid](28-diagramas-c4-mermaid.md) | Documentación | Bloques Mermaid de Contexto y Contenedores |

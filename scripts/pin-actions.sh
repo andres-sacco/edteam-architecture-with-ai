@@ -15,6 +15,8 @@
 # El comentario al lado del SHA no es decorativo: es lo único que deja leer qué
 # versión es, y es lo que este script usa para resolverla.
 #
+# Con las acciones ya fijadas, el uso normal es "--check" desde el propio CI.
+#
 # Formato esperado en el YAML:
 #     uses: owner/repo@<sha40>   # vX.Y.Z — comentario libre
 set -euo pipefail

@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Falsos positivos de OWASP Dependency-Check, por escrito.
+
+  Este archivo existe vacío a propósito. La alternativa a tenerlo es que, el
+  día que el escáner marque un falso positivo, la salida más rápida sea bajar
+  'failBuildOnCVSS' o sacar el paso del pipeline: dos cambios de una línea que
+  apagan el gate entero para resolver un caso puntual. Con el archivo acá, esa
+  salida ya está construida y es la barata.
+
+  CUÁNDO SE SUPRIME
+  Sólo cuando la vulnerabilidad NO aplica, y el motivo se escribe. Los dos
+  casos legítimos y frecuentes:
+
+    · Identificación equivocada. Dependency-Check adivina las coordenadas de un
+      jar por su nombre y sus metadatos, y a veces le asigna el CPE de otro
+      producto con nombre parecido. La CVE es real; el jar no es ese.
+
+    · La ruta vulnerable no se ejercita. Hay que poder decir cuál es la ruta y
+      por qué este servicio no la toma. Si no se puede decir, no se suprime.
+
+  Lo que NO es un motivo: "todavía no hay versión corregida", "es sólo de
+  desarrollo" (las de scope test ya están fuera del escaneo), o "hace tres
+  semanas que rompe el build".
+
+  CADA ENTRADA LLEVA FECHA. Una supresión sin fecha es permanente de hecho: no
+  hay forma de saber si sigue siendo cierta. Con fecha, la revisión periódica
+  tiene por dónde empezar.
+
+  Formato:
+
+    <suppress until="2026-12-31Z">
+      <notes><![CDATA[
+        2026-09-25 — quien lo suprime.
+        Por qué no aplica, con el detalle concreto.
+      ]]></notes>
+      <packageUrl regex="true">^pkg:maven/com\.ejemplo/artefacto@.*$</packageUrl>
+      <cve>CVE-0000-00000</cve>
+    </suppress>
+
+  El atributo 'until' hace que la supresión CADUQUE: pasada esa fecha el
+  hallazgo vuelve a aparecer y hay que volver a justificarlo. Es la diferencia
+  entre suprimir y olvidar.
+
+  Documentación del formato:
+  https://jeremylong.github.io/DependencyCheck/general/suppression.html
+-->
+<suppressions xmlns="https://jeremylong.github.io/DependencyCheck/dependency-suppression.1.3.xsd">
+</suppressions>

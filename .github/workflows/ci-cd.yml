@@ -1,54 +1,70 @@
 # =============================================================================
-# flight-reservations — integración, entrega y despliegue continuos
+# flight-reservations — integración continua y publicación de la imagen
 # =============================================================================
 #
-# Un solo archivo, cuatro trabajos y un grafo que se lee de una sola forma:
+# Cinco trabajos y un grafo que se lee de una sola forma:
 #
-#     unit ─────────┐
-#                   ├──▶ image ──▶ deploy
-#     integration ──┘
+#     unit ─────────┬──▶ image   (construye siempre; publica sólo desde main)
+#                   │
+#     integration ──┴──▶ sonar   (análisis y quality gate)
 #
-# 'image' declara 'needs: [unit, integration]'. Eso no es una preferencia de
-# orden: en GitHub Actions un trabajo con 'needs' NO arranca si alguno de los
-# que espera falló o fue cancelado. No hay forma de que se construya una imagen
-# de un commit cuyos tests no pasaron, ni de que 'deploy' corra sin 'image'.
+#     security-scan            (no espera a nadie y nadie lo espera)
 #
-# Por el mismo motivo no hay un solo 'continue-on-error' en este archivo.
-# 'continue-on-error' convierte un paso rojo en un trabajo verde: el grafo
-# sigue, la imagen se construye igual y el despliegue sale. Un pipeline así es
-# más peligroso que no tener pipeline, porque además da una señal de éxito.
+# 'image' y 'sonar' declaran los dos 'needs: [unit, integration]'. En GitHub
+# Actions un trabajo con 'needs' NO arranca si alguno de los que espera falló o
+# fue cancelado: no hay forma de que se publique una imagen de un commit cuyos
+# tests no pasaron.
 #
-# Tampoco hay 'if: always()' en ningún paso que produzca artefactos o que
-# despliegue. Sólo en los que PUBLICAN RESULTADOS (el resumen de tests, la
-# subida de los XML), que tienen que correr justamente cuando la suite falló
-# —si no, el único caso en el que el reporte hace falta es el único en el que
-# no se genera.
+# 'image', 'sonar' y 'security-scan' corren EN PARALELO y ninguno depende de
+# otro. Es deliberado: ni el análisis estático ni el escaneo de dependencias
+# tienen por qué demorar la publicación de un artefacto cuyos 798 tests ya
+# pasaron, y la caída de un servicio externo (sonarcloud.io, el NVD) no tiene
+# por qué impedir que se publique una imagen.
+#
+# Eso no los convierte en informes decorativos. Los dos fallan de verdad
+# —quality gate y failBuildOnCVSS— y el lugar donde eso frena algo es el pull
+# request, declarándolos required status checks: ahí una decisión de calidad o
+# de seguridad se puede discutir y arreglar antes de que entre a main.
+#
+# 'security-scan' además no espera a los tests: es el trabajo más lento (la
+# base del NVD) y no necesita que nada compile para resolver el árbol de
+# dependencias, así que arranca en t=0.
+#
+# No hay un solo 'continue-on-error' en este archivo. Convierte un paso rojo en
+# un trabajo verde: el grafo sigue y la imagen se publica igual. Un pipeline
+# así es más peligroso que no tener pipeline, porque además da una señal de
+# éxito.
+#
+# 'if: always()' aparece sólo en los pasos que PUBLICAN RESULTADOS (el resumen
+# de tests, la subida de los XML), que tienen que correr justamente cuando la
+# suite falló — si no, el único caso en el que el reporte hace falta es el
+# único en el que no se genera.
 
-name: CI/CD
+name: CI
 
 on:
-  # --- Rama de trabajo: sólo CI -----------------------------------------------
+  # --- Rama de trabajo: sólo los tests ----------------------------------------
   # El autor necesita saber en minutos si rompió algo, en la rama donde lo
-  # rompió y antes de abrir el PR. No se construye imagen y no se despliega:
-  # una rama de trabajo no produce artefactos que alguien pueda desplegar por
-  # error, y sus corridas nunca ven los secretos del entorno 'production'.
+  # rompió y antes de abrir el PR. No se construye la imagen acá: son ~1,5
+  # minutos más en el bucle corto, y lo que la imagen verifica —que el
+  # Dockerfile siga construyendo— se verifica igual en el PR, antes de que
+  # llegue a main.
   push:
     branches:
       - 'main'
       - 'modulo*/clase*'
 
-  # --- Pull request hacia main: CI otra vez, y no es redundante ---------------
+  # --- Pull request hacia main: todo, menos publicar --------------------------
   # El evento 'push' prueba la PUNTA DE LA RAMA. El evento 'pull_request'
   # prueba 'refs/pull/N/merge': el resultado de fusionar esa rama con el main
   # ACTUAL. Son dos commits distintos y dos riesgos distintos — la rama puede
   # estar verde y romperse al integrarse con algo que entró a main mientras
-  # tanto. Lo que se protege con un required status check es este evento, no
-  # el otro, porque es el único que prueba lo que realmente va a quedar en main.
+  # tanto. Lo que se protege con un required status check es este evento.
   #
   # Un PR desde un fork dispara este evento con un GITHUB_TOKEN de sólo lectura
-  # y SIN acceso a los secretos del repositorio: es GitHub quien lo garantiza,
-  # no este archivo. Por eso el CI de un PR externo es seguro, y por eso
-  # 'image' y 'deploy' además lo excluyen explícitamente más abajo.
+  # y SIN acceso a los secretos del repositorio: lo garantiza GitHub, no este
+  # archivo. Por eso el CI de un PR externo es seguro; 'image' no publica y
+  # 'sonar' se saltea (ver sus condiciones).
   pull_request:
     branches:
       - 'main'
@@ -57,9 +73,8 @@ on:
 # nuevo: nadie necesita el resultado de un commit que ya quedó atrás, y en una
 # rama activa eso es la mitad de los minutos de runner.
 #
-# En main NO se cancela. Una corrida de main puede estar en mitad de un
-# 'update-traffic' o de una migración; matarla deja el servicio en un estado
-# que nadie declaró. Se encolan y se ejecutan de a una.
+# En main NO se cancela. Una corrida de main puede estar en mitad de un push al
+# registro; matarla deja una etiqueta apuntando a una imagen a medio subir.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
@@ -72,15 +87,11 @@ permissions:
   contents: read
 
 env:
-  # Ni un solo valor de acá es secreto: son identificadores, no credenciales.
-  # Lo que sí es secreto (proveedor de identidad, cuenta de servicio, clave de
-  # PII, contraseña de la base) no aparece en este bloque ni en ningún otro
-  # 'env' del archivo: entra por 'secrets' en el único paso que lo necesita, o
-  # ni siquiera llega al runner (ver el trabajo 'deploy').
-  GCP_REGION: southamerica-east1
-  AR_REPOSITORY: containers
+  # Ni un solo valor de acá es secreto. El único secreto del workflow es
+  # SONAR_TOKEN; el registro se autentica con el GITHUB_TOKEN efímero que
+  # GitHub emite para cada corrida y que nadie tiene que crear ni rotar.
+  REGISTRY: ghcr.io
   IMAGE_NAME: flight-reservations
-  CLOUD_RUN_SERVICE: flight-reservations
   # Java: el mismo 21 que fija .sdkmanrc y que declara <java.version> del pom.
   # Temurin, el mismo proveedor que la imagen de ejecución del Dockerfile.
   JAVA_VERSION: '21'
@@ -92,9 +103,9 @@ jobs:
   # ===========================================================================
   # 1. Tests unitarios — el ciclo corto
   # ===========================================================================
-  # 650 tests, sin Docker y sin red. Acá viven los dos guardianes que la
-  # consigna pide que frenen el pipeline: HexagonalArchitectureTest (ArchUnit)
-  # y OpenApiContractTest. Están en surefire, no en failsafe, así que este
+  # 650 tests, sin Docker y sin red. Acá viven los dos guardianes que tienen
+  # que frenar el pipeline: HexagonalArchitectureTest (ArchUnit) y
+  # OpenApiContractTest. Están en surefire, no en failsafe, así que este
   # trabajo los corre y no hace falta esperar a los de integración para saber
   # que la arquitectura o el contrato se rompieron.
   #
@@ -112,15 +123,16 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@0000000000000000000000000000000000000000 # v5.0.0 — SHA a resolver, ver §7
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           # Sin historial: este trabajo no lo usa y clonar 1 commit en lugar de
-          # todo el repositorio ahorra varios segundos.
+          # todo el repositorio ahorra varios segundos. ('sonar' sí lo necesita
+          # y ahí se pide completo.)
           fetch-depth: 1
           persist-credentials: false
 
       - name: JDK ${{ env.JAVA_VERSION }} + caché del repositorio Maven
-        uses: actions/setup-java@0000000000000000000000000000000000000000 # v5.0.0 — SHA a resolver, ver §7
+        uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: ${{ env.JAVA_DISTRIBUTION }}
@@ -182,7 +194,7 @@ jobs:
 
       - name: Guardar los XML de surefire
         if: ${{ always() }}
-        uses: actions/upload-artifact@0000000000000000000000000000000000000000 # v4.6.2 — SHA a resolver, ver §7
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: surefire-reports-${{ github.run_id }}
           path: target/surefire-reports/
@@ -194,8 +206,14 @@ jobs:
   # ===========================================================================
   # 148 tests que levantan contenedores con Testcontainers. Necesitan el
   # demonio Docker del runner, que ubuntu-24.04 ya trae: por eso estos tests
-  # corren acá y NO dentro del 'docker build' (ver el comentario del
-  # Dockerfile sobre -DskipTests).
+  # corren acá y NO dentro del 'docker build' (ver el comentario del Dockerfile
+  # sobre -DskipTests).
+  #
+  # Este trabajo es además el que produce la COBERTURA que consume Sonar.
+  # './mvnw verify' corre los dos agentes de JaCoCo —uno por surefire y otro
+  # por failsafe, porque forkean JVMs distintas—, mezcla los dos .exec y emite
+  # un único jacoco.xml. Medir sólo los unitarios dejaría a los adaptadores de
+  # salida pareciendo sin tests, que es exactamente lo contrario de la verdad.
   #
   # La suite no necesita ninguna credencial externa: los tokens son HMAC de
   # desarrollo, el catálogo externo se reemplaza por un stub cuando 'base-url'
@@ -216,19 +234,17 @@ jobs:
       # contenedor, su pull y unos segundos de arranque en cada corrida.
       # NO hacer esto en una máquina de desarrollo, donde sí deja basura.
       TESTCONTAINERS_RYUK_DISABLED: 'true'
-      # Testcontainers verifica el entorno en cada arranque; saltearlo evita un
-      # par de pulls y comprobaciones que en un runner ya sabemos que pasan.
       TESTCONTAINERS_CHECKS_DISABLE: 'true'
 
     steps:
       - name: Checkout
-        uses: actions/checkout@0000000000000000000000000000000000000000 # v5.0.0 — SHA a resolver, ver §7
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           fetch-depth: 1
           persist-credentials: false
 
       - name: JDK ${{ env.JAVA_VERSION }} + caché del repositorio Maven
-        uses: actions/setup-java@0000000000000000000000000000000000000000 # v5.0.0 — SHA a resolver, ver §7
+        uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: ${{ env.JAVA_DISTRIBUTION }}
@@ -246,12 +262,13 @@ jobs:
           docker pull --quiet rabbitmq:4-management-alpine &
           wait
 
-      - name: Correr la suite completa (unitarios + integración + gate de PII)
-        # './mvnw verify' corre surefire, después failsafe y al final el
-        # exec-maven-plugin con scripts/pii-log-gate.sh, que grepea la salida
-        # capturada de TODA la suite contra los patrones de datos personales.
-        # Cualquiera de los tres que falle deja este trabajo en rojo, y con él
-        # 'image' y 'deploy'.
+      - name: Suite completa + cobertura + gate de PII
+        # './mvnw verify' corre surefire, después failsafe, después la mezcla y
+        # el informe de JaCoCo, y al final el exec-maven-plugin con
+        # scripts/pii-log-gate.sh, que grepea la salida capturada de TODA la
+        # suite contra los patrones de datos personales. Cualquiera de los
+        # cuatro que falle deja este trabajo en rojo, y con él 'image' y
+        # 'sonar'.
         run: ./mvnw ${{ env.MAVEN_ARGS }} verify
 
       - name: Reporte de tests en el resumen del workflow
@@ -260,7 +277,7 @@ jobs:
 
       - name: Guardar los XML de surefire y failsafe
         if: ${{ always() }}
-        uses: actions/upload-artifact@0000000000000000000000000000000000000000 # v4.6.2 — SHA a resolver, ver §7
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: test-reports-${{ github.run_id }}
           path: |
@@ -269,52 +286,278 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
 
+      - name: Guardar lo que necesita Sonar
+        # Clases compiladas + informe de cobertura + resultados de los tests.
+        # Son ~4 MB y evitan que el trabajo de análisis tenga que volver a
+        # compilar y a correr los 798 tests, que serían cuatro minutos más de
+        # camino crítico. Además garantiza que Sonar analice EXACTAMENTE el
+        # bytecode que se probó, y no uno recompilado que podría diferir.
+        #
+        # Del informe de cobertura va SÓLO el jacoco.xml, que es lo único que
+        # Sonar lee. El directorio entero son 6,5 MB porque incluye el informe
+        # HTML navegable, que acá no lo mira nadie.
+        #
+        # Los cinco caminos cuelgan de 'target/', así que la acción usa ese
+        # directorio como raíz del artefacto y el 'download' de abajo lo
+        # restituye tal cual.
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sonar-input-${{ github.run_id }}
+          path: |
+            target/classes/
+            target/test-classes/
+            target/site/jacoco-merged/jacoco.xml
+            target/surefire-reports/
+            target/failsafe-reports/
+          retention-days: 1
+          if-no-files-found: error
+
   # ===========================================================================
-  # 3. Entrega continua — construir y publicar la imagen
+  # 3. Análisis estático y cobertura — SonarQube Cloud
   # ===========================================================================
-  # Sólo después de que los dos trabajos de test pasaron, y sólo desde main
-  # del repositorio original.
-  image:
-    name: Construir y publicar imagen
+  # Corre en paralelo con 'image'. No lo bloquea y no lo bloquea nadie: el
+  # quality gate es una decisión sobre la calidad del código, y el lugar donde
+  # se toma es el pull request. Configurar este trabajo como required status
+  # check sobre main es lo que le da dientes.
+  sonar:
+    name: SonarQube Cloud
     needs: [unit, integration]
-    # Tres condiciones, las tres necesarias:
-    #   · event_name == 'push'          → no desde un pull_request
-    #   · ref == 'refs/heads/main'      → no desde una rama de trabajo
-    #   · repository == el original     → si alguien forkea el repositorio y
-    #                                     pushea a SU main, su corrida no
-    #                                     intenta autenticarse contra nuestra
-    #                                     infraestructura. (Los secretos ya no
-    #                                     estarían, pero el trabajo fallaría
-    #                                     ruidosamente en vez de ni arrancar.)
+    # Se saltea en los PR de forks. No es una concesión: GitHub NO entrega
+    # secretos a un workflow disparado por un fork, así que SONAR_TOKEN estaría
+    # vacío y el escáner fallaría con un 401 que no dice nada sobre el código.
+    # Es mejor un trabajo salteado y legible que uno rojo por un motivo que el
+    # autor del PR no puede arreglar. El análisis de ese código ocurre igual
+    # cuando el PR se mergea a main.
     if: >-
-      github.event_name == 'push' &&
-      github.ref == 'refs/heads/main' &&
-      github.repository == 'andres-sacco/edteam-architecture-with-ai'
+      github.event_name == 'push' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          # fetch-depth: 0 — el historial COMPLETO, y es el único trabajo que
+          # lo pide. Sonar usa el blame de git para dos cosas que son la mitad
+          # de su valor: atribuir cada issue a quien la introdujo, y decidir
+          # qué es "código nuevo" (que es sobre lo que el quality gate
+          # realmente juzga). Con un clon superficial, todas las líneas
+          # aparecen con la fecha del clon: el gate pasaría a evaluar el
+          # repositorio entero en cada corrida y fallaría siempre.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: JDK ${{ env.JAVA_VERSION }} + caché del repositorio Maven
+        uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+          cache: maven
+
+      - name: Caché del analizador de Sonar
+        # El escáner baja los plugins de análisis del servidor en cada corrida
+        # (~100 MB). Cacheados son ~20 s menos por corrida. La clave no lleva
+        # hash de nada porque el contenido no depende del código: se invalida
+        # sola cuando SonarCloud publica analizadores nuevos y la restauración
+        # parcial alcanza.
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ~/.sonar/cache
+          key: sonar-${{ runner.os }}
+          restore-keys: sonar-${{ runner.os }}
+
+      - name: Recuperar clases y cobertura
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: sonar-input-${{ github.run_id }}
+          path: target
+
+      - name: Analizar y esperar el quality gate
+        env:
+          # El token es lo ÚNICO secreto del workflow. Entra por 'env' y no
+          # interpolado dentro del 'run': '${{ ... }}' se sustituye
+          # textualmente en el script antes de que exista un shell, así que un
+          # valor con caracteres especiales dejaría de ser un dato. El escáner
+          # lo lee de la variable de entorno solo; no se le pasa por bandera,
+          # que quedaría en la lista de procesos.
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          # Lo necesita el escáner para detectar el PR y decorarlo. Lo emite
+          # GitHub para esta corrida, dura lo que dura el trabajo y acá se usa
+          # en modo lectura.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${SONAR_TOKEN}" ]; then
+            echo "::error::Falta el secreto SONAR_TOKEN. Generalo en SonarQube Cloud (My Account → Security) y cargalo en Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+
+          # 'sonar:sonar' SIN una fase del ciclo de vida por delante: el
+          # artefacto que se bajó ya trae target/classes y el jacoco.xml, así
+          # que no hay nada que compilar. Poner 'verify sonar:sonar' acá
+          # volvería a correr los 798 tests para nada.
+          #
+          # Las coordenadas (host, organización, projectKey y de dónde leer la
+          # cobertura) están en las <properties> del pom, no acá: así
+          # './mvnw sonar:sonar' a mano apunta al mismo proyecto y no hay dos
+          # lugares donde equivocarse.
+          #
+          # 'qualitygate.wait=true' es lo que convierte esto en un gate y no en
+          # un informe. Sin esa bandera el escáner sube las métricas y termina
+          # en verde pase lo que pase: el panel diría que la cobertura del
+          # código nuevo cayó al 40% y el check seguiría estando OK. Cuesta
+          # entre 30 y 90 s de espera mientras el servidor procesa, y por eso
+          # este trabajo está fuera del camino de 'image'.
+          ./mvnw ${MAVEN_ARGS} sonar:sonar -Dsonar.qualitygate.wait=true
+
+      - name: Enlace al análisis
+        if: ${{ always() }}
+        run: |
+          {
+            echo "## 📊 SonarQube Cloud"
+            echo ""
+            echo "[Ver el análisis de este commit](https://sonarcloud.io/summary/new_code?id=andres-sacco_edteam-architecture-with-ai&branch=${GITHUB_REF_NAME})"
+            echo ""
+            echo "Si este trabajo está en rojo, es el quality gate: cobertura sobre código nuevo,"
+            echo "duplicación, o issues nuevas. El detalle está en el enlace, por archivo y por línea."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ===========================================================================
+  # 4. Seguridad — vulnerabilidades conocidas en las dependencias
+  # ===========================================================================
+  # SIN 'needs', a propósito, y es el único trabajo del archivo que no espera a
+  # nadie. Es el más lento —la base del NVD— así que arranca en t=0 y no queda
+  # detrás de los cuatro minutos de los tests. Y no depende de ellos: para
+  # resolver el árbol de dependencias no hace falta que un test pase.
+  #
+  # Tampoco lo espera nadie: no bloquea 'image'. Mismo criterio que con Sonar.
+  # Que se pueda publicar una imagen no puede quedar atado a la disponibilidad
+  # del NVD, que es un servicio externo con límite de ritmo. Donde este trabajo
+  # SÍ frena algo es en el pull request, como required status check — y ahí
+  # frena de verdad, porque 'failBuildOnCVSS' lo deja en rojo.
+  security-scan:
+    name: Vulnerabilidades en dependencias
+    runs-on: ubuntu-24.04
+    # Treinta minutos y no diez: la primera corrida, con la caché del NVD
+    # vacía, se baja la base entera. Las siguientes son ~2 minutos.
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: JDK ${{ env.JAVA_VERSION }} + caché del repositorio Maven
+        uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+          cache: maven
+
+      - name: Caché de la base del NVD
+        # Es LA optimización de este trabajo, no una más. Sin caché, cada
+        # corrida vuelve a bajar y a indexar la base de vulnerabilidades
+        # entera; con caché, sólo pide el delta desde la última actualización.
+        #
+        # La clave lleva la fecha del día: la caché se renueva una vez por
+        # jornada (que es el ritmo al que el NVD publica) y 'restore-keys'
+        # hace que mientras tanto se reutilice la de ayer como punto de
+        # partida en vez de empezar de cero. Sin la fecha, la caché se
+        # congelaría en el primer día y el escaneo miraría una base vieja
+        # dando por buenas dependencias que ya tienen CVE publicada.
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ~/.m2/repository/org/owasp/dependency-check-data
+          key: nvd-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            nvd-${{ runner.os }}-
+
+      - name: OWASP Dependency-Check
+        env:
+          # La clave entra por el entorno; el pom la lee con
+          # ${env.NVD_API_KEY}. No se pasa con -D: un -D queda en el argv del
+          # proceso y lo ve cualquier cosa que liste procesos en el runner.
+          #
+          # Es gratis y se pide en https://nvd.nist.gov/developers/request-an-api-key
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${NVD_API_KEY}" ]; then
+            echo "::error::Falta el secreto NVD_API_KEY. Sin clave, el NVD limita el ritmo a un punto en que la descarga inicial tarda entre 30 y 60 minutos y falla seguido — este trabajo moriría por timeout sin decir nada útil. Pedila gratis en https://nvd.nist.gov/developers/request-an-api-key y cargala en Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+
+          # 'dependency-check:check' y no una fase del ciclo de vida: el plugin
+          # resuelve el árbol de dependencias por su cuenta y no necesita que
+          # el proyecto esté compilado. Compilar acá sería un minuto de más
+          # para nada.
+          #
+          # El umbral (failBuildOnCVSS), los formatos, el archivo de
+          # supresiones y los analizadores apagados están en el pom, no acá:
+          # así './mvnw dependency-check:check' a mano da exactamente el mismo
+          # resultado que el CI.
+          ./mvnw ${MAVEN_ARGS} dependency-check:check
+
+      - name: Resumen en el panel del workflow
+        # 'always()': el informe hace falta sobre todo cuando el paso anterior
+        # falló. Si sólo corriera en verde, el único caso en el que sirve sería
+        # el único en el que no se genera.
+        if: ${{ always() }}
+        run: python3 scripts/ci-security-summary.py target/dependency-check/dependency-check-report.json
+
+      - name: Subir el informe
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dependency-check-report-${{ github.run_id }}
+          # El HTML es el informe navegable, con el detalle por CVE y la
+          # evidencia de por qué Dependency-Check identificó cada jar como lo
+          # identificó — que es lo que hay que mirar para decidir si algo es
+          # un falso positivo.
+          path: target/dependency-check/
+          retention-days: 30
+          if-no-files-found: warn
+
+  # ===========================================================================
+  # 5. La imagen — se construye siempre, se publica sólo desde main
+  # ===========================================================================
+  # En un PR se construye y NO se publica. Eso es lo que hace que un Dockerfile
+  # roto —una etiqueta base que ya no existe, un COPY a una ruta que se movió—
+  # se descubra antes del merge y no en el primer push a main. Construir sin
+  # publicar no necesita ninguna credencial, así que también funciona en un PR
+  # de un fork.
+  image:
+    name: Imagen de contenedor
+    needs: [unit, integration]
+    if: >-
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-24.04
     timeout-minutes: 20
 
     permissions:
       contents: read
-      # El único permiso extra, y el que hace que no exista una clave JSON de
-      # cuenta de servicio en ningún secreto: 'id-token: write' deja que el
-      # runner pida un OIDC token firmado por GitHub, que Workload Identity
-      # Federation cambia por un access token de Google de vida corta. No hay
-      # credencial de larga duración que rotar, que filtrar ni que revocar.
-      id-token: write
-
-    outputs:
-      # El digest es lo que se despliega. Un tag es un puntero mutable —alguien
-      # puede reapuntar 'sha-a1b2c3d' a otra imagen— y un digest es el hash del
-      # contenido: no se puede reapuntar. Que 'deploy' consuma esta salida y no
-      # reconstruya el nombre por su cuenta es lo que garantiza que se despliega
-      # EXACTAMENTE lo que se acaba de probar y publicar.
-      digest: ${{ steps.build.outputs.digest }}
-      image_ref: ${{ steps.build.outputs.image_ref }}
-      short_sha: ${{ steps.meta.outputs.short_sha }}
+      # El único permiso extra, y sólo lo usa el paso que publica. GitHub lo
+      # degrada a lectura solo en los workflows disparados por un fork, que es
+      # justamente donde no se publica.
+      #
+      # No hace falta ninguna credencial de registro: ghcr.io acepta el
+      # GITHUB_TOKEN efímero de esta corrida. No hay un PAT que crear, que
+      # rotar ni que revocar, y el token muere cuando termina el trabajo.
+      packages: write
 
     steps:
       - name: Checkout
-        uses: actions/checkout@0000000000000000000000000000000000000000 # v5.0.0 — SHA a resolver, ver §7
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -325,384 +568,137 @@ jobs:
           set -euo pipefail
           short_sha="$(echo "${GITHUB_SHA}" | cut -c1-12)"
 
+          # El nombre del repositorio de imágenes, en minúsculas: ghcr.io
+          # rechaza mayúsculas y 'github.repository_owner' conserva las que
+          # tenga la cuenta.
+          owner="$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+
           # La versión semántica sale del pom, que es donde ya vive.
-          #
-          # Se parsea el XML en lugar de grepearlo: un grep de '<version>'
-          # agarra la del parent de Spring Boot, que está catorce líneas más
-          # arriba. Y se parsea con Python en lugar de con
-          # 'mvnw help:evaluate' para que este trabajo no necesite un JDK ni
-          # baje el maven-help-plugin — no compila nada, sólo construye la
-          # imagen, y agregarle un setup-java son ~20 s por corrida a cambio
-          # de leer un campo.
           # find() sobre la raíz devuelve el hijo DIRECTO: el <version> del
-          # proyecto, nunca el que está dentro de <parent>.
+          # proyecto, nunca el que está dentro de <parent> (el de Spring Boot,
+          # catorce líneas más arriba, que es lo que agarraría un grep).
+          # Se parsea con Python y no con 'mvnw help:evaluate' para que este
+          # trabajo no necesite un JDK: no compila nada, sólo construye la
+          # imagen.
           pom_version="$(python3 -c "import xml.etree.ElementTree as ET; print(ET.parse('pom.xml').getroot().find('{http://maven.apache.org/POM/4.0.0}version').text.strip())")"
 
           {
             echo "short_sha=${short_sha}"
             echo "pom_version=${pom_version}"
+            echo "repo=${REGISTRY}/${owner}/${IMAGE_NAME}"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Autenticarse en Google Cloud (OIDC, sin clave)
-        id: auth
-        uses: google-github-actions/auth@0000000000000000000000000000000000000000 # v3.0.0 — SHA a resolver, ver §7
-        with:
-          # Ninguno de los dos es una credencial: son el nombre del proveedor
-          # de identidad y el correo de la cuenta de servicio. Van igual por
-          # 'secrets' porque revelan la topología del proyecto de GCP, y porque
-          # no hay razón para que estén en el archivo.
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-          # El access token que devuelve dura 10 minutos y no se imprime.
-          token_format: access_token
-          create_credentials_file: true
-
-      - name: gcloud
-        uses: google-github-actions/setup-gcloud@0000000000000000000000000000000000000000 # v3.0.1 — SHA a resolver, ver §7
-
-      - name: Configurar el helper de credenciales de Docker
-        # 'configure-docker' instala un CREDENTIAL HELPER en ~/.docker/config.json:
-        # docker le pide el token a gcloud en cada push. No se escribe ninguna
-        # contraseña en el archivo de configuración y no hay 'docker login -p'
-        # con un secreto en la línea de comandos —que quedaría en el log del
-        # proceso y en el historial del shell—.
-        run: gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
-
       - name: Preparar buildx
-        uses: docker/setup-buildx-action@0000000000000000000000000000000000000000 # v3.11.1 — SHA a resolver, ver §7
         # El driver 'docker-container' (el que crea esta acción) es el único
         # que sabe exportar e importar caché de capas. Con el driver por
         # defecto, '--cache-to' no hace nada y el build es siempre en frío.
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
 
-      - name: Construir y publicar
+      - name: Autenticarse en ghcr.io
+        # Sólo cuando se va a publicar. En un PR este paso ni corre, así que un
+        # PR de un fork nunca intenta autenticarse contra nada.
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # '--password-stdin' y no '-p': con '-p' el token queda en la línea de
+          # comandos, visible en la lista de procesos del runner y en cualquier
+          # traza de shell. Por stdin no toca ni el argv ni el historial.
+          echo "${GH_TOKEN}" | docker login "${REGISTRY}" -u "${GITHUB_ACTOR}" --password-stdin
+
+      - name: Construir${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') && ' y publicar' || ' (sin publicar)' }}
         id: build
         env:
-          REGISTRY: ${{ env.GCP_REGION }}-docker.pkg.dev
-          PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          REPO: ${{ steps.meta.outputs.repo }}
           SHORT_SHA: ${{ steps.meta.outputs.short_sha }}
           POM_VERSION: ${{ steps.meta.outputs.pom_version }}
+          PUBLISH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         run: |
           set -euo pipefail
-          repo="${REGISTRY}/${PROJECT_ID}/${AR_REPOSITORY}/${IMAGE_NAME}"
 
           # --- Esquema de etiquetado ------------------------------------------
           #   sha-<12>       identificable y única por commit. Es la que se usa
-          #                  para leer qué commit produjo una imagen.
+          #                  para saber qué commit produjo una imagen.
           #   <pom-version>  la versión semántica, leída del pom.
           #   main           puntero móvil, para que un humano pueda hacer
-          #                  'docker pull ...:main' sin buscar el SHA. NUNCA se
-          #                  despliega: el despliegue va por digest.
+          #                  'docker pull ...:main' sin buscar el SHA.
           #
-          # No se publica 'latest'. Una etiqueta móvil desplegada no responde
-          # la única pregunta que importa durante un incidente: qué código está
-          # corriendo.
+          # No se publica 'latest'. Una etiqueta móvil no responde la única
+          # pregunta que importa durante un incidente: qué código está
+          # corriendo. Y quien consuma esta imagen debería referenciarla por
+          # DIGEST: una etiqueta es un puntero que se puede reapuntar, un
+          # digest es el hash del contenido y no.
+          #
+          # --- org.opencontainers.image.source, y por qué se pisa --------------
+          # El Dockerfile trae ese label con una URL vieja
+          # (github.com/edteam/flight-reservations). En ghcr.io ese label no es
+          # decorativo: es lo que ATA el paquete al repositorio, y de esa
+          # atadura salen la visibilidad heredada y el permiso de escritura del
+          # GITHUB_TOKEN. Con la URL equivocada el paquete queda huérfano.
           #
           # --- Por qué '--provenance=false' ------------------------------------
-          # Con los attestations de buildx encendidos (el default de buildx
-          # cuando publica), lo que se sube no es un manifiesto de imagen sino
-          # un ÍNDICE OCI que apunta al manifiesto de la imagen MÁS al de la
-          # atestación — y el digest que devuelve el build es el del índice.
-          # Cloud Run espera un manifiesto de imagen. Apagarlo hace que el
-          # digest que se despliega sea el de la imagen y no el de un índice.
+          # Con los attestations de buildx encendidos, lo que se sube no es un
+          # manifiesto de imagen sino un ÍNDICE OCI que apunta al manifiesto de
+          # la imagen MÁS al de la atestación, y el digest que devuelve el build
+          # es el del índice. Apagarlo hace que el digest publicado sea el de la
+          # imagen, que es el que alguien va a querer referenciar.
           #
-          # --- Por qué la caché es 'type=gha' y no el registro ------------------
-          # La caché de capas son ~500 MB con 'mode=max' (incluye la etapa de
-          # compilación, que es donde está el repositorio Maven de 400 MB y por
-          # lo tanto donde está todo el ahorro). En la caché de Actions son
-          # gratis —10 GB por repositorio—; en Artifact Registry se comerían
-          # diez veces el medio giga de la capa gratuita.
-          docker buildx build \
-            --file Dockerfile \
-            --tag "${repo}:sha-${SHORT_SHA}" \
-            --tag "${repo}:${POM_VERSION}" \
-            --tag "${repo}:main" \
-            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
-            --label "org.opencontainers.image.version=${POM_VERSION}" \
-            --label "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            --cache-from "type=gha,scope=flight-reservations" \
-            --cache-to   "type=gha,scope=flight-reservations,mode=max" \
-            --provenance=false \
-            --metadata-file /tmp/build-metadata.json \
-            --push \
-            .
+          # --- Por qué la caché es 'type=gha' ----------------------------------
+          # Son ~500 MB con 'mode=max' —incluye la etapa de compilación, que es
+          # donde está el repositorio Maven de 400 MB y por lo tanto donde está
+          # todo el ahorro— y en la caché de Actions son gratis: 10 GB por
+          # repositorio. Es lo que lleva el build de ~2:50 en frío a ~40 s.
+          args=(
+            --file Dockerfile
+            --tag "${REPO}:sha-${SHORT_SHA}"
+            --tag "${REPO}:${POM_VERSION}"
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}"
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}"
+            --label "org.opencontainers.image.version=${POM_VERSION}"
+            --label "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            --cache-from "type=gha,scope=flight-reservations"
+            --cache-to   "type=gha,scope=flight-reservations,mode=max"
+            --provenance=false
+            --metadata-file /tmp/build-metadata.json
+          )
+
+          if [ "${PUBLISH}" = "true" ]; then
+            args+=(--tag "${REPO}:main" --push)
+          fi
+
+          docker buildx build "${args[@]}" .
+
+          if [ "${PUBLISH}" != "true" ]; then
+            {
+              echo "## 🔨 Imagen construida (no publicada)"
+              echo ""
+              echo "El Dockerfile construye. No se publica desde un pull request:"
+              echo "la imagen se publica sólo en el push a \`main\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
 
           # El digest sale del metadata del propio push, no de un 'docker
-          # inspect' posterior ni de un 'crane digest' contra el registro:
-          # cualquiera de esos dos volvería a resolver una ETIQUETA, y entre
-          # el push y la consulta la etiqueta puede haber cambiado.
+          # inspect' posterior ni de una consulta al registro: cualquiera de
+          # esos dos volvería a resolver una ETIQUETA, y entre el push y la
+          # consulta la etiqueta puede haber cambiado.
           digest="$(jq -r '."containerimage.digest"' /tmp/build-metadata.json)"
-          [ -n "$digest" ] && [ "$digest" != "null" ] || { echo "no se pudo leer el digest"; exit 1; }
+          [ -n "$digest" ] && [ "$digest" != "null" ] || { echo "::error::no se pudo leer el digest del push"; exit 1; }
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
 
           {
-            echo "digest=${digest}"
-            echo "image_ref=${repo}@${digest}"
-          } >> "$GITHUB_OUTPUT"
-
-          {
-            echo "## 📦 Imagen publicada"
+            echo "## 📦 Imagen publicada en GitHub Container Registry"
             echo ""
             echo "| | |"
             echo "|---|---|"
-            echo "| Repositorio | \`${repo}\` |"
+            echo "| Repositorio | \`${REPO}\` |"
             echo "| Digest | \`${digest}\` |"
             echo "| Etiquetas | \`sha-${SHORT_SHA}\`, \`${POM_VERSION}\`, \`main\` |"
             echo "| Commit | \`${GITHUB_SHA}\` |"
             echo ""
-            echo "Referencia inmutable que se va a desplegar:"
+            echo "Referencia inmutable (la que conviene usar, no la etiqueta):"
             echo ""
+            echo '```bash'
+            echo "docker pull ${REPO}@${digest}"
             echo '```'
-            echo "${repo}@${digest}"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-  # ===========================================================================
-  # 4. Despliegue — Cloud Run, por digest, con la nueva revisión sin tráfico
-  # ===========================================================================
-  deploy:
-    name: Desplegar en Cloud Run
-    needs: image
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-
-    # El entorno 'production' de GitHub es la segunda barrera, además del 'if'
-    # de 'image'. Los secretos del entorno sólo se entregan a trabajos que lo
-    # declaran, y el entorno se configura con una regla de rama que lo limita a
-    # 'main'. Aunque alguien cambiara el 'if' de este archivo, el trabajo
-    # seguiría sin poder leer los secretos desde otra rama.
-    # También es donde se enchufa una aprobación manual el día que se quiera.
-    environment:
-      name: production
-      url: ${{ steps.deploy.outputs.service_url }}
-
-    permissions:
-      contents: read
-      id-token: write
-
-    steps:
-      - name: Checkout
-        # Este trabajo no compila nada, pero sí necesita el repositorio: de acá
-        # sale scripts/cloud-run-env.py. Se hace checkout del MISMO commit que
-        # produjo la imagen (github.sha), que es el default del evento push.
-        uses: actions/checkout@0000000000000000000000000000000000000000 # v5.0.0 — SHA a resolver, ver §7
-        with:
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Autenticarse en Google Cloud (OIDC, sin clave)
-        uses: google-github-actions/auth@0000000000000000000000000000000000000000 # v3.0.0 — SHA a resolver, ver §7
-        with:
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-
-      - name: gcloud
-        uses: google-github-actions/setup-gcloud@0000000000000000000000000000000000000000 # v3.0.1 — SHA a resolver, ver §7
-
-      - name: Anotar qué revisión está sirviendo ahora
-        id: current
-        env:
-          PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-        run: |
-          set -euo pipefail
-          # Se guarda ANTES de tocar nada. Es el destino del rollback, y el
-          # momento de averiguarlo es ahora y no durante el incidente.
-          prev="$(gcloud run services describe "${CLOUD_RUN_SERVICE}" \
-                    --project "${PROJECT_ID}" --region "${GCP_REGION}" --format=json 2>/dev/null \
-                  | jq -r '[.status.traffic[]? | select((.percent // 0) > 0) | .revisionName] | first // ""')"
-          echo "previous_revision=${prev}" >> "$GITHUB_OUTPUT"
-          echo "Revisión que sirve hoy: ${prev:-(ninguna, primer despliegue)}"
-
-      - name: Desplegar la revisión, SIN tráfico
-        id: deploy
-        env:
-          PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-          IMAGE_REF: ${{ needs.image.outputs.image_ref }}
-          SHORT_SHA: ${{ needs.image.outputs.short_sha }}
-          # Las variables de repositorio entran por 'env' y NO interpoladas
-          # dentro del 'run'. La diferencia no es de estilo: '${{ ... }}' se
-          # sustituye TEXTUALMENTE en el script antes de que exista un shell,
-          # así que un valor con comillas, '$(...)' o un punto y coma deja de
-          # ser un dato y pasa a ser código que corre con el token OIDC de este
-          # trabajo. Pasadas por 'env' son variables de shell y nunca se
-          # reinterpretan. Ninguna de estas es secreta —son un origen CORS y
-          # las coordenadas públicas del emisor de tokens— pero el mecanismo
-          # es el mismo que protege a las que sí lo son.
-          CORS_ALLOWED_ORIGINS: ${{ vars.CORS_ALLOWED_ORIGINS }}
-          JWT_ISSUER: ${{ vars.JWT_ISSUER }}
-          JWT_AUDIENCE: ${{ vars.JWT_AUDIENCE }}
-          JWT_JWK_SET_URI: ${{ vars.JWT_JWK_SET_URI }}
-        run: |
-          set -euo pipefail
-
-          # --- Por qué '--no-traffic' -----------------------------------------
-          # Cloud Run crea la revisión, la arranca y espera a que pase la sonda
-          # de arranque; recién entonces la marca lista. Con '--no-traffic' la
-          # revisión queda lista pero NO recibe pedidos: se le puede pegar por
-          # su URL etiquetada, verificarla, y recién ahí moverle el tráfico.
-          # Si algo falla en el medio, la revisión anterior nunca dejó de
-          # atender y no hay nada que revertir.
-          #
-          # --- Qué verifica realmente la sonda de arranque ---------------------
-          # Cloud Run sondea el puerto del contenedor (8080). Tomcat abre el
-          # conector al FINAL del refresh del contexto de Spring: después de
-          # Flyway y después de la validación de esquema de Hibernate
-          # ('ddl-auto: validate'). O sea que "el puerto 8080 acepta conexiones"
-          # ya implica "las migraciones corrieron y el esquema coincide". Si una
-          # migración falla, el contexto no levanta, nadie escucha en 8080, la
-          # revisión nunca queda lista y este paso falla — con el tráfico
-          # intacto en la revisión vieja.
-          #
-          # --- Configuración: por variables de entorno y referencias a secretos -
-          # '--set-env-vars' lleva lo que NO es secreto.
-          # '--set-secrets' NO pasa valores: pasa REFERENCIAS a Secret Manager.
-          # El valor lo resuelve Cloud Run al arrancar el contenedor y nunca
-          # entra al runner, ni al log, ni a la definición del servicio. Es la
-          # diferencia entre "el secreto está enmascarado en el log" y "el
-          # secreto nunca estuvo en la máquina que escribe el log".
-          #
-          # --- Los interruptores que tienen que estar apagados fuera de local --
-          # SECURITY_DEV_TOKENS=false  el emisor HMAC de desarrollo se apaga y
-          #                            manda el JWKS real (JWT_JWK_SET_URI).
-          # API_DOCS_ENABLED=false     /v3/api-docs no se publica.
-          # SWAGGER_UI_ENABLED=false   la UI tampoco.
-          # MANAGEMENT_PORT=9090       Actuator en un puerto que Cloud Run NO
-          #                            rutea: el servicio expone exactamente un
-          #                            puerto y es el 8080. La métrica y la
-          #                            volumetría de negocio quedan fuera de
-          #                            alcance por topología, no por una regla
-          #                            de autorización que hay que acertar.
-          # --- Las variables de entorno, por archivo y no por bandera ---------
-          # El generador vive en scripts/cloud-run-env.py, con el porqué de
-          # cada valor y de por qué NO se usa '--set-env-vars' repetido (spoiler:
-          # repetirla no acumula, la última pisa a las anteriores). Además
-          # valida que las variables de repositorio estén definidas: mejor
-          # fallar acá que crear una revisión que rechaza el 100% del tráfico
-          # por un JWKS vacío.
-          python3 scripts/cloud-run-env.py > /tmp/run-env.json
-
-          # El sufijo de la revisión lleva el SHA corto Y el número de intento.
-          # Los nombres de revisión son únicos e inmutables en Cloud Run: sin el
-          # intento, reintentar un despliegue fallido del mismo commit —que es
-          # exactamente lo que uno hace cuando el paso de tráfico se cortó por
-          # un timeout— falla con "revision already exists" y obliga a
-          # renombrar a mano justo cuando hay un incidente.
-          gcloud run deploy "${CLOUD_RUN_SERVICE}" \
-            --project "${PROJECT_ID}" \
-            --region "${GCP_REGION}" \
-            --image "${IMAGE_REF}" \
-            --revision-suffix "sha-${SHORT_SHA}-${GITHUB_RUN_ATTEMPT}" \
-            --no-traffic \
-            --tag "candidate" \
-            --port 8080 \
-            --cpu 1 --memory 512Mi --cpu-boost \
-            --min-instances 0 --max-instances 3 \
-            --concurrency 40 \
-            --timeout 30s \
-            --allow-unauthenticated \
-            --quiet \
-            --env-vars-file /tmp/run-env.json \
-            --set-secrets "DB_URL=db-url:latest,DB_USERNAME=db-username:latest,DB_PASSWORD=db-password:latest,PII_ENCRYPTION_KEY=pii-encryption-key:latest,CATALOG_API_KEY=catalog-api-key:latest"
-
-          service_url="$(gcloud run services describe "${CLOUD_RUN_SERVICE}" \
-                          --project "${PROJECT_ID}" --region "${GCP_REGION}" \
-                          --format='value(status.url)')"
-          new_revision="$(gcloud run services describe "${CLOUD_RUN_SERVICE}" \
-                          --project "${PROJECT_ID}" --region "${GCP_REGION}" \
-                          --format='value(status.latestCreatedRevisionName)')"
-          candidate_url="$(gcloud run services describe "${CLOUD_RUN_SERVICE}" \
-                          --project "${PROJECT_ID}" --region "${GCP_REGION}" --format=json \
-                          | jq -r '.status.traffic[] | select(.tag=="candidate") | .url')"
-
-          {
-            echo "service_url=${service_url}"
-            echo "new_revision=${new_revision}"
-            echo "candidate_url=${candidate_url}"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Prueba de humo contra la revisión candidata
-        env:
-          CANDIDATE_URL: ${{ steps.deploy.outputs.candidate_url }}
-        run: |
-          set -euo pipefail
-
-          # 1. La API responde y la cadena de seguridad está montada.
-          #    Se espera 401 y no 200: pedir una reserva sin token TIENE que
-          #    ser rechazado. Un 200 acá significaría que la aplicación arrancó
-          #    con los tokens de desarrollo encendidos o sin seguridad, que es
-          #    exactamente el despliegue que no queremos promover. Un 404 o un
-          #    503 significa que no está sirviendo.
-          code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "${CANDIDATE_URL}/v1/reservations")"
-          if [ "$code" != "401" ]; then
-            echo "::error::La revisión candidata devolvió ${code} en GET /v1/reservations sin token; se esperaba 401. No se promueve."
-            exit 1
-          fi
-
-          # 2. Actuator NO es alcanzable desde afuera. Está en 9090 y Cloud Run
-          #    rutea sólo el 8080, así que esto tiene que dar cualquier cosa
-          #    menos 200. Se verifica en vez de asumirse: es una de las
-          #    restricciones del diseño y un cambio de configuración podría
-          #    romperla en silencio.
-          mcode="$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "${CANDIDATE_URL}/actuator/health")"
-          if [ "$mcode" = "200" ]; then
-            echo "::error::/actuator/health respondió 200 en el puerto público. El puerto de gestión quedó expuesto."
-            exit 1
-          fi
-
-          echo "Humo OK: /v1/reservations → 401, /actuator/health → ${mcode} (no expuesto)."
-
-      - name: Mover el 100% del tráfico a la revisión nueva
-        env:
-          PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-          NEW_REVISION: ${{ steps.deploy.outputs.new_revision }}
-        run: |
-          set -euo pipefail
-          # Por NOMBRE DE REVISIÓN y no '--to-latest'. '--to-latest' significa
-          # "la última que exista cuando esto corra", que en una corrida
-          # concurrente o reencolada no es necesariamente la que se acaba de
-          # verificar. El nombre explícito no tiene esa ambigüedad.
-          gcloud run services update-traffic "${CLOUD_RUN_SERVICE}" \
-            --project "${PROJECT_ID}" --region "${GCP_REGION}" \
-            --to-revisions "${NEW_REVISION}=100" \
-            --quiet
-          # Se libera la etiqueta 'candidate' para el próximo despliegue.
-          gcloud run services update-traffic "${CLOUD_RUN_SERVICE}" \
-            --project "${PROJECT_ID}" --region "${GCP_REGION}" \
-            --remove-tags candidate --quiet
-
-      - name: Dejar escrito el procedimiento de vuelta atrás
-        # Si algo sale mal en la próxima hora, el comando de rollback tiene que
-        # estar a un clic de distancia y no depender de que alguien recuerde la
-        # sintaxis de gcloud ni de que averigüe cuál era la revisión anterior.
-        if: ${{ always() }}
-        env:
-          PREVIOUS_REVISION: ${{ steps.current.outputs.previous_revision }}
-          NEW_REVISION: ${{ steps.deploy.outputs.new_revision }}
-          SERVICE_URL: ${{ steps.deploy.outputs.service_url }}
-          IMAGE_REF: ${{ needs.image.outputs.image_ref }}
-        run: |
-          {
-            echo "## 🚀 Despliegue"
-            echo ""
-            echo "| | |"
-            echo "|---|---|"
-            echo "| Servicio | \`${CLOUD_RUN_SERVICE}\` (${GCP_REGION}) |"
-            echo "| URL | ${SERVICE_URL:-n/d} |"
-            echo "| Revisión nueva | \`${NEW_REVISION:-n/d}\` |"
-            echo "| Revisión anterior | \`${PREVIOUS_REVISION:-(ninguna)}\` |"
-            echo "| Imagen (inmutable) | \`${IMAGE_REF}\` |"
-            echo ""
-            if [ -n "${PREVIOUS_REVISION}" ]; then
-              echo "### Volver atrás"
-              echo ""
-              echo "Sin reconstruir nada: la revisión anterior sigue existiendo con su imagen por digest."
-              echo ""
-              echo '```bash'
-              echo "gcloud run services update-traffic ${CLOUD_RUN_SERVICE} \\"
-              echo "  --region ${GCP_REGION} \\"
-              echo "  --to-revisions ${PREVIOUS_REVISION}=100"
-              echo '```'
-              echo ""
-              echo "⚠️ El rollback devuelve el **código**, no el **esquema**: las migraciones de Flyway"
-              echo "que aplicó esta revisión siguen aplicadas. Por eso las migraciones son aditivas"
-              echo "(expandir/contraer) y la revisión anterior tiene que poder funcionar contra el esquema nuevo."
-            fi
           } >> "$GITHUB_STEP_SUMMARY"
