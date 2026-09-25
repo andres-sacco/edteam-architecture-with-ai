@@ -492,6 +492,48 @@ jobs:
           # este trabajo está fuera del camino de 'image'.
           ./mvnw ${MAVEN_ARGS} sonar:sonar -Dsonar.qualitygate.wait=true
 
+      - name: Verificar que el análisis haya medido algo
+        # POR QUÉ ESTE PASO EXISTE
+        # 'qualitygate.wait=true' hace que el paso anterior falle si el gate
+        # sale rojo. Eso lo convierte en un gate de verdad… siempre que el gate
+        # tenga algo que juzgar.
+        #
+        # El perfil "Sonar way" juzga CÓDIGO NUEVO. Cuando Sonar no puede
+        # calcular qué es nuevo, el resultado es «0 New Lines of Code» y TODAS
+        # las condiciones pasan por vacuidad: el panel dice "Passed", este
+        # trabajo sale verde, y nadie midió una línea.
+        #
+        # No es hipotético: pasó en este repositorio. SonarCloud tenía 'master'
+        # como rama principal —una rama que no existe acá— y registraba 'main'
+        # como rama de vida corta apuntando a ella. La cobertura se subía
+        # perfecta (86,3%) y el gate llevaba semanas sin evaluar nada.
+        #
+        # Este paso consulta la API y falla si el análisis quedó degradado: si
+        # la rama analizada no es la principal, si no hay medida de cobertura
+        # —la comprobación literal de que el jacoco.xml llegó— o si Sonar dejó
+        # algún warning.
+        if: ${{ always() }}
+        env:
+          # Las coordenadas salen del pom, que es donde ya viven, y por el
+          # mismo camino que usa el trabajo de la imagen para la versión: se
+          # parsea con Python para no depender de 'help:evaluate', que levanta
+          # una JVM entera para leer dos cadenas.
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_BRANCH: ${{ github.event_name == 'push' && github.ref_name || '' }}
+          SONAR_PULL_REQUEST: ${{ github.event_name == 'pull_request' && github.event.number || '' }}
+          REPO_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+
+          ns='{http://maven.apache.org/POM/4.0.0}'
+          leer() {
+            python3 -c "import xml.etree.ElementTree as ET,sys; print(ET.parse('pom.xml').getroot().find('${ns}properties/${ns}$1').text.strip())"
+          }
+
+          SONAR_PROJECT_KEY="$(leer sonar.projectKey)" \
+          SONAR_HOST_URL="$(leer sonar.host.url)" \
+          python3 scripts/ci-sonar-summary.py
+
       - name: Enlace al análisis
         if: ${{ always() }}
         run: |
