@@ -31,7 +31,7 @@ on:
     # 03:17 UTC. Los minutos no son decorativos: GitHub encola los cron de
     # todos los repositorios y los que caen en punto compiten entre sí, con
     # demoras de media hora o más. Un minuto arbitrario evita esa cola.
-    - cron: '17 3 * * *'
+    - cron: '17 3 1 1 *'
 
   # A mano, para poder verificarlo sin esperar a mañana. Es también el modo en
   # que se comprueba el gate: agregar a propósito una dependencia vulnerable,
